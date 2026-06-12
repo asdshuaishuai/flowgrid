@@ -18,6 +18,17 @@
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
   .tray-section { padding:4px 0; }
   .tray-section-title { padding:6px 12px; font-size:10px; font-weight:700; color:#94a3b8; text-transform:uppercase; }
+  .active-device { display:flex; align-items:center; gap:8px; padding:8px 12px; margin:4px 8px; background:#f0f7ff; border:1px solid rgba(8,120,216,0.2); border-radius:6px; }
+  .active-device .dev-icon { width:28px; height:28px; border-radius:6px; background:var(--blue); color:white; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; }
+  .active-device .dev-info { flex:1; }
+  .active-device .dev-name { font-size:12px; font-weight:700; color:#171a1f; }
+  .active-device .dev-hint { font-size:10px; color:#68707d; }
+  .switch-row { display:flex; gap:6px; padding:6px 12px; }
+  .switch-btn { flex:1; display:flex; flex-direction:column; align-items:center; padding:6px; border-radius:5px; cursor:pointer; border:1px solid rgba(109,122,140,0.18); transition:all .15s; }
+  .switch-btn:hover { border-color:var(--blue); background:#f0f7ff; }
+  .switch-btn.active { border-color:var(--blue); background:#f0f7ff; }
+  .switch-btn .btn-icon { width:24px; height:24px; border-radius:6px; color:white; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:800; }
+  .switch-btn .btn-key { font-size:8px; color:#68707d; margin-top:2px; }
   .tray-item { display:flex; justify-content:space-between; align-items:center; padding:7px 12px; color:#273348; font-size:12px; cursor:pointer; transition:background .1s; text-decoration:none; }
   .tray-item:hover { background:#f1f5f9; }
   .tray-item:active { background:#e2e8f0; }
@@ -51,6 +62,25 @@
       <span>FlowGrid</span>
       <span class="status-pill"><span class="status-dot"></span><span id="latText">2.4ms</span></span>
     </div>
+    <div class="tray-section">
+      <div class="tray-section-title">Current Device</div>
+      <div class="active-device">
+        <div class="dev-icon">PC</div>
+        <div class="dev-info">
+          <div class="dev-name">Windows Desktop</div>
+          <div class="dev-hint">Ctrl+1 to switch</div>
+        </div>
+      </div>
+    </div>
+    <div class="tray-section">
+      <div class="tray-section-title">Quick Switch</div>
+      <div class="switch-row">
+        <div class="switch-btn active"><div class="btn-icon" style="background:var(--blue);">PC</div><div class="btn-key">Ctrl+1</div></div>
+        <div class="switch-btn" onclick="showToast('Switching to MacBook Pro')"><div class="btn-icon" style="background:#007aff;">MB</div><div class="btn-key">Ctrl+2</div></div>
+        <div class="switch-btn" onclick="showToast('Switching to Linux Workstation')"><div class="btn-icon" style="background:#3daee9;">LX</div><div class="btn-key">Ctrl+3</div></div>
+      </div>
+    </div>
+    <div class="sep"></div>
     <div class="tray-section">
       <div class="tray-section-title">Connection</div>
       <a class="tray-item" href="main.html"><span>MacBook Pro</span><span class="shortcut">NearLink</span></a>

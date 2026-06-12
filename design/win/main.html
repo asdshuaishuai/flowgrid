@@ -66,6 +66,19 @@
   .nav-btn { display:inline-flex; height:28px; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:5px; padding:0 11px; background:#fff; color:#475569; font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; text-decoration:none; }
   .nav-btn:hover { border-color:#94a3b8; color:var(--ink); }
   .empty-state { text-align:center; padding:30px 20px; color:var(--muted); font-size:12px; }
+  .layout-grid { background:#f8fafc; border:2px dashed #d9dee7; border-radius:8px; padding:16px; display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(3,1fr); gap:8px; min-height:200px; place-items:center; }
+  .layout-cell { display:flex; flex-direction:column; align-items:center; gap:4px; cursor:grab; transition:transform .15s; }
+  .layout-cell:hover { transform:scale(1.05); }
+  .layout-cell .dev-icon { width:56px; height:56px; border-radius:10px; color:white; display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:800; }
+  .layout-cell .dev-label { font-size:10px; font-weight:700; }
+  .layout-cell .dev-active { font-size:9px; color:#07966c; font-weight:600; }
+  .layout-empty { width:56px; height:56px; border-radius:10px; background:#d9dee7; color:#68707d; display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:800; border:2px dashed #b0b8c4; }
+  .layout-legend { display:flex; align-items:center; gap:12px; margin-top:10px; flex-wrap:wrap; }
+  .layout-legend span { font-size:10px; color:#68707d; display:flex; align-items:center; gap:4px; }
+  .switch-overlay { position:fixed; inset:0; background:rgba(0,0,0,0); pointer-events:none; z-index:200; transition:background .3s; }
+  .switch-overlay.active { background:rgba(0,0,0,0.15); }
+  .switch-toast { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) scale(0.8); background:#1e293b; color:#fff; padding:12px 20px; border-radius:10px; font-size:14px; font-weight:700; opacity:0; transition:all .3s ease; pointer-events:none; z-index:201; }
+  .switch-toast.show { opacity:1; transform:translate(-50%,-50%) scale(1); }
 </style>
 </head>
 <body>
@@ -138,6 +151,24 @@
         </div>
       </div>
     </div>
+
+    <div class="section">
+      <div class="section-head" onclick="toggleSection(this)">
+        <span>Device Layout <span class="badge">Drag to Arrange</span></span>
+        <span class="chevron" id="layoutChev">▼</span>
+      </div>
+      <div class="section-body" id="layoutBody">
+        <div style="padding:14px;">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Drag devices to grid positions · Mouse to screen edge to switch · Ctrl+1/2/3 shortcuts</div>
+          <div class="layout-grid" id="layoutGrid"></div>
+          <div class="layout-legend">
+            <span><span style="width:10px;height:10px;border-radius:50%;background:#10a36f;display:inline-block;"></span> Current</span>
+            <span><span style="font-size:12px;">→</span> Edge switch</span>
+            <span><span style="font-size:12px;">⌨</span> Ctrl+1/2/3</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
   <div class="nav-bar">
     <a class="nav-btn" href="tray.html">System Tray</a>
@@ -146,6 +177,8 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<div class="switch-overlay" id="switchOverlay"></div>
+<div class="switch-toast" id="switchToast"></div>
 
 <script>
 const devices = [
@@ -245,6 +278,84 @@ setInterval(() => {
 }, 1000);
 
 renderDevices();
-</script>
+
+// --- Device Layout Grid ---
+const layout = [
+  { id:2, gridX:1, gridY:0 },  // MB top-center
+  { id:1, gridX:0, gridY:1 },  // PC left (current)
+  { id:3, gridX:2, gridY:1 },  // LX right
+];
+
+function renderLayout() {
+  const grid = document.getElementById('layoutGrid');
+  const colors = { 1:'#007aff', 2:'#007aff', 3:'#3daee9' };
+  let html = '';
+  for (let y = 0; y < 3; y++) {
+    for (let x = 0; x < 3; x++) {
+      const pos = layout.find(p => p.gridX === x && p.gridY === y);
+      if (pos) {
+        const d = devices.find(dev => dev.id === pos.id);
+        if (d) {
+          const isCurrent = d.id === 1;
+          html += `<div class="layout-cell" draggable="true" data-id="${d.id}" ondragstart="dragStart(event)" ondragend="dragEnd(event)">
+            <div class="dev-icon" style="background:${isCurrent?'var(--blue)':'#68707d'};box-shadow:${isCurrent?'0 2px 8px rgba(8,120,216,0.3)':'none'};position:relative;">
+              ${d.icon}
+              ${isCurrent?'<div style="position:absolute;top:-3px;right:-3px;width:12px;height:12px;background:#10a36f;border-radius:50%;border:2px solid #fff;display:flex;align-items:center;justify-content:center;"><span style="font-size:7px;color:white;font-weight:800;">✓</span></div>':''}
+            </div>
+            <span class="dev-label" style="color:${isCurrent?'var(--blue)':'#68707d'}">${d.name.split(' ')[0]}</span>
+            ${isCurrent?'<span class="dev-active">Current · Ctrl+'+(layout.indexOf(pos)+1)+'</span>':''}
+          </div>`;
+        } else {
+          html += `<div class="layout-empty" ondrop="drop(event)" ondragover="allowDrop(event)" data-x="${x}" data-y="${y}">+</div>`;
+        }
+      } else {
+        html += `<div class="layout-empty" ondrop="drop(event)" ondragover="allowDrop(event)" data-x="${x}" data-y="${y}">+</div>`;
+      }
+    }
+  }
+  grid.innerHTML = html;
+}
+
+function allowDrop(e) { e.preventDefault(); e.currentTarget.style.borderColor='var(--blue)'; e.currentTarget.style.background='#eff6ff'; }
+function dragStart(e) { e.dataTransfer.setData('text/plain', e.currentTarget.dataset.id); e.currentTarget.style.opacity='0.5'; }
+function dragEnd(e) { e.currentTarget.style.opacity='1'; }
+function drop(e) {
+  e.preventDefault();
+  const id = parseInt(e.dataTransfer.getData('text/plain'));
+  const x = parseInt(e.currentTarget.dataset.x);
+  const y = parseInt(e.currentTarget.dataset.y);
+  const idx = layout.findIndex(p => p.id === id);
+  if (idx > -1) { layout[idx].gridX = x; layout[idx].gridY = y; }
+  else { layout.push({ id, gridX:x, gridY:y }); }
+  e.currentTarget.style.borderColor='#d9dee7'; e.currentTarget.style.background='#f8fafc';
+  renderLayout();
+  showToast('Layout updated');
+}
+
+function switchToDevice(targetId) {
+  const d = devices.find(x=>x.id===targetId);
+  if (!d || !d.connected) return;
+  const overlay = document.getElementById('switchOverlay');
+  const switchToast = document.getElementById('switchToast');
+  switchToast.textContent = `Switching to ${d.name}`;
+  overlay.classList.add('active');
+  switchToast.classList.add('show');
+  setTimeout(() => {
+    overlay.classList.remove('active');
+    switchToast.classList.remove('show');
+  }, 600);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+    const num = parseInt(e.key);
+    if (num >= 1 && num <= 3) {
+      const pos = layout[num-1];
+      if (pos) { const d = devices.find(x=>x.id===pos.id); if (d && d.connected) switchToDevice(d.id); }
+    }
+  }
+});
+
+renderLayout();</script>
 </body>
 </html>
