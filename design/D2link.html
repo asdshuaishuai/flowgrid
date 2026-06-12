@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowGrid 开发文档</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-400-normal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-600-normal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-700-normal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/noto-sans-sc@latest/chinese-simplified-400-normal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/noto-sans-sc@latest/chinese-simplified-600-normal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/noto-sans-sc@latest/chinese-simplified-700-normal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/fontsource/fonts/jetbrains-mono@latest/latin-400-normal.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Inter"', '"Noto Sans SC"', 'sans-serif'],
+                        mono: ['"JetBrains Mono"', 'monospace'],
+                    },
+                    colors: {
+                        primary: '#0f172a',
+                        accent: '#3b82f6',
+                        surface: '#f8fafc',
+                        border: '#e2e8f0',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', 'Noto Sans SC', sans-serif; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        .nav-link.active { color: #3b82f6; border-left-color: #3b82f6; background: #eff6ff; }
+        
+        .doc-table th { background: #f1f5f9; font-weight: 600; text-align: left; }
+        .doc-table td, .doc-table th { padding: 0.75rem 1rem; border-bottom: 1px solid #e2e8f0; }
+        .doc-table tr:last-child td { border-bottom: none; }
+    </style>
+</head>
+<body class="bg-white text-slate-800 antialiased">
+
+    <!-- Mobile Header -->
+    <header class="lg:hidden fixed top-0 left-0 right-0 bg-white border-b border-border z-50 px-4 py-3 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <div class="w-8 h-8 bg-accent rounded-lg flex items-center justify-center text-white font-bold">F</div>
+            <span class="font-bold text-lg">FlowGrid 开发文档</span>
+        </div>
+        <button id="mobile-menu-btn" class="p-2 text-slate-600">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+        </button>
+    </header>
+
+    <div class="flex max-w-[1400px] mx-auto pt-16 lg:pt-0">
+        
+        <!-- Sidebar Navigation -->
+        <aside id="sidebar" class="fixed lg:sticky top-0 left-0 h-screen w-72 bg-surface border-r border-border overflow-y-auto transform -translate-x-full lg:translate-x-0 transition-transform duration-300 z-40 pt-20 lg:pt-8 pb-8 px-6">
+            <div class="hidden lg:flex items-center gap-2 mb-8">
+                <div class="w-8 h-8 bg-accent rounded-lg flex items-center justify-center text-white font-bold text-lg">F</div>
+                <span class="font-bold text-xl text-primary">FlowGrid</span>
+            </div>
+            <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">文档导航</div>
+            <nav class="space-y-1">
+                <a href="#overview" class="nav-link block py-2 px-3 text-sm text-slate-600 hover:text-accent hover:bg-slate-50 rounded-md border-l-2 border-transparent transition-all">1. 产品定位与核心痛点</a>
+                <a href="#architecture" class="nav-link block py-2 px-3 text-sm text-slate-600 hover:text-accent hover:bg-slate-50 rounded-md border-l-2 border-transparent transition-all">2. 系统分层架构</a>
+                <a href="#nearlink" class="nav-link block py-2 px-3 text-sm text-slate-600 hover:text-accent hover:bg-slate-50 rounded-md border-l-2 border-transparent transition-all">3. NearLink 无线协议设计</a>
+                <a href="#directlink" class="nav-link block py-2 px-3 text-sm text-slate-600 hover:text-accent hover:bg-slate-50 rounded-md border-l-2 border-transparent transition-all">4. DirectLink 有线协议设计</a>
+                <a href="#keymapper" class="nav-link block py-2 px-3 text-sm text-slate-600 hover:text-accent hover:bg-slate-50 rounded-md border-l-2 border-transparent transition-all">5. KeyMapper 键位引擎</a>
+                <a href="#matrix" class="nav-link block py-2 px-3 text-sm text-slate-600 hover:text-accent hover:bg-slate-50 rounded-md border-l-2 border-transparent transition-all">6. 连接模式矩阵</a>
+            </nav>
+            
+            <div class="mt-8 p-4 bg-blue-50 rounded-lg border border-blue-100">
+                <div class="text-xs font-semibold text-blue-800 mb-1">技术栈</div>
+                <div class="text-xs text-blue-600">Rust Core · UDP/DTLS · BLE 5.0 · Wi-Fi Direct · Raw Ethernet</div>
+            </div>
+        </aside>
+
+        <!-- Overlay for mobile -->
+        <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden lg:hidden"></div>
+
+        <!-- Main Content -->
+        <main class="flex-1 min-w-0 px-6 lg:px-12 py-8 lg:py-12 max-w-4xl">
+            
+            <!-- Header -->
+            <div class="mb-12 border-b border-border pb-8">
+                <div class="inline-block px-3 py-1 bg-accent/10 text-accent text-xs font-semibold rounded-full mb-4">产品设计蓝皮书 · 2025</div>
+                <h1 class="text-4xl font-bold text-primary mb-4 tracking-tight">FlowGrid 开发文档</h1>
+                <p class="text-lg text-slate-600 leading-relaxed">基于自研 NearLink 协议，无需路由器，BLE 发现 + Wi-Fi Direct 直连，实现 &lt;3ms 端到端键鼠共享，并内置自适应 Win ↔ Mac ↔ Linux 修饰键重映射。</p>
+            </div>
+
+            <!-- Section 1: Overview -->
+            <section id="overview" class="mb-16 scroll-mt-24">
+                <h2 class="text-2xl font-bold text-primary mb-6 flex items-center gap-3">
+                    <span class="w-8 h-8 bg-accent/10 text-accent rounded-lg flex items-center justify-center text-sm">01</span>
+                    产品定位与核心痛点
+                </h2>
+                
+                <div class="prose prose-slate max-w-none">
+                    <h3 class="text-lg font-semibold text-slate-800 mb-3">Deskflow 的根本问题</h3>
+                    <ul class="list-disc pl-5 space-y-2 text-slate-600 mb-6">
+                        <li><strong>传输层缺陷：</strong>强依赖 TCP，Nagle 算法会积累小数据包。HID 事件恰好是 8 字节的极小帧，完全触发该算法的最差情形，引发 40–120ms 累积延迟。</li>
+                        <li><strong>连接发现困难：</strong>手动输入 IP + 端口；企业/大学网络 mDNS 被禁时无法自动发现。</li>
+                        <li><strong>键位无感知适配：</strong>Ctrl/Cmd/Win/Alt 跨系统切换全靠手动配置，没有 OS 感知能力。</li>
+                        <li><strong>协议碎片化：</strong>与 Barrier / Input Leap 协议撕裂，社区无法收拢。</li>
+                    </ul>
+
+                    <h3 class="text-lg font-semibold text-slate-800 mb-3">竞品对比矩阵</h3>
+                    <div class="overflow-x-auto rounded-lg border border-border mb-8">
+                        <table class="w-full text-sm doc-table">
+                            <thead>
+                                <tr>
+                                    <th>维度</th>
+                                    <th>Deskflow</th>
+                                    <th>Synergy</th>
+                                    <th>Logitech Flow</th>
+                                    <th>FlowGrid (本设计)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td class="font-medium">传输协议</td>
+                                    <td>TCP / TLS</td>
+                                    <td>TCP / TLS</td>
+                                    <td>TCP (专有)</td>
+                                    <td class="text-accent font-semibold">UDP + NearLink</td>
+                                </tr>
+                                <tr>
+                                    <td class="font-medium">延迟</td>
+                                    <td>10–120ms</td>
+                                    <td>10–80ms</td>
+                                    <td>5–20ms</td>
+                                    <td class="text-accent font-semibold">&lt;3ms 局域网</td>
+                                </tr>
+                                <tr>
+                                    <td class="font-medium">无路由器直连</td>
+                                    <td>不支持</td>
+                                    <td>不支持</td>
+                                    <td>不支持</td>
+                                    <td class="text-accent font-semibold">BLE + Wi-Fi Direct</td>
+                                </tr>
+                                <tr>
+                                    <td class="font-medium">自动键位适配</td>
+                                    <td>手动</td>
+                                    <td>手动</td>
+                                    <td>部分</td>
+                                    <td class="text-accent font-semibold">OS 感知自动重映射</td>
+                                </tr>
+                                <tr>
+                                    <td class="font-medium">开源 / 免费</td>
+                                    <td>全开源</td>
+                                    <td>付费</td>
+                                    <td>需硬件</td>
+                                    <td>核心开源 + Pro</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section 2: Architecture -->
+            <section id="architecture" class="mb-16 scroll-mt-24">
+                <h2 class="text-2xl font-bold text-primary mb-6 flex items-center gap-3">
+                    <span class="w-8 h-8 bg-accent/10 text-accent rounded-lg flex items-center justify-center text-sm">02</span>
+                    系统分层架构
+                </h2>
+                
+                <div class="space-y-4">
+                    <div class="bg-surface border border-border rounded-xl p-5 hover:shadow-md transition-shadow">
+                        <div class="flex items-center gap-3 mb-2">
+                            <span class="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-bold rounded">L1</span>
+                            <h3 class="font-bold text-slate-800">用户界面层 (UI Shell)</h3>
+                        </div>
+                        <p class="text-sm text-slate-600">系统托盘常驻 · 一键配对向导 · 实时延迟显示 · 键位可视化编辑器 · 多显示器布局拖拽</p>
+                    </div>
+                    
+                    <div class="flex justify-center"><svg class="w-6 h-6 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg></div>
+
+                    <div class="bg-surface border border-border rounded-xl p-5 hover:shadow-md transition-shadow">
+                        <div class="flex items-center gap-3 mb-2">
+                            <span class="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded">L2</span>
+                            <h3 class="font-bold text-slate-800">OS 感知重映射引擎 (KeyMapper)</h3>
+                        </div>
+                        <p class="text-sm text-slate-600">检测连接双端 OS 类型 → 加载对应规则表 → 拦截 HID 扫描码 → 转换后注入目标 OS 输入栈；支持应用上下文切换规则 (YAML 热重载)</p>
+                    </div>
+
+                    <div class="flex justify-center"><svg class="w-6 h-6 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg></div>
+
+                    <div class="bg-surface border border-border rounded-xl p-5 hover:shadow-md transition-shadow">
+                        <div class="flex items-center gap-3 mb-2">
+                            <span class="px-2 py-1 bg-green-100 text-green-700 text-xs font-bold rounded">L3</span>
+                            <h3 class="font-bold text-slate-800">NearLink / DirectLink 传输层 (Transport)</h3>
+                        </div>
+                        <p class="text-sm text-slate-600">BLE 5.0 广播发现 → Wi-Fi Direct P2P 建连 (&lt;800ms) → DTLS 1.3 加密信道 → UDP HID 帧发送器 (8字节/帧，批量压缩 + 鼠标插值平滑) → 自动断线重连 (&lt;200ms)</p>
+                    </div>
+
+                    <div class="flex justify-center"><svg class="w-6 h-6 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg></div>
+
+                    <div class="bg-surface border border-border rounded-xl p-5 hover:shadow-md transition-shadow">
+                        <div class="flex items-center gap-3 mb-2">
+                            <span class="px-2 py-1 bg-orange-100 text-orange-700 text-xs font-bold rounded">L4</span>
+                            <h3 class="font-bold text-slate-800">平台 HID 抽象层 (Platform HAL)</h3>
+                        </div>
+                        <p class="text-sm text-slate-600">Windows: SendInput / Raw Input API · macOS: IOKit HID + CGEventTap · Linux: libei / uinput / libportal · 统一 HID 事件格式，跨平台消除差异</p>
+                    </div>
+
+                    <div class="flex justify-center"><svg class="w-6 h-6 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"></path></svg></div>
+
+                    <div class="bg-surface border border-border rounded-xl p-5 hover:shadow-md transition-shadow">
+                        <div class="flex items-center gap-3 mb-2">
+                            <span class="px-2 py-1 bg-slate-200 text-slate-700 text-xs font-bold rounded">L5</span>
+                            <h3 class="font-bold text-slate-800">物理硬件 / 网络层</h3>
+                        </div>
+                        <p class="text-sm text-slate-600">Wi-Fi 802.11n/ac/ax (社交信道 6/44/149 避开 AWDL 抖动) · 蓝牙 5.0 BLE · 以太网 (降级回退路径)</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section 3: NearLink -->
+            <section id="nearlink" class="mb-16 scroll-mt-24">
+                <h2 class="text-2xl font-bold text-primary mb-6 flex items-center gap-3">
+                    <span class="w-8 h-8 bg-accent/10 text-accent rounded-lg flex items-center justify-center text-sm">03</span>
+                    NearLink 无线协议设计
+                </h2>
+
+                <div class="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6">
+                    <p class="text-sm text-blue-800"><strong>设计逻辑：</strong>来自 AirDrop 的启发。用 BLE 低功耗广播来发现设备，发现后建立 Wi-Fi Direct 点对点连接，整个过程完全不依赖路由器。关键是将 TCP 换成 UDP+DTLS：实验表明，UDP 在局域网能以 3.25ms 内达到 99.9% 的包投递率。主动避开 Apple 占用的社交信道 (6/44/149) 以规避 AWDL 3–90ms 的周期性抖动。</p>
+                </div>
+
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">协议流程</h3>
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
+                    <div class="bg-white border border-border rounded-lg p-4 text-center">
+                        <div class="w-10 h-10 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-2 font-bold">1</div>
+                        <div class="font-semibold text-sm mb-1">发现</div>
+                        <div class="text-xs text-slate-500">BLE 广播<br>设备指纹 + OS 类型</div>
+                    </div>
+                    <div class="bg-white border border-border rounded-lg p-4 text-center">
+                        <div class="w-10 h-10 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-2 font-bold">2</div>
+                        <div class="font-semibold text-sm mb-1">握手</div>
+                        <div class="text-xs text-slate-500">Wi-Fi Direct<br>&lt;800ms 建连</div>
+                    </div>
+                    <div class="bg-white border border-border rounded-lg p-4 text-center">
+                        <div class="w-10 h-10 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-2 font-bold">3</div>
+                        <div class="font-semibold text-sm mb-1">加密信道</div>
+                        <div class="text-xs text-slate-500">DTLS 1.3<br>AES-256-GCM</div>
+                    </div>
+                    <div class="bg-white border border-border rounded-lg p-4 text-center">
+                        <div class="w-10 h-10 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-2 font-bold">4</div>
+                        <div class="font-semibold text-sm mb-1">数据传输</div>
+                        <div class="text-xs text-slate-500">HID 事件帧<br>UDP · 8 字节/帧</div>
+                    </div>
+                    <div class="bg-white border border-border rounded-lg p-4 text-center">
+                        <div class="w-10 h-10 bg-accent/10 text-accent rounded-full flex items-center justify-center mx-auto mb-2 font-bold">5</div>
+                        <div class="font-semibold text-sm mb-1">重连</div>
+                        <div class="text-xs text-slate-500">0-RTT 会话恢复<br>自愈 &lt;200ms</div>
+                    </div>
+                </div>
+
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">关键技术选型依据</h3>
+                <div class="overflow-x-auto rounded-lg border border-border mb-8">
+                    <table class="w-full text-sm doc-table">
+                        <thead>
+                            <tr>
+                                <th>技术点</th>
+                                <th>选择</th>
+                                <th>弃选</th>
+                                <th>理由</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="font-medium">传输协议</td>
+                                <td>UDP + DTLS</td>
+                                <td>TCP/TLS</td>
+                                <td>TCP Nagle 算法无法关闭 HID 流；UDP 天然无队头阻塞，适合 8 字节小帧</td>
+                            </tr>
+                            <tr>
+                                <td class="font-medium">连接发现</td>
+                                <td>BLE 5.0</td>
+                                <td>mDNS</td>
+                                <td>mDNS 在企业网络常被禁用；BLE 广播不依赖路由器，耗电极低</td>
+                            </tr>
+                            <tr>
+                                <td class="font-medium">P2P 直连</td>
+                                <td>Wi-Fi Direct</td>
+                                <td>AWDL (Apple)</td>
+                                <td>AWDL 有 20–90ms 周期抖动 (RIPE 91 研究证实)；Wi-Fi Direct 跨平台</td>
+                            </tr>
+                            <tr>
+                                <td class="font-medium">加密层</td>
+                                <td>DTLS 1.3</td>
+                                <td>TLS 1.3</td>
+                                <td>DTLS 基于 UDP，内置丢包处理；0-RTT 会话恢复支持快速重连</td>
+                            </tr>
+                            <tr>
+                                <td class="font-medium">鼠标平滑</td>
+                                <td>客户端插值</td>
+                                <td>服务端缓冲</td>
+                                <td>服务端缓冲引入额外 latency；客户端根据历史帧预测下一帧位置，视觉更流畅</td>
+                            </tr>
+                            <tr>
+                                <td class="font-medium">实现语言</td>
+                                <td>Rust 核心</td>
+                                <td>C++ / Go</td>
+                                <td>内存安全无需 GC 暂停；async/await 适合事件驱动 HID 流；跨平台工具链成熟</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Section 4: DirectLink -->
+            <section id="directlink" class="mb-16 scroll-mt-24">
+                <h2 class="text-2xl font-bold text-primary mb-6 flex items-center gap-3">
+                    <span class="w-8 h-8 bg-accent/10 text-accent rounded-lg flex items-center justify-center text-sm">04</span>
+                    DirectLink 有线协议设计
+                </h2>
+
+                <div class="bg-amber-50 border border-amber-100 rounded-lg p-4 mb-6">
+                    <p class="text-sm text-amber-800"><strong>场景定位：</strong>现有所有软件 KVM 均假设设备接入同一路由器子网。无 Wi-Fi 台式机、隔离机房工作站、嵌入式开发板是完全被遗忘的场景。DirectLink 专为此而设计，一根网线即完整。物理隔离，零无线干扰，千兆以太网 RTT &lt;0.3ms。</p>
+                </div>
+
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">零配置自协商时序 (插线后)</h3>
+                
+                <!-- SVG Sequence Diagram -->
+                <div class="bg-surface border border-border rounded-xl p-4 lg:p-6 mb-8 overflow-x-auto">
+                    <svg viewBox="0 0 800 680" xmlns="http://www.w3.org/2000/svg" class="w-full min-w-[600px]" style="max-height: 700px;">
+                        <defs>
+                            <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                                <path d="M0,0 L0,6 L9,3 z" fill="#10b981" />
+                            </marker>
+                            <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                                <path d="M0,0 L0,6 L9,3 z" fill="#3b82f6" />
+                            </marker>
+                            <marker id="arrow-indigo" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                                <path d="M0,0 L0,6 L9,3 z" fill="#6366f1" />
+                            </marker>
+                            <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                                <path d="M0,0 L0,6 L9,3 z" fill="#d97706" />
+                            </marker>
+                            <marker id="arrow-indigo-left" markerWidth="10" markerHeight="10" refX="1" refY="3" orient="auto">
+                                <path d="M10,0 L10,6 L1,3 z" fill="#6366f1" />
+                            </marker>
+                        </defs>
+
+                        <!-- Header Labels -->
+                        <g>
+                            <rect x="140" y="20" width="120" height="40" rx="6" fill="#d1fae5" stroke="#6ee7b7" stroke-width="2"/>
+                            <text x="200" y="45" text-anchor="middle" font-size="14" font-weight="700" fill="#065f46">主机 (有键鼠)</text>
+                            
+                            <rect x="540" y="20" width="120" height="40" rx="6" fill="#dbeafe" stroke="#93c5fd" stroke-width="2"/>
+                            <text x="600" y="45" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3a8a">客户端 (被控端)</text>
+                        </g>
+
+                        <!-- Vertical Lifelines -->
+                        <line x1="200" y1="60" x2="200" y2="650" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="4 4"/>
+                        <line x1="600" y1="60" x2="600" y2="650" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="4 4"/>
+
+                        <!-- ===== 0s: Link Up ===== -->
+                        <g>
+                            <rect x="30" y="90" width="50" height="24" rx="12" fill="#f1f5f9" stroke="#cbd5e1"/>
+                            <text x="55" y="107" text-anchor="middle" font-size="12" font-weight="700" fill="#64748b">0s</text>
+                            
+                            <rect x="120" y="92" width="80" height="32" rx="4" fill="#f0fdf4" stroke="#86efac"/>
+                            <text x="160" y="113" text-anchor="middle" font-size="12" font-weight="600" fill="#065f46">ETH link up</text>
+                            
+                            <rect x="600" y="92" width="80" height="32" rx="4" fill="#eff6ff" stroke="#93c5fd"/>
+                            <text x="640" y="113" text-anchor="middle" font-size="12" font-weight="600" fill="#1e3a8a">ETH link up</text>
+                        </g>
+
+                        <!-- ===== 2s: APIPA ===== -->
+                        <g>
+                            <rect x="30" y="170" width="50" height="24" rx="12" fill="#f1f5f9" stroke="#cbd5e1"/>
+                            <text x="55" y="187" text-anchor="middle" font-size="12" font-weight="700" fill="#64748b">2s</text>
+                            
+                            <rect x="100" y="170" width="110" height="40" rx="4" fill="#f0fdf4" stroke="#86efac"/>
+                            <text x="155" y="187" text-anchor="middle" font-size="12" font-weight="600" fill="#065f46">APIPA 自分配</text>
+                            <text x="155" y="203" text-anchor="middle" font-size="10" font-family="monospace" fill="#059669">169.254.x.x</text>
+                            
+                            <rect x="590" y="170" width="110" height="40" rx="4" fill="#eff6ff" stroke="#93c5fd"/>
+                            <text x="645" y="187" text-anchor="middle" font-size="12" font-weight="600" fill="#1e3a8a">APIPA 自分配</text>
+                            <text x="645" y="203" text-anchor="middle" font-size="10" font-family="monospace" fill="#2563eb">169.254.x.x</text>
+                        </g>
+
+                        <!-- ===== 4s: mDNS ===== -->
+                        <g>
+                            <rect x="30" y="255" width="50" height="24" rx="12" fill="#f1f5f9" stroke="#cbd5e1"/>
+                            <text x="55" y="272" text-anchor="middle" font-size="12" font-weight="700" fill="#64748b">4s</text>
+                            
+                            <rect x="95" y="255" width="110" height="40" rx="4" fill="#f0fdf4" stroke="#86efac"/>
+                            <text x="150" y="272" text-anchor="middle" font-size="12" font-weight="600" fill="#065f46">mDNS 广播</text>
+                            <text x="150" y="288" text-anchor="middle" font-size="10" font-family="monospace" fill="#059669">_flowgrid._tcp</text>
+                            
+                            <!-- Arrow from host to client -->
+                            <line x1="205" y1="275" x2="590" y2="275" stroke="#10b981" stroke-width="2" marker-end="url(#arrow-green)"/>
+                            
+                            <!-- Label on arrow -->
+                            <rect x="330" y="258" width="140" height="22" rx="4" fill="white" stroke="#d1fae5"/>
+                            <text x="400" y="273" text-anchor="middle" font-size="11" font-weight="500" fill="#059669">发现 FlowGrid 服务</text>
+                        </g>
+
+                        <!-- ===== 6s: ECDH ClientHello ===== -->
+                        <g>
+                            <rect x="30" y="340" width="50" height="24" rx="12" fill="#f1f5f9" stroke="#cbd5e1"/>
+                            <text x="55" y="357" text-anchor="middle" font-size="12" font-weight="700" fill="#64748b">6s</text>
+                            
+                            <!-- Arrow: client -> host (ClientHello) -->
+                            <line x1="590" y1="350" x2="205" y2="350" stroke="#6366f1" stroke-width="2" marker-end="url(#arrow-indigo-left)"/>
+                            
+                            <rect x="310" y="333" width="180" height="22" rx="4" fill="white" stroke="#c7d2fe"/>
+                            <text x="400" y="348" text-anchor="middle" font-size="11" font-weight="600" fill="#4338ca">ClientHello + ECDH 公钥</text>
+                        </g>
+
+                        <!-- ===== 7s: ECDH ServerHello ===== -->
+                        <g>
+                            <rect x="30" y="405" width="50" height="24" rx="12" fill="#f1f5f9" stroke="#cbd5e1"/>
+                            <text x="55" y="422" text-anchor="middle" font-size="12" font-weight="700" fill="#64748b">7s</text>
+                            
+                            <!-- Arrow: host -> client (ServerHello) -->
+                            <line x1="205" y1="415" x2="590" y2="415" stroke="#6366f1" stroke-width="2" marker-end="url(#arrow-indigo)"/>
+                            
+                            <rect x="295" y="398" width="210" height="22" rx="4" fill="white" stroke="#c7d2fe"/>
+                            <text x="400" y="413" text-anchor="middle" font-size="11" font-weight="600" fill="#4338ca">ServerHello + 公钥 + 设备指纹</text>
+                        </g>
+
+                        <!-- ===== 9s: Subnet Negotiation ===== -->
+                        <g>
+                            <rect x="30" y="475" width="50" height="24" rx="12" fill="#f1f5f9" stroke="#cbd5e1"/>
+                            <text x="55" y="492" text-anchor="middle" font-size="12" font-weight="700" fill="#64748b">9s</text>
+                            
+                            <!-- Bidirectional dashed arrows -->
+                            <line x1="210" y1="485" x2="590" y2="485" stroke="#d97706" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrow-amber)"/>
+                            <line x1="590" y1="495" x2="210" y2="495" stroke="#d97706" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrow-amber)"/>
+                            
+                            <rect x="295" y="468" width="210" height="22" rx="4" fill="#fffbeb" stroke="#fcd34d"/>
+                            <text x="400" y="483" text-anchor="middle" font-size="11" font-weight="600" fill="#92400e">协商专属 /30 子网锁定</text>
+                            
+                            <!-- Subnet detail below -->
+                            <rect x="295" y="510" width="210" height="20" rx="4" fill="white" stroke="#fde68a"/>
+                            <text x="400" y="524" text-anchor="middle" font-size="10" font-family="monospace" fill="#b45309">192.168.254.0/30 启用</text>
+                        </g>
+
+                        <!-- ===== 10s: HID Transfer ===== -->
+                        <g>
+                            <rect x="30" y="575" width="50" height="24" rx="12" fill="#f1f5f9" stroke="#cbd5e1"/>
+                            <text x="55" y="592" text-anchor="middle" font-size="12" font-weight="700" fill="#64748b">10s</text>
+                            
+                            <rect x="110" y="575" width="90" height="32" rx="4" fill="#d1fae5" stroke="#6ee7b7" stroke-width="2"/>
+                            <text x="155" y="595" text-anchor="middle" font-size="12" font-weight="700" fill="#065f46">HID 发送</text>
+                            
+                            <rect x="600" y="575" width="90" height="32" rx="4" fill="#d1fae5" stroke="#6ee7b7" stroke-width="2"/>
+                            <text x="645" y="595" text-anchor="middle" font-size="12" font-weight="700" fill="#065f46">接收事件</text>
+                            
+                            <!-- Dashed ongoing arrow -->
+                            <line x1="205" y1="591" x2="590" y2="591" stroke="#10b981" stroke-width="2.5" stroke-dasharray="8 4" marker-end="url(#arrow-green)"/>
+                            
+                            <rect x="320" y="608" width="160" height="22" rx="4" fill="#ecfdf5" stroke="#a7f3d0"/>
+                            <text x="400" y="623" text-anchor="middle" font-size="11" font-weight="600" fill="#047857">持续数据流 · &lt;0.5ms RTT</text>
+                        </g>
+
+                        <!-- Connection complete badge -->
+                        <g>
+                            <rect x="300" y="648" width="200" height="26" rx="13" fill="#0f172a"/>
+                            <text x="400" y="666" text-anchor="middle" font-size="12" font-weight="700" fill="#34d399">✓ 10 秒内完成 · 用户零配置</text>
+                        </g>
+                    </svg>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div class="bg-white border border-border rounded-xl p-5">
+                        <h4 class="font-bold text-slate-800 mb-2 flex items-center gap-2">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                            RFC 3927 链路本地寻址
+                        </h4>
+                        <p class="text-sm text-slate-600">检测到新以太网接口 → 进入 APIPA 模式。随机选取 169.254.x.x/16 地址，ARP 冲突探测 (发 3 个 ARP probe)，无冲突后启用。全程自动，用户无感，约 2–4 秒完成。不影响机器其他网卡/路由表，完全隔离。</p>
+                    </div>
+                    <div class="bg-white border border-border rounded-xl p-5">
+                        <h4 class="font-bold text-slate-800 mb-2 flex items-center gap-2">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                            专属 /30 子网协商
+                        </h4>
+                        <p class="text-sm text-slate-600">握手后双方协商一个专用 /30 子网 (仅 2 个可用 IP，如 192.168.254.0/30)。该子网仅在 FlowGrid 虚拟网卡上生效，不写入系统路由，防止与业务网段冲突。设备配对成功后记忆子网，下次插线即通，0 秒重连。</p>
+                    </div>
+                </div>
+
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">有线帧格式 (Raw Ethernet Frame)</h3>
+                <div class="bg-slate-900 rounded-xl p-6 mb-6 text-white">
+                    <p class="text-sm text-slate-400 mb-4">直接走原始以太网帧 (EtherType 0xF1A0)，绕过 IP/UDP 栈，进一步压低延迟。合计 <span class="text-accent font-bold">17B / 帧</span>，无需 IP 头开销。</p>
+                    <div class="flex flex-wrap gap-1 font-mono text-xs">
+                        <div class="flex-1 min-w-[80px] bg-slate-800 border border-slate-700 rounded p-2 text-center">
+                            <div class="text-accent font-bold mb-1">2B</div>
+                            <div class="text-slate-300">帧类型<br><span class="text-slate-500">HID_EVENT=0x01</span></div>
+                        </div>
+                        <div class="flex-1 min-w-[80px] bg-slate-800 border border-slate-700 rounded p-2 text-center">
+                            <div class="text-accent font-bold mb-1">2B</div>
+                            <div class="text-slate-300">序列号<br><span class="text-slate-500">循环/乱序检测</span></div>
+                        </div>
+                        <div class="flex-1 min-w-[100px] bg-slate-800 border border-slate-700 rounded p-2 text-center">
+                            <div class="text-accent font-bold mb-1">4B</div>
+                            <div class="text-slate-300">时间戳 µs<br><span class="text-slate-500">单调时钟/插值</span></div>
+                        </div>
+                        <div class="flex-1 min-w-[80px] bg-slate-800 border border-slate-700 rounded p-2 text-center">
+                            <div class="text-accent font-bold mb-1">1B</div>
+                            <div class="text-slate-300">事件类型<br><span class="text-slate-500">移动/按键/滚轮</span></div>
+                        </div>
+                        <div class="flex-[2] min-w-[120px] bg-slate-800 border border-slate-700 rounded p-2 text-center">
+                            <div class="text-accent font-bold mb-1">4B</div>
+                            <div class="text-slate-300">事件载荷<br><span class="text-slate-500">坐标 / 键码 / 增量</span></div>
+                        </div>
+                        <div class="flex-[2] min-w-[120px] bg-slate-800 border border-slate-700 rounded p-2 text-center">
+                            <div class="text-accent font-bold mb-1">4B</div>
+                            <div class="text-slate-300">HMAC-SHA256<br><span class="text-slate-500">截断校验/防篡改</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">安全模型 · 有线场景</h3>
+                <ul class="list-disc pl-5 space-y-2 text-slate-600 mb-8">
+                    <li><strong>首次连接：</strong>ECDH P-256 密钥交换，生成会话密钥。</li>
+                    <li><strong>设备指纹：</strong>MAC 地址 + 硬件序列号哈希，绑定信任关系。</li>
+                    <li><strong>帧认证：</strong>每帧附 4B HMAC 截断值，防局域网内嗅探注入。</li>
+                    <li><strong>物理安全前提：</strong>有线直连本身已是强信道隔离。可选完整 DTLS (高安全场景启用，延迟约增加 0.1ms)。</li>
+                </ul>
+
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">系统适配细节</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-surface border border-border rounded-xl p-5">
+                        <div class="flex items-center gap-2 mb-3">
+                            <svg class="w-5 h-5 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+                            <span class="font-bold text-slate-800">Windows 端</span>
+                        </div>
+                        <ul class="text-sm text-slate-600 space-y-1.5 list-disc pl-4">
+                            <li>检测到新以太网适配器 → 自动设置 APIPA。</li>
+                            <li>若 APIPA 被组策略禁用，通过 WinAPI <code class="bg-slate-200 px-1 rounded text-xs">AddIPAddress</code> 以服务权限添加链路本地 IP。</li>
+                            <li>网卡绑定：通过 GUID 精确绑定 DirectLink 到指定适配器。</li>
+                            <li>防火墙规则：安装时自动添加入站规则，开放 UDP 24801。</li>
+                            <li>驱动层：使用 WinPcap/Npcap raw socket 实现以太网直连帧模式。</li>
+                        </ul>
+                    </div>
+                    <div class="bg-surface border border-border rounded-xl p-5">
+                        <div class="flex items-center gap-2 mb-3">
+                            <svg class="w-5 h-5 text-yellow-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12.504 0c-.155 0-.311.002-.466.006C5.337.161 0 5.607 0 12.22c0 3.62 1.57 6.872 4.05 9.096l.003.003c.14.126.283.248.43.366.033.027.067.053.1.08.14.11.284.216.432.317.04.027.08.054.12.08.15.1.303.195.46.285.03.017.06.034.09.05.16.09.324.174.49.253.03.014.06.028.09.042.17.08.343.154.52.222.02.008.04.016.06.024.18.068.364.13.55.186.02.006.04.012.06.018.19.055.383.103.58.144.01.002.02.004.03.006.2.04.403.073.61.098.01.001.02.003.03.004.21.024.423.04.64.048.01 0 .02.001.03.001.217.008.436.012.656.012.22 0 .44-.004.657-.012.01 0 .02-.001.03-.001.217-.008.43-.024.64-.048.01-.001.02-.003.03-.004.207-.025.41-.058.61-.098.01-.002.02-.004.03-.006.197-.041.39-.089.58-.144.02-.006.04-.012.06-.018.186-.056.37-.118.55-.186.02-.008.04-.016.06-.024.177-.068.35-.142.52-.222.03-.014.06-.028.09-.042.166-.079.33-.163.49-.253.03-.016.06-.033.09-.05.157-.09.31-.185.46-.285.04-.026.08-.053.12-.08.148-.101.292-.207.432-.317.033-.027.067-.053.1-.08.147-.118.29-.24.43-.366l.003-.003C22.43 19.092 24 15.84 24 12.22 24 5.607 18.663.161 11.963.006 11.808.002 11.654 0 11.504 0h1z"/></svg>
+                            <span class="font-bold text-slate-800">Linux 端</span>
+                        </div>
+                        <ul class="text-sm text-slate-600 space-y-1.5 list-disc pl-4">
+                            <li>systemd-networkd / NetworkManager 均支持链路本地 IP 自动分配。</li>
+                            <li>avahi-daemon 提供 mDNS 广播 (多数桌面发行版已预装)。</li>
+                            <li>raw socket 模式：使用 <code class="bg-slate-200 px-1 rounded text-xs">AF_PACKET / SOCK_RAW</code>，需要 <code class="bg-slate-200 px-1 rounded text-xs">CAP_NET_RAW</code> 能力。</li>
+                            <li>安装时通过 <code class="bg-slate-200 px-1 rounded text-xs">setcap cap_net_raw+eip</code> 授予二进制能力，无需 root 运行。</li>
+                            <li>udev 规则：检测以太网 link up 事件，自动触发 DirectLink 握手。</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section 5: KeyMapper -->
+            <section id="keymapper" class="mb-16 scroll-mt-24">
+                <h2 class="text-2xl font-bold text-primary mb-6 flex items-center gap-3">
+                    <span class="w-8 h-8 bg-accent/10 text-accent rounded-lg flex items-center justify-center text-sm">05</span>
+                    KeyMapper 自适应键位引擎
+                </h2>
+
+                <p class="text-slate-600 mb-6">现有工具 (Karabiner、xremap 等) 都只解决单机问题。FlowGrid 在握手阶段就交换双端 OS 类型，由服务端的 KeyMapper 引擎自动加载六向映射规则，并支持应用级上下文切换。</p>
+
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">OS 感知规则表</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                    <div class="bg-white border border-border rounded-xl p-5">
+                        <div class="text-xs font-bold text-slate-400 uppercase mb-3">Windows 键盘 → Mac 目标</div>
+                        <ul class="text-sm text-slate-700 space-y-2 font-mono">
+                            <li>Ctrl → <span class="text-slate-900 font-bold">⌘ Cmd</span> <span class="text-slate-400 text-xs">复制/粘贴等</span></li>
+                            <li>Win → <span class="text-slate-900 font-bold">⌥ Option</span></li>
+                            <li>Alt → <span class="text-slate-900 font-bold">⌃ Ctrl</span></li>
+                            <li>Delete → <span class="text-slate-900 font-bold">⌦ Del</span></li>
+                            <li>PrtSc → <span class="text-slate-900 font-bold">⌘3</span> <span class="text-slate-400 text-xs">截图</span></li>
+                        </ul>
+                    </div>
+                    <div class="bg-white border border-border rounded-xl p-5">
+                        <div class="text-xs font-bold text-slate-400 uppercase mb-3">Mac 键盘 → Windows/Linux 目标</div>
+                        <ul class="text-sm text-slate-700 space-y-2 font-mono">
+                            <li>⌘ Cmd → <span class="text-slate-900 font-bold">Ctrl</span> <span class="text-slate-400 text-xs">复制/粘贴等</span></li>
+                            <li>⌥ Option → <span class="text-slate-900 font-bold">Alt</span></li>
+                            <li>⌃ Ctrl → <span class="text-slate-900 font-bold">Ctrl</span></li>
+                            <li>⌘Space → <span class="text-slate-900 font-bold">Win</span> <span class="text-slate-400 text-xs">启动栏</span></li>
+                            <li>F11 → <span class="text-slate-900 font-bold">⌘Ctrl+F</span> <span class="text-slate-400 text-xs">全屏</span></li>
+                        </ul>
+                    </div>
+                    <div class="bg-white border border-border rounded-xl p-5">
+                        <div class="text-xs font-bold text-slate-400 uppercase mb-3">Linux → Mac 目标</div>
+                        <ul class="text-sm text-slate-700 space-y-2 font-mono">
+                            <li>Super → <span class="text-slate-900 font-bold">⌘ Cmd</span></li>
+                            <li>Ctrl+Alt+T → <span class="text-slate-900 font-bold">⌘Space</span> <span class="text-slate-400 text-xs">终端→Spotlight</span></li>
+                            <li>AltGr → <span class="text-slate-900 font-bold">⌥ Option</span></li>
+                            <li>Compose → <span class="text-slate-900 font-bold">⌥⇧</span></li>
+                        </ul>
+                    </div>
+                </div>
+
+                <h3 class="text-lg font-semibold text-slate-800 mb-4">应用感知层 (上下文规则)</h3>
+                <div class="bg-surface border border-border rounded-xl p-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-blue-100 text-blue-600 rounded flex items-center justify-center flex-shrink-0 font-bold text-xs">VS</div>
+                            <div>
+                                <div class="font-semibold text-slate-800 text-sm">VS Code</div>
+                                <div class="text-xs text-slate-500">自动启用 IDE 模式，Ctrl/Cmd 统一</div>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-slate-800 text-white rounded flex items-center justify-center flex-shrink-0 font-bold text-xs">>_</div>
+                            <div>
+                                <div class="font-semibold text-slate-800 text-sm">Terminal</div>
+                                <div class="text-xs text-slate-500">禁用 Cmd 拦截，透传原始扫描码</div>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-purple-100 text-purple-600 rounded flex items-center justify-center flex-shrink-0 font-bold text-xs">Fi</div>
+                            <div>
+                                <div class="font-semibold text-slate-800 text-sm">Figma</div>
+                                <div class="text-xs text-slate-500">保留 Space+拖拽手势</div>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <div class="w-8 h-8 bg-green-100 text-green-600 rounded flex items-center justify-center flex-shrink-0 font-bold text-xs">Y</div>
+                            <div>
+                                <div class="font-semibold text-slate-800 text-sm">自定义规则</div>
+                                <div class="text-xs text-slate-500">YAML 规则文件，热重载</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Section 6: Matrix -->
+            <section id="matrix" class="mb-16 scroll-mt-24">
+                <h2 class="text-2xl font-bold text-primary mb-6 flex items-center gap-3">
+                    <span class="w-8 h-8 bg-accent/10 text-accent rounded-lg flex items-center justify-center text-sm">06</span>
+                    连接模式矩阵
+                </h2>
+
+                <div class="overflow-x-auto rounded-lg border border-border">
+                    <table class="w-full text-sm doc-table">
+                        <thead>
+                            <tr>
+                                <th>连接模式</th>
+                                <th>协议栈</th>
+                                <th>发现方式</th>
+                                <th>延迟</th>
+                                <th>适用场景</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr class="bg-emerald-50/50">
+                                <td class="font-bold text-emerald-800">有线直连 (DirectLink)</td>
+                                <td>原始以太网帧 / UDP</td>
+                                <td>链路本地 + mDNS</td>
+                                <td class="font-bold text-emerald-700">&lt;0.5ms</td>
+                                <td>台式机、机房、无线隔离</td>
+                            </tr>
+                            <tr class="bg-blue-50/50">
+                                <td class="font-bold text-blue-800">Wi-Fi Direct (NearLink)</td>
+                                <td>UDP + DTLS 1.3</td>
+                                <td>BLE 5.0 广播</td>
+                                <td class="font-bold text-blue-700">&lt;3ms</td>
+                                <td>笔记本、无线工作台</td>
+                            </tr>
+                            <tr>
+                                <td class="font-medium">同局域网 (LAN 模式)</td>
+                                <td>UDP + DTLS 1.3</td>
+                                <td>mDNS / 手动 IP</td>
+                                <td>&lt;5ms</td>
+                                <td>已有路由器网络兜底</td>
+                            </tr>
+                            <tr class="bg-slate-50">
+                                <td class="font-medium text-slate-600">自动降级</td>
+                                <td>优先级自动选择</td>
+                                <td>有线 → 无线 → LAN</td>
+                                <td class="font-medium text-slate-600">最优路径</td>
+                                <td>混合环境，透明切换</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Footer -->
+            <footer class="border-t border-border pt-8 pb-12 text-center text-sm text-slate-400">
+                <p>FlowGrid 产品设计蓝皮书 · 2025 · 内部开发文档</p>
+            </footer>
+
+        </main>
+    </div>
+
+    <script>
+        const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('sidebar-overlay');
+
+        mobileMenuBtn.addEventListener('click', () => {
+            sidebar.classList.toggle('-translate-x-full');
+            overlay.classList.toggle('hidden');
+        });
+
+        overlay.addEventListener('click', () => {
+            sidebar.classList.add('-translate-x-full');
+            overlay.classList.add('hidden');
+        });
+
+        document.querySelectorAll('.nav-link').forEach(link => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth < 1024) {
+                    sidebar.classList.add('-translate-x-full');
+                    overlay.classList.add('hidden');
+                }
+            });
+        });
+
+        const sections = document.querySelectorAll('section[id]');
+        const navLinks = document.querySelectorAll('.nav-link');
+
+        const observerOptions = {
+            root: null,
+            rootMargin: '-20% 0px -70% 0px',
+            threshold: 0
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const id = entry.target.getAttribute('id');
+                    navLinks.forEach(link => {
+                        link.classList.remove('active');
+                        if (link.getAttribute('href') === `#${id}`) {
+                            link.classList.add('active');
+                        }
+                    });
+                }
+            });
+        }, observerOptions);
+
+        sections.forEach(section => observer.observe(section));
+    </script>
+</body>
+</html>
+

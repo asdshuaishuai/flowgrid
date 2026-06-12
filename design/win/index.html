@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — Windows 11 Design Board</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --line:#d9dee7; --green:#10a36f; --blue:#0878d8; --shadow:0 18px 42px rgba(24,30,44,0.14); }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"Segoe UI","SF Pro Text","Noto Sans SC",sans-serif; color:var(--ink); }
+  .board { width:min(1680px,calc(100vw - 48px)); margin:0 auto; padding:28px 0 44px; }
+  .board-header { display:grid; grid-template-columns:1fr auto; gap:18px; align-items:end; margin-bottom:22px; }
+  .brand { display:flex; gap:12px; align-items:center; }
+  .mark { display:grid; width:34px; height:34px; place-items:center; border-radius:8px; background:#111827; color:#fff; font-weight:700; }
+  h1 { margin:0; font-size:22px; font-weight:700; }
+  .board-subtitle { margin:4px 0 0; color:var(--muted); font-size:13px; }
+  .legend { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .chip { display:inline-flex; height:26px; align-items:center; gap:7px; border:1px solid var(--line); border-radius:999px; padding:0 10px; background:rgba(255,255,255,0.72); color:#3a4658; font-size:12px; font-weight:600; }
+  .dot { width:7px; height:7px; border-radius:999px; background:var(--green); }
+  .module-nav { display:flex; gap:10px; margin-bottom:18px; flex-wrap:wrap; }
+  .mod-link { display:inline-flex; height:32px; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; padding:0 14px; background:#fff; color:var(--blue); font-size:12px; font-weight:700; text-decoration:none; transition:all .15s; }
+  .mod-link:hover { background:var(--blue); color:#fff; border-color:var(--blue); }
+  .stage { position:relative; min-height:760px; overflow:hidden; border:1px solid rgba(93,105,122,0.22); border-radius:14px; background: radial-gradient(circle at 12% 8%,rgba(255,255,255,0.9),transparent 34%), linear-gradient(180deg,rgba(255,255,255,0.82),rgba(241,244,248,0.92)); box-shadow:var(--shadow); }
+  .window { position:absolute; overflow:hidden; border:1px solid rgba(72,85,105,0.16); background:#fff; box-shadow:0 16px 28px rgba(15,23,42,0.16); border-radius:8px; }
+  .titlebar { display:flex; align-items:center; justify-content:space-between; height:34px; padding:0 10px; border-bottom:1px solid rgba(90,101,117,0.16); background:rgba(249,250,252,0.9); font-size:12px; font-weight:700; }
+  .title-left, .controls { display:flex; align-items:center; gap:7px; }
+  .app-icon { width:16px; height:16px; border-radius:4px; background:var(--blue); }
+  .controls i { display:block; width:20px; height:18px; border-radius:2px; background:rgba(20,29,43,0.05); }
+  .content { padding:14px; }
+  .toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+  .status { display:inline-flex; align-items:center; gap:8px; color:#2f3a4d; font-size:12px; font-weight:650; }
+  .button { display:inline-flex; height:28px; align-items:center; justify-content:center; border:0; border-radius:5px; padding:0 11px; background:var(--blue); color:#fff; font-size:12px; font-weight:700; cursor:pointer; }
+  .button.secondary { border:1px solid rgba(89,101,118,0.2); background:#fff; color:#334155; }
+  .device { display:grid; grid-template-columns:42px 1fr auto; gap:10px; align-items:center; border:1px solid rgba(109,122,140,0.18); border-radius:7px; padding:11px; background:rgba(255,255,255,0.88); }
+  .device-icon { display:grid; width:42px; height:42px; place-items:center; border-radius:8px; background:#e6f2ff; color:var(--blue); font-size:12px; font-weight:800; }
+  .device-name { margin:0; font-size:13px; font-weight:800; }
+  .device-meta { margin:3px 0 0; color:var(--muted); font-size:11px; }
+  .latency { min-width:56px; border-radius:999px; padding:5px 8px; background:#e8fbf1; color:#07966c; font-size:12px; font-weight:800; text-align:center; }
+  .section { margin-top:12px; border:1px solid rgba(109,122,140,0.18); border-radius:7px; background:rgba(255,255,255,0.74); }
+  .section-head { display:flex; justify-content:space-between; align-items:center; padding:9px 10px; border-bottom:1px solid rgba(109,122,140,0.16); font-size:12px; font-weight:800; }
+  .badge { border-radius:999px; padding:3px 7px; background:#e8f7ff; color:#0675b9; font-size:10px; font-weight:800; }
+  .mapping { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:10px; }
+  .keypair { display:grid; gap:5px; }
+  .keys { display:flex; align-items:center; gap:5px; font-size:11px; font-weight:800; }
+  .key { min-width:34px; border:1px solid rgba(80,94,112,0.22); border-radius:4px; padding:5px 7px; background:#fff; text-align:center; }
+  .arrow { color:var(--muted); }
+  .chart { display:flex; align-items:end; gap:4px; height:70px; padding:12px 10px 10px; }
+  .bar { flex:1; min-width:3px; border-radius:999px 999px 0 0; background:#9cccf8; }
+  .settings-list { display:grid; gap:1px; background:rgba(109,122,140,0.14); }
+  .setting-row { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; min-height:42px; padding:8px 10px; background:rgba(255,255,255,0.9); font-size:12px; font-weight:700; }
+  .toggle { position:relative; width:34px; height:18px; border-radius:999px; background:#18a058; }
+  .toggle::after { content:""; position:absolute; top:2px; right:2px; width:14px; height:14px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.18); }
+  .dialog { position:absolute; overflow:hidden; border:1px solid rgba(83,96,115,0.18); background:#fff; box-shadow:0 18px 38px rgba(15,23,42,0.18); border-radius:8px; }
+  .dialog-body { padding:18px; text-align:center; }
+  .steps { display:flex; justify-content:center; gap:8px; margin-bottom:12px; }
+  .step { display:grid; width:18px; height:18px; place-items:center; border-radius:999px; background:#e6ebf2; color:#6f7d91; font-size:10px; font-weight:800; }
+  .step.active { background:var(--blue); color:#fff; }
+  .scanner { display:grid; width:96px; height:76px; place-items:center; margin:14px auto 10px; border-radius:7px; background:#f4f7fb; }
+  .ring { width:36px; height:36px; border:4px solid #d7ebff; border-top-color:var(--blue); border-radius:50%; }
+  .mini-device { display:grid; grid-template-columns:32px 1fr auto; gap:9px; align-items:center; margin-top:10px; border:2px solid var(--blue); border-radius:6px; padding:8px; text-align:left; }
+  .tray { position:absolute; overflow:hidden; border:1px solid rgba(71,84,103,0.2); background:rgba(255,255,255,0.96); box-shadow:0 16px 32px rgba(15,23,42,0.16); border-radius:8px; }
+  .tray-head { display:flex; justify-content:space-between; gap:12px; padding:10px; border-bottom:1px solid rgba(110,123,141,0.16); font-size:12px; font-weight:800; }
+  .tray-item { display:flex; justify-content:space-between; padding:8px 10px; color:#273348; font-size:12px; }
+  .shortcut { color:#8a94a4; font-size:11px; }
+  .win-main { left:22px; top:34px; width:440px; height:490px; }
+  .win-dialog { right:22px; top:48px; width:292px; height:342px; }
+  .win-tray { left:34px; bottom:32px; width:252px; }
+  .win-settings { right:24px; bottom:34px; width:330px; height:268px; }
+  @media (max-width:1280px) { .stage { min-height:720px; } }
+  @media (max-width:720px) {
+    .board { width:min(100vw - 24px,560px); padding-top:18px; }
+    .board-header { grid-template-columns:1fr; }
+    .legend { justify-content:flex-start; }
+    .stage { min-height:980px; }
+    .window,.dialog,.tray { position:relative; inset:auto; width:calc(100% - 24px); height:auto; margin:12px; }
+  }
+</style>
+</head>
+<body>
+<main class="board">
+  <header class="board-header">
+    <div class="brand">
+      <div class="mark">F</div>
+      <div>
+        <h1>FlowGrid — Windows 11 · Fluent</h1>
+        <p class="board-subtitle">Tray resident utility with interactive modules</p>
+      </div>
+    </div>
+    <div class="legend">
+      <span class="chip"><span class="dot"></span>NearLink 2.4ms</span>
+      <span class="chip">DirectLink 0.5ms</span>
+      <span class="chip">DTLS 1.3</span>
+    </div>
+  </header>
+  <div class="module-nav">
+    <a class="mod-link" href="main.html">Main Window</a>
+    <a class="mod-link" href="add-device.html">Add Device</a>
+    <a class="mod-link" href="tray.html">System Tray</a>
+    <a class="mod-link" href="settings.html">Settings</a>
+    <a class="mod-link" href="../index.html" style="margin-left:auto;color:#64748b;">← Back</a>
+  </div>
+  <div class="stage">
+    <section class="window win-main">
+      <div class="titlebar">
+        <div class="title-left"><span class="app-icon"></span>FlowGrid</div>
+        <span>Connections</span>
+        <div class="controls"><i></i><i></i><i></i></div>
+      </div>
+      <div class="content">
+        <div class="toolbar">
+          <span class="status"><span class="dot"></span>Connected to MacBook Pro</span>
+          <button class="button">Add Device</button>
+        </div>
+        <div class="device">
+          <div class="device-icon">MB</div>
+          <div><p class="device-name">MacBook Pro</p><p class="device-meta">macOS Sonoma · Wi-Fi Direct · DTLS 1.3</p></div>
+          <div class="latency">2.4ms</div>
+        </div>
+        <div class="section">
+          <div class="section-head">Key Mapping Active <span class="badge">Auto detected</span></div>
+          <div class="mapping">
+            <div class="keypair"><div class="keys"><span class="key">Ctrl</span><span class="arrow">→</span><span class="key">⌘</span></div><p style="margin:3px 0 0;color:var(--muted);font-size:11px;">Copy / Paste</p></div>
+            <div class="keypair"><div class="keys"><span class="key">Win</span><span class="arrow">→</span><span class="key">⌥</span></div><p style="margin:3px 0 0;color:var(--muted);font-size:11px;">System shortcuts</p></div>
+            <div class="keypair"><div class="keys"><span class="key">Alt</span><span class="arrow">→</span><span class="key">Ctrl</span></div><p style="margin:3px 0 0;color:var(--muted);font-size:11px;">Terminal apps</p></div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-head">Network Latency <span class="badge">2.3ms avg</span></div>
+          <div class="chart">
+            <span class="bar" style="height:28px"></span><span class="bar" style="height:36px"></span><span class="bar" style="height:23px"></span>
+            <span class="bar" style="height:42px"></span><span class="bar" style="height:31px"></span><span class="bar" style="height:26px"></span>
+            <span class="bar" style="height:39px"></span><span class="bar" style="height:30px"></span><span class="bar" style="height:45px"></span>
+            <span class="bar" style="height:34px"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="dialog win-dialog">
+      <div class="titlebar">Add Device</div>
+      <div class="dialog-body">
+        <div class="steps"><span class="step active">1</span><span class="step">2</span><span class="step">3</span></div>
+        <h3>Discover nearby devices</h3>
+        <p class="device-meta">BLE discovery and Wi-Fi Direct handoff</p>
+        <div class="scanner"><span class="ring"></span></div>
+        <div class="mini-device">
+          <div class="device-icon">MB</div>
+          <div><p class="device-name">MacBook Pro</p><p class="device-meta">-54 dBm · NearLink</p></div>
+          <span class="badge">Ready</span>
+        </div>
+        <div class="toolbar" style="margin-top:14px;">
+          <button class="button secondary">Cancel</button>
+          <button class="button">Connect</button>
+        </div>
+      </div>
+    </section>
+    <section class="tray win-tray">
+      <div class="tray-head"><span>FlowGrid</span><span style="color:#0b9b6b">2.4ms</span></div>
+      <div class="tray-item"><span>Connected to MacBook Pro</span><span class="shortcut">NearLink</span></div>
+      <div class="tray-item"><span>Connections</span><span class="shortcut">Ctrl+Shift+F</span></div>
+      <div class="tray-item"><span>Key Mapping</span><span class="shortcut">Active</span></div>
+      <div class="tray-item"><span>Settings</span><span class="shortcut">Win UI</span></div>
+    </section>
+    <section class="window win-settings">
+      <div class="titlebar">Connection Settings</div>
+      <div class="settings-list">
+        <div class="setting-row"><div>Auto select best route<p class="device-meta">NearLink first, DirectLink fallback</p></div><span class="toggle"></span></div>
+        <div class="setting-row"><div>Clipboard sync<p class="device-meta">Text and files across devices</p></div><span class="toggle"></span></div>
+        <div class="setting-row"><div>Mouse smoothing<p class="device-meta">240Hz motion interpolation</p></div><span class="toggle"></span></div>
+      </div>
+    </section>
+  </div>
+</main>
+</body>
+</html>

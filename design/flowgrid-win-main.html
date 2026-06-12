@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — Windows Main</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --line:#d9dee7; --green:#10a36f; --blue:#0878d8; --shadow:0 18px 42px rgba(24,30,44,0.14); }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"Segoe UI","SF Pro Text","Noto Sans SC",sans-serif; color:var(--ink); display:grid; place-items:center; padding:24px; }
+  .window { width:480px; border-radius:8px; border:1px solid rgba(72,85,105,0.16); background:#fff; box-shadow:var(--shadow); overflow:hidden; }
+  .titlebar { display:flex; align-items:center; justify-content:space-between; height:34px; padding:0 10px; border-bottom:1px solid rgba(90,101,117,0.16); background:rgba(249,250,252,0.9); font-size:12px; font-weight:700; }
+  .title-left, .controls { display:flex; align-items:center; gap:7px; }
+  .app-icon { width:16px; height:16px; border-radius:4px; background:var(--blue); }
+  .controls i { display:block; width:20px; height:18px; border-radius:2px; background:rgba(20,29,43,0.05); }
+  .content { padding:14px; }
+  .toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+  .status { display:inline-flex; align-items:center; gap:8px; color:#2f3a4d; font-size:12px; font-weight:650; }
+  .dot { width:7px; height:7px; border-radius:999px; background:var(--green); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+  .button { display:inline-flex; height:28px; align-items:center; justify-content:center; border:0; border-radius:5px; padding:0 11px; background:var(--blue); color:#fff; font-size:12px; font-weight:700; cursor:pointer; transition:filter .15s; text-decoration:none; }
+  .button:hover { filter:brightness(1.1); }
+  .button:active { filter:brightness(.9); transform:translateY(1px); }
+  .button.secondary { border:1px solid rgba(89,101,118,0.2); background:#fff; color:#334155; }
+  .device { display:grid; grid-template-columns:42px 1fr auto; gap:10px; align-items:center; border:1px solid rgba(109,122,140,0.18); border-radius:7px; padding:11px; background:rgba(255,255,255,0.88); transition:box-shadow .15s; }
+  .device:hover { box-shadow:0 2px 8px rgba(15,23,42,0.08); }
+  .device-icon { display:grid; width:42px; height:42px; place-items:center; border-radius:8px; background:#e6f2ff; color:var(--blue); font-size:12px; font-weight:800; }
+  .device-name { margin:0; font-size:13px; font-weight:800; }
+  .device-meta { margin:3px 0 0; color:var(--muted); font-size:11px; }
+  .latency { min-width:56px; border-radius:999px; padding:5px 8px; background:#e8fbf1; color:#07966c; font-size:12px; font-weight:800; text-align:center; }
+  .section { margin-top:12px; border:1px solid rgba(109,122,140,0.18); border-radius:7px; background:rgba(255,255,255,0.74); }
+  .section-head { display:flex; justify-content:space-between; align-items:center; padding:9px 10px; border-bottom:1px solid rgba(109,122,140,0.16); font-size:12px; font-weight:800; }
+  .badge { border-radius:999px; padding:3px 7px; background:#e8f7ff; color:#0675b9; font-size:10px; font-weight:800; }
+  .mapping { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:10px; }
+  .keypair { display:grid; gap:5px; }
+  .keys { display:flex; align-items:center; gap:5px; font-size:11px; font-weight:800; }
+  .key { min-width:34px; border:1px solid rgba(80,94,112,0.22); border-radius:4px; padding:5px 7px; background:#fff; text-align:center; }
+  .arrow { color:var(--muted); }
+  .chart { display:flex; align-items:end; gap:4px; height:70px; padding:12px 10px 10px; }
+  .bar { flex:1; min-width:3px; border-radius:999px 999px 0 0; background:#9cccf8; transition:height .4s ease; }
+  .nav { display:flex; gap:8px; margin-top:14px; }
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">
+    <div class="title-left"><span class="app-icon"></span>FlowGrid</div>
+    <span>Connections</span>
+    <div class="controls"><i></i><i></i><i></i></div>
+  </div>
+  <div class="content">
+    <div class="toolbar">
+      <span class="status"><span class="dot"></span>Connected to MacBook Pro</span>
+      <a class="button" href="flowgrid-win-add-device.html">Add Device</a>
+    </div>
+    <div class="device">
+      <div class="device-icon">MB</div>
+      <div>
+        <p class="device-name">MacBook Pro</p>
+        <p class="device-meta">macOS Sonoma · Wi-Fi Direct · DTLS 1.3</p>
+      </div>
+      <div class="latency" id="latency">2.4ms</div>
+    </div>
+    <div class="section">
+      <div class="section-head">Key Mapping Active <span class="badge">Auto detected</span></div>
+      <div class="mapping">
+        <div class="keypair"><div class="keys"><span class="key">Ctrl</span><span class="arrow">→</span><span class="key">⌘</span></div><p style="margin:3px 0 0;color:var(--muted);font-size:11px;">Copy / Paste</p></div>
+        <div class="keypair"><div class="keys"><span class="key">Win</span><span class="arrow">→</span><span class="key">⌥</span></div><p style="margin:3px 0 0;color:var(--muted);font-size:11px;">System shortcuts</p></div>
+        <div class="keypair"><div class="keys"><span class="key">Alt</span><span class="arrow">→</span><span class="key">Ctrl</span></div><p style="margin:3px 0 0;color:var(--muted);font-size:11px;">Terminal apps</p></div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-head">Network Latency <span class="badge" id="avgLatency">2.3ms avg</span></div>
+      <div class="chart" id="chart">
+        <span class="bar" style="height:28px"></span><span class="bar" style="height:36px"></span><span class="bar" style="height:23px"></span>
+        <span class="bar" style="height:42px"></span><span class="bar" style="height:31px"></span><span class="bar" style="height:26px"></span>
+        <span class="bar" style="height:39px"></span><span class="bar" style="height:30px"></span><span class="bar" style="height:45px"></span>
+        <span class="bar" style="height:34px"></span>
+      </div>
+    </div>
+    <div class="nav">
+      <a class="button secondary" href="flowgrid-win-tray.html">Open Tray</a>
+      <a class="button secondary" href="flowgrid-win-settings.html">Settings</a>
+    </div>
+  </div>
+</div>
+<script>
+  const bars = document.querySelectorAll('.bar');
+  const latencyEl = document.getElementById('latency');
+  const avgEl = document.getElementById('avgLatency');
+  setInterval(() => {
+    const values = [];
+    bars.forEach(bar => {
+      const h = 18 + Math.random() * 32;
+      bar.style.height = h + 'px';
+      values.push(h);
+    });
+    const avg = (values.reduce((a,b)=>a+b,0)/values.length/10).toFixed(1);
+    latencyEl.textContent = avg + 'ms';
+    avgEl.textContent = avg + 'ms avg';
+  }, 1200);
+</script>
+</body>
+</html>

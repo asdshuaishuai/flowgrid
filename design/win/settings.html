@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — Settings (Windows)</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --line:#d9dee7; --blue:#0878d8; --amber:#d97706; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"Segoe UI","SF Pro Text","Noto Sans SC",sans-serif; color:var(--ink); display:grid; place-items:center; padding:24px; }
+  .app { width:480px; border-radius:8px; border:1px solid rgba(72,85,105,0.16); background:#fff; box-shadow:0 18px 42px rgba(24,30,44,0.14); overflow:hidden; display:flex; flex-direction:column; max-height:calc(100vh - 48px); }
+  .titlebar { display:flex; align-items:center; justify-content:center; height:34px; padding:0 10px; border-bottom:1px solid rgba(90,101,117,0.16); background:rgba(249,250,252,0.9); font-size:12px; font-weight:700; flex-shrink:0; }
+  .content { padding:14px; overflow-y:auto; }
+  .cat-title { font-size:11px; font-weight:800; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin:16px 0 8px; }
+  .cat-title:first-child { margin-top:0; }
+  .settings-list { display:grid; gap:1px; background:rgba(109,122,140,0.14); border-radius:6px; overflow:hidden; }
+  .setting-row { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; min-height:46px; padding:8px 12px; background:rgba(255,255,255,0.95); font-size:12px; font-weight:700; }
+  .setting-row:hover { background:#fafafa; }
+  .small { margin:3px 0 0; color:var(--muted); font-size:11px; line-height:1.35; font-weight:400; }
+  .toggle { position:relative; width:36px; height:20px; border-radius:999px; background:#ccc; cursor:pointer; transition:background .2s; flex-shrink:0; }
+  .toggle.on { background:#18a058; }
+  .toggle::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.18); transition:left .2s; }
+  .toggle.on::after { left:18px; }
+  .select-box { padding:4px 8px; border:1px solid var(--line); border-radius:4px; font-size:11px; font-family:inherit; background:#fff; cursor:pointer; }
+  .badge { border-radius:999px; padding:3px 8px; background:#e8f7ff; color:#0675b9; font-size:10px; font-weight:800; cursor:pointer; transition:all .15s; }
+  .badge:hover { background:#dbeafe; }
+  .slider-wrap { display:flex; align-items:center; gap:10px; }
+  .slider { flex:1; -webkit-appearance:none; height:4px; border-radius:999px; background:#e2e8f0; outline:none; }
+  .slider::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; border-radius:50%; background:var(--blue); cursor:pointer; }
+  .slider-val { min-width:32px; text-align:right; font-size:11px; color:var(--muted); }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(80px); background:#1e293b; color:#fff; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; opacity:0; transition:all .3s ease; pointer-events:none; z-index:100; }
+  .toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
+  .nav-bar { display:flex; gap:6px; padding:10px 14px; border-top:1px solid var(--line); background:#fafafa; flex-shrink:0; }
+  .nav-btn { display:inline-flex; height:28px; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:5px; padding:0 11px; background:#fff; color:#475569; font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; text-decoration:none; }
+  .nav-btn:hover { border-color:#94a3b8; color:var(--ink); }
+  .nav-btn.primary { background:var(--blue); color:#fff; border-color:var(--blue); }
+  .nav-btn.primary:hover { filter:brightness(1.1); }
+  .unsaved { display:none; font-size:11px; color:var(--amber); font-weight:700; align-self:center; margin-left:auto; margin-right:8px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="titlebar">Connection Settings</div>
+  <div class="content">
+    <div class="cat-title">Connection</div>
+    <div class="settings-list">
+      <div class="setting-row">
+        <div>Auto select best route<p class="small">NearLink first, DirectLink fallback</p></div>
+        <span class="toggle on" data-key="autoRoute" onclick="toggle(this)"></span>
+      </div>
+      <div class="setting-row">
+        <div>Preferred protocol<p class="small">Connection priority for new devices</p></div>
+        <span class="badge" id="protoBadge" onclick="cycleProto()">NearLink</span>
+      </div>
+      <div class="setting-row">
+        <div>Fallback timeout<p class="small">Seconds before trying next protocol</p></div>
+        <div class="slider-wrap">
+          <input type="range" class="slider" min="1" max="10" value="3" id="timeoutSlider" oninput="updateSlider(this)">
+          <span class="slider-val" id="timeoutVal">3s</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cat-title">Sync</div>
+    <div class="settings-list">
+      <div class="setting-row">
+        <div>Clipboard sync<p class="small">Text and files across devices</p></div>
+        <span class="toggle on" data-key="clipSync" onclick="toggle(this)"></span>
+      </div>
+      <div class="setting-row">
+        <div>File transfer<p class="small">Drag & drop files between devices</p></div>
+        <span class="toggle" data-key="fileXfer" onclick="toggle(this)"></span>
+      </div>
+      <div class="setting-row">
+        <div>Notification mirroring<p class="small">Show phone notifications on desktop</p></div>
+        <span class="toggle on" data-key="notifMirror" onclick="toggle(this)"></span>
+      </div>
+    </div>
+
+    <div class="cat-title">Input</div>
+    <div class="settings-list">
+      <div class="setting-row">
+        <div>Mouse smoothing<p class="small">240Hz motion interpolation</p></div>
+        <span class="toggle" data-key="mouseSmooth" onclick="toggle(this)"></span>
+      </div>
+      <div class="setting-row">
+        <div>Key repeat delay<p class="small">Milliseconds before key repeat starts</p></div>
+        <div class="slider-wrap">
+          <input type="range" class="slider" min="100" max="1000" step="50" value="400" id="repeatSlider" oninput="updateSlider(this)">
+          <span class="slider-val" id="repeatVal">400ms</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cat-title">Security</div>
+    <div class="settings-list">
+      <div class="setting-row">
+        <div>DTLS encryption<p class="small">Secure input transport</p></div>
+        <span class="toggle on" data-key="dtls" onclick="toggle(this)"></span>
+      </div>
+      <div class="setting-row">
+        <div>Certificate pinning<p class="small">Reject unknown certificates</p></div>
+        <span class="toggle on" data-key="certPin" onclick="toggle(this)"></span>
+      </div>
+    </div>
+  </div>
+  <div class="nav-bar">
+    <a class="nav-btn" href="main.html">← Back</a>
+    <span class="unsaved" id="unsaved">● Unsaved changes</span>
+    <button class="nav-btn primary" onclick="saveSettings()">Save</button>
+    <a class="nav-btn" href="main.html">Cancel</a>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+let changed = false;
+const protos = ['NearLink','DirectLink','Auto'];
+let pi = 0;
+
+function toggle(el) {
+  el.classList.toggle('on');
+  markChanged();
+}
+
+function cycleProto() {
+  pi = (pi + 1) % protos.length;
+  document.getElementById('protoBadge').textContent = protos[pi];
+  markChanged();
+}
+
+function updateSlider(el) {
+  const suffix = el.id === 'timeoutSlider' ? 's' : 'ms';
+  document.getElementById(el.id.replace('Slider','Val')).textContent = el.value + suffix;
+  markChanged();
+}
+
+function markChanged() {
+  if (changed) return;
+  changed = true;
+  document.getElementById('unsaved').style.display = 'block';
+}
+
+function saveSettings() {
+  changed = false;
+  document.getElementById('unsaved').style.display = 'none';
+  showToast('Settings saved successfully');
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2200);
+}
+</script>
+</body>
+</html>

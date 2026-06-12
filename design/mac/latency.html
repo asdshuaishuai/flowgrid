@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — Latency Monitor (macOS)</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --green:#10a36f; --blue:#007aff; --red:#dc2626; --amber:#d97706; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"SF Pro Text","SF Pro Display","PingFang SC","Noto Sans SC",sans-serif; color:var(--ink); display:grid; place-items:center; padding:24px; }
+  .app { width:420px; border-radius:12px; border:1px solid rgba(72,85,105,0.16); background:#fff; box-shadow:0 18px 42px rgba(24,30,44,0.14); overflow:hidden; display:flex; flex-direction:column; }
+  .titlebar { display:flex; align-items:center; justify-content:space-between; height:34px; padding:0 10px; border-bottom:1px solid rgba(90,101,117,0.16); background:rgba(255,255,255,0.82); backdrop-filter:blur(16px); font-size:12px; font-weight:700; flex-shrink:0; }
+  .traffic { display:flex; align-items:center; gap:7px; }
+  .traffic i { width:11px; height:11px; border-radius:50%; display:block; }
+  .traffic i:nth-child(1) { background:#ff5f57; }
+  .traffic i:nth-child(2) { background:#febc2e; }
+  .traffic i:nth-child(3) { background:#28c840; }
+  .content { padding:18px; }
+  .hero { display:flex; justify-content:space-between; align-items:end; margin-bottom:4px; }
+  .hero strong { font-size:42px; font-weight:800; transition:color .3s; }
+  .hero strong span { font-size:14px; font-weight:600; }
+  .hero strong.good { color:#08a76c; }
+  .hero strong.warn { color:var(--amber); }
+  .hero strong.bad { color:var(--red); }
+  .small { margin:0; color:var(--muted); font-size:11px; line-height:1.6; }
+  .chart-wrap { position:relative; height:90px; margin-top:12px; padding:8px 0; }
+  .chart { display:flex; align-items:end; gap:3px; height:70px; }
+  .bar { flex:1; min-width:2px; border-radius:999px 999px 0 0; background:#bfdbfe; transition:height .4s ease, background .3s; }
+  .bar.recent { background:#60a5fa; }
+  .chart-grid { position:absolute; top:0; left:0; right:0; bottom:0; pointer-events:none; }
+  .grid-line { position:absolute; left:0; right:0; border-top:1px dashed #e2e8f0; }
+  .grid-label { position:absolute; left:-2px; font-size:9px; color:#94a3b8; background:#fff; padding:0 2px; }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:16px; }
+  .stat { text-align:center; padding:12px 8px; border-radius:10px; background:#f8fafc; transition:all .2s; }
+  .stat:hover { background:#f1f5f9; }
+  .stat-value { font-size:15px; font-weight:800; color:var(--ink); transition:color .3s; }
+  .stat-label { font-size:9px; color:var(--muted); margin-top:4px; text-transform:uppercase; letter-spacing:.3px; }
+  .history { margin-top:16px; }
+  .history-title { font-size:12px; font-weight:700; margin-bottom:8px; }
+  .history-row { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid #f1f5f9; font-size:11px; }
+  .history-time { color:var(--muted); }
+  .history-val { font-weight:700; }
+  .history-val.good { color:#08a76c; }
+  .history-val.warn { color:var(--amber); }
+  .history-val.bad { color:var(--red); }
+  .alert { display:none; margin-top:12px; padding:8px 12px; border-radius:8px; background:#fef3c7; color:#92400e; font-size:11px; font-weight:600; animation:slideIn .3s ease; }
+  @keyframes slideIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+  .nav-bar { display:flex; gap:6px; padding:10px 14px; border-top:1px solid #e2e8f0; background:#fafafa; }
+  .nav-btn { display:inline-flex; height:28px; align-items:center; justify-content:center; border:1px solid #e2e8f0; border-radius:6px; padding:0 11px; background:#fff; color:#475569; font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; text-decoration:none; }
+  .nav-btn:hover { border-color:#94a3b8; color:var(--ink); }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <span>Latency Monitor</span>
+    <span></span>
+  </div>
+  <div class="content">
+    <div class="hero">
+      <strong class="good" id="bigLatency">2.4<span>ms</span></strong>
+      <p class="small" style="text-align:right;">Min <span id="minVal">1.8</span>ms<br>Avg <span id="avgVal">2.3</span>ms<br>95th <span id="p95Val">3.1</span>ms</p>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-grid">
+        <div class="grid-line" style="top:0%"><span class="grid-label" style="top:-5px;">5ms</span></div>
+        <div class="grid-line" style="top:33%"><span class="grid-label" style="top:-5px;">3ms</span></div>
+        <div class="grid-line" style="top:66%"><span class="grid-label" style="top:-5px;">1ms</span></div>
+      </div>
+      <div class="chart" id="chart"></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="stat-value" id="stCurrent">2.4ms</div><div class="stat-label">Current</div></div>
+      <div class="stat"><div class="stat-value" id="stMin">1.8ms</div><div class="stat-label">Minimum</div></div>
+      <div class="stat"><div class="stat-value" id="stMax">3.2ms</div><div class="stat-label">Maximum</div></div>
+      <div class="stat"><div class="stat-value" id="stJitter">0.4ms</div><div class="stat-label">Jitter</div></div>
+    </div>
+    <div class="alert" id="alert">⚠️ Latency spike detected (> 5ms)</div>
+    <div class="history">
+      <div class="history-title">Recent Events</div>
+      <div id="historyList"></div>
+    </div>
+  </div>
+  <div class="nav-bar">
+    <a class="nav-btn" href="main.html">← Back</a>
+    <a class="nav-btn" href="tray.html">Menu Bar</a>
+    <a class="nav-btn" href="add-device.html">Add Device</a>
+  </div>
+</div>
+
+<script>
+const BAR_COUNT = 24;
+let history = [];
+let minV = 1.8, maxV = 3.2;
+
+function initChart() {
+  const chart = document.getElementById('chart');
+  for (let i = 0; i < BAR_COUNT; i++) {
+    const bar = document.createElement('span');
+    bar.className = 'bar' + (i >= BAR_COUNT - 3 ? ' recent' : '');
+    bar.style.height = (15 + Math.random() * 35) + 'px';
+    chart.appendChild(bar);
+  }
+}
+
+function addEvent(val) {
+  const now = new Date();
+  const time = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0') + ':' + now.getSeconds().toString().padStart(2,'0');
+  history.unshift({ time, val });
+  if (history.length > 5) history.pop();
+  renderHistory();
+}
+
+function renderHistory() {
+  document.getElementById('historyList').innerHTML = history.map(h => {
+    const cls = h.val < 2 ? 'good' : h.val < 4 ? 'warn' : 'bad';
+    return `<div class="history-row"><span class="history-time">${h.time}</span><span class="history-val ${cls}">${h.val.toFixed(1)}ms</span></div>`;
+  }).join('');
+}
+
+function update() {
+  const bars = document.querySelectorAll('.bar');
+  bars.forEach((bar, i) => {
+    bar.classList.toggle('recent', i >= BAR_COUNT - 3);
+    const h = 10 + Math.random() * 50;
+    bar.style.height = h + 'px';
+    bar.style.background = i >= BAR_COUNT - 3 ? '#60a5fa' : (h > 40 ? '#fca5a5' : '#bfdbfe');
+  });
+
+  const cur = 1.2 + Math.random() * 2.8;
+  const big = document.getElementById('bigLatency');
+  big.innerHTML = cur.toFixed(1) + '<span>ms</span>';
+  big.className = cur < 2 ? 'good' : cur < 4 ? 'warn' : 'bad';
+
+  document.getElementById('stCurrent').textContent = cur.toFixed(1) + 'ms';
+  document.getElementById('stCurrent').style.color = cur < 2 ? '#08a76c' : cur < 4 ? '#d97706' : '#dc2626';
+
+  if (cur < minV) { minV = cur; document.getElementById('minVal').textContent = minV.toFixed(1); document.getElementById('stMin').textContent = minV.toFixed(1) + 'ms'; }
+  if (cur > maxV) { maxV = cur; document.getElementById('stMax').textContent = maxV.toFixed(1) + 'ms'; }
+
+  const jitter = (Math.random() * 0.6).toFixed(2);
+  document.getElementById('stJitter').textContent = jitter + 'ms';
+
+  const alert = document.getElementById('alert');
+  if (cur > 5) { alert.style.display = 'block'; } else { alert.style.display = 'none'; }
+
+  addEvent(cur);
+}
+
+initChart();
+renderHistory();
+setInterval(update, 1500);
+</script>
+</body>
+</html>

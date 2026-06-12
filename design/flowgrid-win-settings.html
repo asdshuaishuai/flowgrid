@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — Settings (Windows)</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --green:#10a36f; --blue:#0878d8; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"Segoe UI","SF Pro Text","Noto Sans SC",sans-serif; color:var(--ink); display:grid; place-items:center; padding:24px; }
+  .window { width:380px; border-radius:8px; border:1px solid rgba(72,85,105,0.16); background:#fff; box-shadow:0 16px 28px rgba(15,23,42,0.16); overflow:hidden; }
+  .titlebar { display:flex; align-items:center; justify-content:center; height:34px; padding:0 10px; border-bottom:1px solid rgba(90,101,117,0.16); background:rgba(249,250,252,0.9); font-size:12px; font-weight:700; }
+  .settings-list { display:grid; gap:1px; background:rgba(109,122,140,0.14); }
+  .setting-row { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; min-height:42px; padding:8px 10px; background:rgba(255,255,255,0.9); font-size:12px; font-weight:700; }
+  .small { margin:3px 0 0; color:var(--muted); font-size:11px; line-height:1.35; }
+  .toggle { position:relative; width:34px; height:18px; border-radius:999px; background:#ccc; cursor:pointer; transition:background .2s; }
+  .toggle.on { background:#18a058; }
+  .toggle::after { content:""; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.18); transition:left .2s; }
+  .toggle.on::after { left:18px; }
+  .nav { display:flex; gap:8px; padding:10px; }
+  .button { display:inline-flex; height:28px; align-items:center; justify-content:center; border:0; border-radius:5px; padding:0 11px; background:var(--blue); color:#fff; font-size:12px; font-weight:700; cursor:pointer; transition:filter .15s; text-decoration:none; }
+  .button:hover { filter:brightness(1.1); }
+  .button.secondary { border:1px solid rgba(89,101,118,0.2); background:#fff; color:#334155; }
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">Connection Settings</div>
+  <div class="settings-list">
+    <div class="setting-row">
+      <div>Auto select best route<p class="small">NearLink first, DirectLink fallback</p></div>
+      <span class="toggle on" onclick="toggle(this)"></span>
+    </div>
+    <div class="setting-row">
+      <div>Clipboard sync<p class="small">Text and files across devices</p></div>
+      <span class="toggle on" onclick="toggle(this)"></span>
+    </div>
+    <div class="setting-row">
+      <div>Mouse smoothing<p class="small">240Hz motion interpolation</p></div>
+      <span class="toggle" onclick="toggle(this)"></span>
+    </div>
+    <div class="setting-row">
+      <div>DTLS encryption<p class="small">Secure input transport</p></div>
+      <span class="toggle on" onclick="toggle(this)"></span>
+    </div>
+  </div>
+  <div class="nav">
+    <a class="button secondary" href="flowgrid-win-main.html">Back</a>
+    <a class="button" href="flowgrid-win-main.html">Save</a>
+  </div>
+</div>
+<script>
+  function toggle(el) { el.classList.toggle('on'); }
+</script>
+</body>
+</html>

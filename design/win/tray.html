@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — System Tray (Windows)</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --green:#10a36f; --blue:#0878d8; --red:#dc2626; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"Segoe UI","SF Pro Text","Noto Sans SC",sans-serif; color:var(--ink); display:grid; place-items:center; padding:24px; }
+  .taskbar-mock { width:100%; max-width:600px; height:36px; background:#f3f4f6; border-top:1px solid rgba(0,0,0,0.06); display:flex; align-items:center; justify-content:space-between; padding:0 12px; font-size:12px; border-radius:0 0 6px 6px; margin-bottom:12px; }
+  .tray-container { position:relative; width:280px; }
+  .tray { border-radius:8px; border:1px solid rgba(71,84,103,0.18); background:rgba(255,255,255,0.98); box-shadow:0 16px 32px rgba(15,23,42,0.16); overflow:hidden; animation:fadeIn .2s ease; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+  .tray-head { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 12px; border-bottom:1px solid rgba(110,123,141,0.14); font-size:12px; font-weight:800; background:#fff; }
+  .status-pill { display:flex; align-items:center; gap:5px; padding:3px 8px; border-radius:999px; background:#e8fbf1; color:#07966c; font-size:11px; font-weight:700; }
+  .status-dot { width:7px; height:7px; border-radius:50%; background:var(--green); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .tray-section { padding:4px 0; }
+  .tray-section-title { padding:6px 12px; font-size:10px; font-weight:700; color:#94a3b8; text-transform:uppercase; }
+  .tray-item { display:flex; justify-content:space-between; align-items:center; padding:7px 12px; color:#273348; font-size:12px; cursor:pointer; transition:background .1s; text-decoration:none; }
+  .tray-item:hover { background:#f1f5f9; }
+  .tray-item:active { background:#e2e8f0; }
+  .tray-item .shortcut { color:#8a94a4; font-size:11px; }
+  .sep { height:1px; background:rgba(110,123,141,0.12); margin:3px 10px; }
+  .toggle-row { display:flex; justify-content:space-between; align-items:center; padding:7px 12px; }
+  .toggle-row span { font-size:12px; }
+  .toggle { position:relative; width:34px; height:18px; border-radius:999px; background:#ccc; cursor:pointer; transition:background .2s; }
+  .toggle.on { background:#18a058; }
+  .toggle::after { content:""; position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.18); transition:left .2s; }
+  .toggle.on::after { left:18px; }
+  .latency-big { font-size:20px; font-weight:800; color:#07966c; }
+  .nav-bar { display:flex; gap:6px; padding:12px; }
+  .nav-btn { display:inline-flex; height:28px; align-items:center; justify-content:center; border:1px solid #e2e8f0; border-radius:5px; padding:0 11px; background:#fff; color:#475569; font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; text-decoration:none; }
+  .nav-btn:hover { border-color:#94a3b8; color:var(--ink); }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(80px); background:#1e293b; color:#fff; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; opacity:0; transition:all .3s ease; pointer-events:none; z-index:100; }
+  .toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
+</style>
+</head>
+<body>
+<div class="taskbar-mock">
+  <span style="font-weight:700;">⊞ Start</span>
+  <span style="margin-left:auto; color:#64748b;">🔊</span>
+  <span style="color:#64748b;">📶</span>
+  <span style="font-weight:700;">FlowGrid ●</span>
+  <span style="color:#64748b;">⌚</span>
+</div>
+<div class="tray-container">
+  <div class="tray" id="tray">
+    <div class="tray-head">
+      <span>FlowGrid</span>
+      <span class="status-pill"><span class="status-dot"></span><span id="latText">2.4ms</span></span>
+    </div>
+    <div class="tray-section">
+      <div class="tray-section-title">Connection</div>
+      <a class="tray-item" href="main.html"><span>MacBook Pro</span><span class="shortcut">NearLink</span></a>
+      <div class="tray-item">
+        <span>Latency</span>
+        <span class="latency-big" id="latVal">2.4ms</span>
+      </div>
+      <a class="tray-item" href="add-device.html"><span style="color:var(--blue);">+ Add Device</span></a>
+    </div>
+    <div class="sep"></div>
+    <div class="tray-section">
+      <div class="tray-section-title">Quick Toggles</div>
+      <div class="toggle-row"><span>Key Mapping</span><span class="toggle on" onclick="toggle(this,'Key mapping')"></span></div>
+      <div class="toggle-row"><span>Clipboard Sync</span><span class="toggle on" onclick="toggle(this,'Clipboard sync')"></span></div>
+      <div class="toggle-row"><span>Mouse Smoothing</span><span class="toggle" onclick="toggle(this,'Mouse smoothing')"></span></div>
+      <div class="toggle-row"><span>Auto Route</span><span class="toggle on" onclick="toggle(this,'Auto route')"></span></div>
+    </div>
+    <div class="sep"></div>
+    <div class="tray-section">
+      <a class="tray-item" href="main.html"><span>Open Main Window</span><span class="shortcut">Ctrl+Shift+F</span></a>
+      <a class="tray-item" href="settings.html"><span>Settings</span></a>
+    </div>
+    <div class="sep"></div>
+    <div class="tray-item" onclick="quitApp()" style="color:var(--red);"><span>Quit FlowGrid</span></div>
+  </div>
+</div>
+<div class="nav-bar">
+  <a class="nav-btn" href="main.html">← Main</a>
+  <a class="nav-btn" href="add-device.html">Add Device</a>
+  <a class="nav-btn" href="settings.html">Settings</a>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+function toggle(el, name) {
+  el.classList.toggle('on');
+  showToast(name + ' ' + (el.classList.contains('on') ? 'enabled' : 'disabled'));
+}
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}
+function quitApp() {
+  document.getElementById('tray').innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px;">FlowGrid has quit</div>';
+}
+setInterval(() => {
+  const v = (1.5 + Math.random() * 1.5).toFixed(1) + 'ms';
+  document.getElementById('latText').textContent = v;
+  document.getElementById('latVal').textContent = v;
+}, 2000);
+</script>
+</body>
+</html>

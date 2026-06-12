@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — Keymap Editor (KDE)</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --red:#b42318; --kde:#3daee9; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"Noto Sans","Noto Sans SC","Segoe UI",sans-serif; color:var(--ink); display:grid; place-items:center; padding:24px; }
+  .window { width:520px; border-radius:6px; border:1px solid rgba(72,85,105,0.16); background:#fff; box-shadow:0 16px 28px rgba(15,23,42,0.16); overflow:hidden; }
+  .titlebar { display:flex; align-items:center; justify-content:space-between; height:30px; padding:0 10px; border-bottom:1px solid rgba(90,101,117,0.16); background:#31363b; color:#eef1f4; font-size:12px; font-weight:700; }
+  .content { padding:14px; }
+  .table { width:100%; border-collapse:collapse; font-size:11px; }
+  .table th, .table td { border-bottom:1px solid rgba(100,116,139,0.16); padding:8px 9px; text-align:left; }
+  .table th { color:#5d6878; font-size:10px; text-transform:uppercase; }
+  .badge { border-radius:999px; padding:3px 7px; background:#e8f7ff; color:#0675b9; font-size:10px; font-weight:800; }
+  .badge.global { background:#e8f7ff; color:#0675b9; }
+  .badge.apps { background:#fff7e6; color:#d48806; }
+  .edit-link { color:var(--kde); cursor:pointer; font-size:11px; font-weight:700; }
+  .edit-link:hover { text-decoration:underline; }
+  .delete-link { color:var(--red); cursor:pointer; font-size:11px; font-weight:700; margin-left:8px; }
+  .delete-link:hover { text-decoration:underline; }
+  .toolbar { display:flex; gap:8px; margin-bottom:12px; }
+  .button { display:inline-flex; height:28px; align-items:center; justify-content:center; border:0; border-radius:3px; padding:0 11px; background:var(--kde); color:#fff; font-size:12px; font-weight:700; cursor:pointer; transition:filter .15s; text-decoration:none; }
+  .button:hover { filter:brightness(1.1); }
+  .button.secondary { border:1px solid rgba(89,101,118,0.2); background:#fff; color:#334155; }
+  .input-row { display:none; grid-template-columns:1fr 1fr auto auto; gap:8px; margin-bottom:10px; }
+  .input-row.active { display:grid; }
+  input { padding:6px 8px; border:1px solid rgba(89,101,118,0.25); border-radius:4px; font-size:11px; font-family:inherit; }
+  select { padding:6px 8px; border:1px solid rgba(89,101,118,0.25); border-radius:4px; font-size:11px; font-family:inherit; }
+  .empty { text-align:center; color:var(--muted); font-size:12px; padding:20px; }
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">Key Mapping Editor</div>
+  <div class="content">
+    <div class="toolbar">
+      <button class="button" onclick="showAdd()">+ Add Mapping</button>
+      <a class="button secondary" href="flowgrid-kde-main.html">Back</a>
+    </div>
+    <div class="input-row" id="inputRow">
+      <input type="text" id="srcInput" placeholder="Source key (e.g. Ctrl+T)">
+      <input type="text" id="tgtInput" placeholder="Target key (e.g. Cmd+T)">
+      <select id="ctxInput"><option value="Global">Global</option><option value="Apps">Apps</option></select>
+      <button class="button" onclick="addRow()">Save</button>
+    </div>
+    <table class="table" id="table">
+      <thead><tr><th>Source</th><th>Target</th><th>Context</th><th>Actions</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="empty" style="display:none;">No key mappings defined</div>
+  </div>
+</div>
+<script>
+  let mappings = [
+    { src: 'Left Ctrl', tgt: 'Left Cmd', ctx: 'Global' },
+    { src: 'Left Meta', tgt: 'Option', ctx: 'Global' },
+    { src: 'Ctrl+W', tgt: 'Cmd+W', ctx: 'Apps' }
+  ];
+  function render() {
+    const tbody = document.getElementById('tbody');
+    tbody.innerHTML = '';
+    if (mappings.length === 0) {
+      document.getElementById('empty').style.display = 'block';
+      document.getElementById('table').style.display = 'none';
+    } else {
+      document.getElementById('empty').style.display = 'none';
+      document.getElementById('table').style.display = 'table';
+      mappings.forEach((m, i) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${m.src}</td><td>${m.tgt}</td><td><span class="badge ${m.ctx.toLowerCase()}">${m.ctx}</span></td><td><span class="edit-link" onclick="editRow(${i})">Edit</span><span class="delete-link" onclick="deleteRow(${i})">Delete</span></td>`;
+        tbody.appendChild(tr);
+      });
+    }
+  }
+  function showAdd() {
+    const row = document.getElementById('inputRow');
+    row.classList.toggle('active');
+    if (row.classList.contains('active')) {
+      document.getElementById('srcInput').value = '';
+      document.getElementById('tgtInput').value = '';
+      document.getElementById('ctxInput').value = 'Global';
+    }
+  }
+  function addRow() {
+    const src = document.getElementById('srcInput').value.trim();
+    const tgt = document.getElementById('tgtInput').value.trim();
+    const ctx = document.getElementById('ctxInput').value;
+    if (!src || !tgt) return;
+    mappings.push({ src, tgt, ctx });
+    document.getElementById('inputRow').classList.remove('active');
+    render();
+  }
+  function deleteRow(i) {
+    mappings.splice(i, 1);
+    render();
+  }
+  function editRow(i) {
+    const m = mappings[i];
+    document.getElementById('srcInput').value = m.src;
+    document.getElementById('tgtInput').value = m.tgt;
+    document.getElementById('ctxInput').value = m.ctx;
+    document.getElementById('inputRow').classList.add('active');
+    mappings.splice(i, 1);
+    render();
+  }
+  render();
+</script>
+</body>
+</html>

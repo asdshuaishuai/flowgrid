@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FlowGrid Native UI Board — KDE</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #171a1f;
+      --muted: #68707d;
+      --paper: #f4f5f7;
+      --line: #d9dee7;
+      --shadow: 0 18px 42px rgba(24, 30, 44, 0.14);
+      --green: #10a36f;
+      --blue: #0878d8;
+      --kde: #3daee9;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(90deg, rgba(20, 25, 34, 0.04) 1px, transparent 1px),
+        linear-gradient(rgba(20, 25, 34, 0.04) 1px, transparent 1px),
+        linear-gradient(180deg, #fbfcfd 0%, #eff2f6 100%);
+      background-size: 28px 28px, 28px 28px, auto;
+      color: var(--ink);
+      font-family: "Segoe UI", "SF Pro Text", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    }
+
+    .board {
+      width: min(1680px, calc(100vw - 48px));
+      margin: 0 auto;
+      padding: 28px 0 44px;
+    }
+
+    .board-header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 18px;
+      align-items: end;
+      margin-bottom: 22px;
+    }
+
+    .brand {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .mark {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 8px;
+      background: #111827;
+      color: #fff;
+      font-weight: 700;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .board-subtitle {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .legend {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .chip {
+      display: inline-flex;
+      height: 26px;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 10px;
+      background: rgba(255, 255, 255, 0.72);
+      color: #3a4658;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--green);
+    }
+
+    .module-nav {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+    }
+
+    .mod-link {
+      display: inline-flex;
+      height: 32px;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 14px;
+      background: #fff;
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 700;
+      text-decoration: none;
+      transition: all .15s;
+    }
+
+    .mod-link:hover {
+      background: var(--blue);
+      color: #fff;
+      border-color: var(--blue);
+    }
+
+    .stage {
+      position: relative;
+      min-height: 760px;
+      overflow: hidden;
+      border: 1px solid rgba(93, 105, 122, 0.22);
+      border-radius: 14px;
+      background:
+        radial-gradient(circle at 12% 8%, rgba(255, 255, 255, 0.9), transparent 34%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(241, 244, 248, 0.92));
+      box-shadow: var(--shadow);
+    }
+
+    .window {
+      position: absolute;
+      overflow: hidden;
+      border: 1px solid rgba(72, 85, 105, 0.16);
+      background: #fff;
+      box-shadow: 0 16px 28px rgba(15, 23, 42, 0.16);
+    }
+
+    .titlebar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 34px;
+      padding: 0 10px;
+      border-bottom: 1px solid rgba(90, 101, 117, 0.16);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .title-left,
+    .traffic,
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .app-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      background: var(--blue);
+    }
+
+    .traffic i {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      display: block;
+    }
+
+    .traffic i:nth-child(1) { background: #ff5f57; }
+    .traffic i:nth-child(2) { background: #febc2e; }
+    .traffic i:nth-child(3) { background: #28c840; }
+
+    .content { padding: 14px; }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #2f3a4d;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .button {
+      display: inline-flex;
+      height: 28px;
+      align-items: center;
+      justify-content: center;
+      border: 0;
+      border-radius: 5px;
+      padding: 0 11px;
+      background: var(--blue);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .button.secondary {
+      border: 1px solid rgba(89, 101, 118, 0.2);
+      background: #fff;
+      color: #334155;
+    }
+
+    .device {
+      display: grid;
+      grid-template-columns: 42px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid rgba(109, 122, 140, 0.18);
+      border-radius: 7px;
+      padding: 11px;
+      background: rgba(255, 255, 255, 0.88);
+    }
+
+    .device-icon {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border-radius: 8px;
+      background: #e6f2ff;
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .device-name {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .device-meta,
+    .small {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .latency {
+      min-width: 56px;
+      border-radius: 999px;
+      padding: 5px 8px;
+      background: #e8fbf1;
+      color: #07966c;
+      font-size: 12px;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    .section {
+      margin-top: 12px;
+      border: 1px solid rgba(109, 122, 140, 0.18);
+      border-radius: 7px;
+      background: rgba(255, 255, 255, 0.74);
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 9px 10px;
+      border-bottom: 1px solid rgba(109, 122, 140, 0.16);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .badge {
+      border-radius: 999px;
+      padding: 3px 7px;
+      background: #e8f7ff;
+      color: #0675b9;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .mapping {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      padding: 10px;
+    }
+
+    .keypair {
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .keys {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .key {
+      min-width: 34px;
+      border: 1px solid rgba(80, 94, 112, 0.22);
+      border-radius: 4px;
+      padding: 5px 7px;
+      background: #fff;
+      text-align: center;
+    }
+
+    .arrow { color: var(--muted); }
+
+    .chart {
+      display: flex;
+      align-items: end;
+      gap: 4px;
+      height: 70px;
+      padding: 12px 10px 10px;
+    }
+
+    .bar {
+      flex: 1;
+      min-width: 3px;
+      border-radius: 999px 999px 0 0;
+      background: #9cccf8;
+    }
+
+    .settings-list {
+      display: grid;
+      gap: 1px;
+      background: rgba(109, 122, 140, 0.14);
+    }
+
+    .setting-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+      min-height: 42px;
+      padding: 8px 10px;
+      background: rgba(255, 255, 255, 0.9);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .toggle {
+      position: relative;
+      width: 34px;
+      height: 18px;
+      border-radius: 999px;
+      background: #18a058;
+    }
+
+    .toggle::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+    }
+
+    .tray {
+      position: absolute;
+      overflow: hidden;
+      border: 1px solid rgba(71, 84, 103, 0.2);
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: 0 16px 32px rgba(15, 23, 42, 0.16);
+    }
+
+    .tray-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px;
+      border-bottom: 1px solid rgba(110, 123, 141, 0.16);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .tray-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 10px;
+      color: #273348;
+      font-size: 12px;
+    }
+
+    .shortcut {
+      color: #8a94a4;
+      font-size: 11px;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+
+    .table th,
+    .table td {
+      border-bottom: 1px solid rgba(100, 116, 139, 0.16);
+      padding: 8px 9px;
+      text-align: left;
+    }
+
+    .table th {
+      color: #5d6878;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .kde {
+      font-family: "Noto Sans", "Noto Sans SC", "Segoe UI", sans-serif;
+    }
+
+    .kde .window,
+    .kde .tray { border-radius: 6px; }
+
+    .kde .titlebar {
+      height: 30px;
+      background: #31363b;
+      color: #eef1f4;
+    }
+
+    .kde .button {
+      border-radius: 3px;
+      background: var(--kde);
+    }
+
+    .kde-main {
+      left: 22px;
+      top: 42px;
+      width: 444px;
+      height: 500px;
+    }
+
+    .kde-settings {
+      right: 24px;
+      top: 44px;
+      width: 340px;
+      height: 300px;
+    }
+
+    .kde-editor {
+      left: 44px;
+      bottom: 34px;
+      width: 410px;
+      height: 218px;
+    }
+
+    .kde-tray {
+      right: 38px;
+      bottom: 40px;
+      width: 260px;
+      background: rgba(247, 249, 251, 0.95);
+    }
+
+    @media (max-width: 1280px) {
+      .stage { min-height: 720px; }
+    }
+
+    @media (max-width: 720px) {
+      .board {
+        width: min(100vw - 24px, 560px);
+        padding-top: 18px;
+      }
+      .board-header { grid-template-columns: 1fr; }
+      .legend { justify-content: flex-start; }
+      .stage { min-height: 980px; }
+      .window,
+      .dialog,
+      .tray {
+        position: relative;
+        inset: auto;
+        width: calc(100% - 24px);
+        height: auto;
+        margin: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="board">
+    <header class="board-header">
+      <div class="brand">
+        <div class="mark">F</div>
+        <div>
+          <h1>FlowGrid 原生系统 UI 设计板</h1>
+          <p class="board-subtitle">紧凑桌面工具布局：连接管理、系统托盘、配对流程、键位映射和连接策略。</p>
+        </div>
+      </div>
+      <div class="legend">
+        <span class="chip"><span class="dot"></span>NearLink 2.4ms</span>
+        <span class="chip">DirectLink 0.5ms</span>
+        <span class="chip">DTLS 1.3</span>
+      </div>
+    </header>
+
+    <div class="module-nav">
+      <a class="mod-link" href="flowgrid-kde-main.html">🔗 Main Window</a>
+      <a class="mod-link" href="flowgrid-kde-settings.html">🔗 Settings</a>
+      <a class="mod-link" href="flowgrid-kde-keymap.html">🔗 Keymap Editor</a>
+      <a class="mod-link" href="flowgrid-kde-tray.html">🔗 System Tray</a>
+    </div>
+
+    <div class="stage">
+      <section class="window kde-main">
+        <div class="titlebar">
+          <div class="title-left"><span class="app-icon" style="background:var(--kde)"></span>FlowGrid</div>
+          <span>Connections</span>
+          <div class="controls"><i></i><i></i><i></i></div>
+        </div>
+        <div class="content">
+          <div class="toolbar">
+            <span class="status"><span class="dot"></span>MacBook Pro</span>
+            <button class="button">Add Device</button>
+          </div>
+          <div class="device">
+            <div class="device-icon" style="color:var(--kde)">MB</div>
+            <div><p class="device-name">MacBook Pro</p><p class="device-meta">macOS 15.2 · NearLink · DTLS 1.3</p></div>
+            <div class="latency">2.8ms</div>
+          </div>
+          <div class="section">
+            <div class="section-head">Active Key Mapping <span class="badge">Linux → macOS</span></div>
+            <div class="mapping">
+              <div class="keypair"><div class="keys"><span class="key">Ctrl</span><span class="arrow">→</span><span class="key">⌘</span></div><p class="small">Global</p></div>
+              <div class="keypair"><div class="keys"><span class="key">Meta</span><span class="arrow">→</span><span class="key">⌥</span></div><p class="small">KWin safe</p></div>
+              <div class="keypair"><div class="keys"><span class="key">Alt</span><span class="arrow">→</span><span class="key">Ctrl</span></div><p class="small">Terminal</p></div>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-head">Protocol Health <span class="badge">Stable</span></div>
+            <div class="settings-list">
+              <div class="setting-row"><div>Wi-Fi Direct channel<p class="small">Avoids AWDL social channels</p></div><span class="badge">149</span></div>
+              <div class="setting-row"><div>Packet loss<p class="small">99.9% delivery under 3.25ms</p></div><span class="badge">0.01%</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="window kde-settings">
+        <div class="titlebar">FlowGrid Settings</div>
+        <div class="settings-list">
+          <div class="setting-row"><div>Auto-discovery<p class="small">BLE scan when tray app starts</p></div><span class="toggle"></span></div>
+          <div class="setting-row"><div>Preferred protocol<p class="small">NearLink connection priority</p></div><span class="badge">NearLink</span></div>
+          <div class="setting-row"><div>Mouse smoothing<p class="small">Interpolate HID frames</p></div><span class="toggle"></span></div>
+          <div class="setting-row"><div>DTLS encryption<p class="small">Secure input transport</p></div><span class="toggle"></span></div>
+        </div>
+      </section>
+
+      <section class="window kde-editor">
+        <div class="titlebar">Key Mapping Editor</div>
+        <table class="table">
+          <thead><tr><th>Source</th><th>Target</th><th>Context</th><th></th></tr></thead>
+          <tbody>
+            <tr><td>Left Ctrl</td><td>Left Cmd</td><td><span class="badge">Global</span></td><td>Edit</td></tr>
+            <tr><td>Left Meta</td><td>Option</td><td><span class="badge">Global</span></td><td>Edit</td></tr>
+            <tr><td>Ctrl+W</td><td>Cmd+W</td><td><span class="badge">Apps</span></td><td>Edit</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="tray kde-tray">
+        <div class="tray-head"><span>FlowGrid</span><span style="color:#0b9b6b">Connected</span></div>
+        <div class="tray-item"><span>Latency</span><strong>2.8ms</strong></div>
+        <div class="tray-item"><span>Protocol</span><span class="shortcut">NearLink</span></div>
+        <div class="tray-item"><span>MacBook Pro</span><span class="shortcut">Active</span></div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — Keymap Editor (KDE)</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --line:#d9dee7; --kde:#3daee9; --red:#dc2626; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"Noto Sans","Noto Sans SC","Segoe UI",sans-serif; color:var(--ink); display:grid; place-items:center; padding:24px; }
+  .app { width:580px; border-radius:6px; border:1px solid rgba(72,85,105,0.16); background:#fff; box-shadow:0 18px 42px rgba(24,30,44,0.14); overflow:hidden; display:flex; flex-direction:column; max-height:calc(100vh - 48px); }
+  .titlebar { display:flex; align-items:center; justify-content:space-between; height:30px; padding:0 10px; border-bottom:1px solid rgba(90,101,117,0.16); background:#31363b; color:#eef1f4; font-size:12px; font-weight:700; flex-shrink:0; }
+  .content { padding:14px; overflow-y:auto; }
+  .toolbar { display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
+  .button { display:inline-flex; height:28px; align-items:center; justify-content:center; border:0; border-radius:3px; padding:0 11px; background:var(--kde); color:#fff; font-size:12px; font-weight:700; cursor:pointer; transition:all .15s; text-decoration:none; }
+  .button:hover { filter:brightness(1.08); }
+  .button.secondary { border:1px solid rgba(89,101,118,0.2); background:#fff; color:#334155; }
+  .button.danger { background:var(--red); }
+  .search { flex:1; min-width:140px; padding:6px 10px; border:1px solid var(--line); border-radius:4px; font-size:12px; font-family:inherit; }
+  .search:focus { outline:none; border-color:var(--kde); }
+  .filter-bar { display:flex; gap:6px; margin-bottom:10px; }
+  .filter { padding:4px 10px; border-radius:999px; border:1px solid var(--line); background:#fff; color:#475569; font-size:11px; font-weight:600; cursor:pointer; transition:all .15s; }
+  .filter.active { background:var(--kde); color:#fff; border-color:var(--kde); }
+  .table { width:100%; border-collapse:collapse; font-size:11px; }
+  .table th { border-bottom:1px solid rgba(100,116,139,0.2); padding:8px; text-align:left; color:#5d6878; font-size:10px; text-transform:uppercase; position:sticky; top:0; background:#fff; z-index:1; }
+  .table td { border-bottom:1px solid rgba(100,116,139,0.1); padding:8px; }
+  .table tr { transition:background .1s; }
+  .table tr:hover { background:#f8fafc; }
+  .badge { border-radius:999px; padding:3px 7px; font-size:10px; font-weight:800; }
+  .badge.global { background:#e8f7ff; color:#0675b9; }
+  .badge.apps { background:#fff7e6; color:#d48806; }
+  .badge.game { background:#f3e8ff; color:#7c3aed; }
+  .edit-link { color:var(--kde); cursor:pointer; font-size:11px; font-weight:700; border:0; background:transparent; padding:0; }
+  .edit-link:hover { text-decoration:underline; }
+  .delete-link { color:var(--red); cursor:pointer; font-size:11px; font-weight:700; border:0; background:transparent; padding:0; }
+  .delete-link:hover { text-decoration:underline; }
+  .input-row { display:none; grid-template-columns:1fr 1fr auto auto auto; gap:8px; margin-bottom:10px; padding:10px; background:#f8fafc; border-radius:6px; }
+  .input-row.active { display:grid; }
+  .input-row input, .input-row select { padding:6px 8px; border:1px solid rgba(89,101,118,0.25); border-radius:4px; font-size:11px; font-family:inherit; }
+  .input-row input:focus, .input-row select:focus { outline:none; border-color:var(--kde); }
+  .key-cap { display:inline-block; padding:3px 8px; border:1px solid rgba(80,94,112,0.2); border-radius:4px; background:#fff; font-size:11px; font-weight:700; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+  .empty { text-align:center; color:var(--muted); font-size:12px; padding:30px; }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(80px); background:#1e293b; color:#fff; padding:8px 16px; border-radius:8px; font-size:12px; font-weight:600; opacity:0; transition:all .3s ease; pointer-events:none; z-index:100; }
+  .toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
+  .nav-bar { display:flex; gap:6px; padding:10px 14px; border-top:1px solid var(--line); background:#fafafa; flex-shrink:0; }
+  .nav-btn { display:inline-flex; height:28px; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:3px; padding:0 11px; background:#fff; color:#475569; font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; text-decoration:none; }
+  .nav-btn:hover { border-color:#94a3b8; color:var(--ink); }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="titlebar">Key Mapping Editor</div>
+  <div class="content">
+    <div class="toolbar">
+      <button class="button" onclick="showAdd()">+ Add Mapping</button>
+      <input type="text" class="search" id="search" placeholder="Search mappings..." oninput="filterTable()">
+      <button class="button secondary" onclick="exportMap()">Export</button>
+    </div>
+    <div class="filter-bar">
+      <button class="filter active" onclick="setFilter(this,'all')">All</button>
+      <button class="filter" onclick="setFilter(this,'Global')">Global</button>
+      <button class="filter" onclick="setFilter(this,'Apps')">Apps</button>
+      <button class="filter" onclick="setFilter(this,'Game')">Game</button>
+    </div>
+    <div class="input-row" id="inputRow">
+      <input type="text" id="srcInput" placeholder="Source (e.g. Ctrl+T)">
+      <input type="text" id="tgtInput" placeholder="Target (e.g. Cmd+T)">
+      <select id="ctxInput"><option value="Global">Global</option><option value="Apps">Apps</option><option value="Game">Game</option></select>
+      <button class="button" onclick="addRow()">Save</button>
+      <button class="button secondary" onclick="cancelAdd()">Cancel</button>
+    </div>
+    <table class="table">
+      <thead><tr><th>Source</th><th>Target</th><th>Context</th><th>Actions</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="empty" style="display:none;">No key mappings match your filter</div>
+  </div>
+  <div class="nav-bar">
+    <a class="nav-btn" href="main.html">← Back</a>
+    <a class="nav-btn" href="settings.html">Settings</a>
+    <a class="nav-btn" href="tray.html">Tray</a>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+let mappings = [
+  { id:1, src:'Left Ctrl', tgt:'Left Cmd', ctx:'Global' },
+  { id:2, src:'Left Meta', tgt:'Option', ctx:'Global' },
+  { id:3, src:'Ctrl+W', tgt:'Cmd+W', ctx:'Apps' },
+  { id:4, src:'Ctrl+Tab', tgt:'Cmd+Tab', ctx:'Global' },
+  { id:5, src:'Print', tgt:'Cmd+Shift+3', ctx:'Global' },
+  { id:6, src:'WASD', tgt:'Arrow Keys', ctx:'Game' }
+];
+let nextId = 7;
+let activeFilter = 'all';
+let editingId = null;
+
+function render() {
+  const tbody = document.getElementById('tbody');
+  const term = document.getElementById('search').value.toLowerCase();
+  const filtered = mappings.filter(m => {
+    const matchFilter = activeFilter === 'all' || m.ctx === activeFilter;
+    const matchSearch = m.src.toLowerCase().includes(term) || m.tgt.toLowerCase().includes(term);
+    return matchFilter && matchSearch;
+  });
+
+  if (filtered.length === 0) {
+    document.getElementById('empty').style.display = 'block';
+    tbody.innerHTML = '';
+  } else {
+    document.getElementById('empty').style.display = 'none';
+    tbody.innerHTML = filtered.map(m => `
+      <tr>
+        <td><span class="key-cap">${m.src}</span></td>
+        <td><span class="key-cap">${m.tgt}</span></td>
+        <td><span class="badge ${m.ctx.toLowerCase()}">${m.ctx}</span></td>
+        <td>
+          <button class="edit-link" onclick="editRow(${m.id})">Edit</button>
+          <button class="delete-link" onclick="deleteRow(${m.id})">Delete</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+}
+
+function showAdd() {
+  document.getElementById('inputRow').classList.add('active');
+  document.getElementById('srcInput').value = '';
+  document.getElementById('tgtInput').value = '';
+  document.getElementById('ctxInput').value = 'Global';
+  editingId = null;
+}
+
+function cancelAdd() {
+  document.getElementById('inputRow').classList.remove('active');
+  editingId = null;
+}
+
+function addRow() {
+  const src = document.getElementById('srcInput').value.trim();
+  const tgt = document.getElementById('tgtInput').value.trim();
+  const ctx = document.getElementById('ctxInput').value;
+  if (!src || !tgt) { showToast('Please fill in both keys'); return; }
+
+  if (editingId) {
+    const m = mappings.find(x => x.id === editingId);
+    if (m) { m.src = src; m.tgt = tgt; m.ctx = ctx; showToast('Mapping updated'); }
+  } else {
+    mappings.push({ id: nextId++, src, tgt, ctx });
+    showToast('Mapping added');
+  }
+  document.getElementById('inputRow').classList.remove('active');
+  editingId = null;
+  render();
+}
+
+function deleteRow(id) {
+  const idx = mappings.findIndex(x => x.id === id);
+  if (idx > -1) { mappings.splice(idx, 1); showToast('Mapping deleted'); render(); }
+}
+
+function editRow(id) {
+  const m = mappings.find(x => x.id === id);
+  if (!m) return;
+  document.getElementById('srcInput').value = m.src;
+  document.getElementById('tgtInput').value = m.tgt;
+  document.getElementById('ctxInput').value = m.ctx;
+  document.getElementById('inputRow').classList.add('active');
+  editingId = id;
+}
+
+function setFilter(el, ctx) {
+  document.querySelectorAll('.filter').forEach(f => f.classList.remove('active'));
+  el.classList.add('active');
+  activeFilter = ctx;
+  render();
+}
+
+function filterTable() { render(); }
+
+function exportMap() {
+  showToast(`Exported ${mappings.length} mappings`);
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2200);
+}
+
+render();
+</script>
+</body>
+</html>

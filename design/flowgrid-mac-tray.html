@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — Menu Bar (macOS)</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --green:#10a36f; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"SF Pro Text","SF Pro Display","PingFang SC","Noto Sans SC",sans-serif; color:var(--ink); display:grid; place-items:center; padding:24px; }
+  .tray { width:280px; border-radius:14px; border:1px solid rgba(71,84,103,0.2); background:rgba(255,255,255,0.88); backdrop-filter:blur(22px); box-shadow:0 16px 32px rgba(15,23,42,0.16); overflow:hidden; animation:fadeIn .2s ease; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+  .tray-head { display:flex; justify-content:space-between; gap:12px; padding:10px; border-bottom:1px solid rgba(110,123,141,0.16); font-size:12px; font-weight:800; }
+  .tray-item { display:flex; justify-content:space-between; padding:9px 10px; color:#273348; font-size:12px; cursor:pointer; transition:background .1s; text-decoration:none; }
+  .tray-item:hover { background:#f4f7fb; }
+  .tray-item:active { background:#e8f0f8; }
+  .shortcut { color:#8a94a4; font-size:11px; }
+  .sep { height:1px; background:rgba(110,123,141,0.14); margin:2px 0; }
+  .status-dot { width:7px; height:7px; border-radius:999px; background:var(--green); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+</style>
+</head>
+<body>
+<div class="tray" id="tray">
+  <div class="tray-head"><span>FlowGrid</span><span style="color:#0b9b6b;display:flex;align-items:center;gap:6px;"><span class="status-dot"></span>2.4ms</span></div>
+  <a class="tray-item" href="flowgrid-mac-main.html"><span>Windows 11 Desktop</span><span class="shortcut">Connected</span></a>
+  <a class="tray-item" href="flowgrid-mac-main.html"><span>Show Connections</span><span class="shortcut">⌘1</span></a>
+  <a class="tray-item" href="flowgrid-mac-latency.html"><span>Latency Monitor</span><span class="shortcut">⌘2</span></a>
+  <div class="sep"></div>
+  <a class="tray-item" href="flowgrid-mac-main.html"><span>Preferences</span><span class="shortcut">⌘,</span></a>
+  <div class="tray-item" onclick="quit()" style="color:#b42318;"><span>Quit FlowGrid</span><span class="shortcut">⌘Q</span></div>
+</div>
+<script>
+  function quit() {
+    document.getElementById('tray').innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:12px;">FlowGrid exited</div>';
+  }
+</script>
+</body>
+</html>

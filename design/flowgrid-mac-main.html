@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — macOS Main</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --green:#10a36f; --blue:#007aff; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"SF Pro Text","SF Pro Display","PingFang SC","Noto Sans SC",sans-serif; color:var(--ink); display:grid; place-items:center; padding:24px; }
+  .window { width:480px; border-radius:12px; border:1px solid rgba(72,85,105,0.16); background:#fff; box-shadow:0 16px 28px rgba(15,23,42,0.16); overflow:hidden; }
+  .titlebar { display:flex; align-items:center; justify-content:space-between; height:34px; padding:0 10px; border-bottom:1px solid rgba(90,101,117,0.16); background:rgba(255,255,255,0.82); backdrop-filter:blur(16px); font-size:12px; font-weight:700; }
+  .traffic { display:flex; align-items:center; gap:7px; }
+  .traffic i { width:11px; height:11px; border-radius:50%; display:block; }
+  .traffic i:nth-child(1) { background:#ff5f57; }
+  .traffic i:nth-child(2) { background:#febc2e; }
+  .traffic i:nth-child(3) { background:#28c840; }
+  .content { padding:14px; }
+  .toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+  .status { display:inline-flex; align-items:center; gap:8px; color:#2f3a4d; font-size:12px; font-weight:650; }
+  .dot { width:7px; height:7px; border-radius:999px; background:var(--green); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+  .button { display:inline-flex; height:28px; align-items:center; justify-content:center; border:0; border-radius:6px; padding:0 11px; background:var(--blue); color:#fff; font-size:12px; font-weight:700; cursor:pointer; transition:filter .15s; text-decoration:none; }
+  .button:hover { filter:brightness(1.1); }
+  .button:active { filter:brightness(.9); transform:translateY(1px); }
+  .button.secondary { border:1px solid rgba(89,101,118,0.2); background:#fff; color:#334155; }
+  .device { display:grid; grid-template-columns:42px 1fr auto; gap:10px; align-items:center; border:1px solid rgba(109,122,140,0.18); border-radius:7px; padding:11px; background:rgba(255,255,255,0.88); transition:box-shadow .15s; }
+  .device:hover { box-shadow:0 2px 8px rgba(15,23,42,0.08); }
+  .device-icon { display:grid; width:42px; height:42px; place-items:center; border-radius:8px; background:#e6f2ff; color:var(--blue); font-size:12px; font-weight:800; }
+  .device-name { margin:0; font-size:13px; font-weight:800; }
+  .device-meta { margin:3px 0 0; color:var(--muted); font-size:11px; }
+  .latency { min-width:56px; border-radius:999px; padding:5px 8px; background:#e8fbf1; color:#07966c; font-size:12px; font-weight:800; text-align:center; }
+  .section { margin-top:12px; border:1px solid rgba(109,122,140,0.18); border-radius:7px; background:rgba(255,255,255,0.74); }
+  .section-head { display:flex; justify-content:space-between; align-items:center; padding:9px 10px; border-bottom:1px solid rgba(109,122,140,0.16); font-size:12px; font-weight:800; }
+  .badge { border-radius:999px; padding:3px 7px; background:#e8f7ff; color:#0675b9; font-size:10px; font-weight:800; }
+  .mapping { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; padding:10px; }
+  .keypair { display:grid; gap:5px; }
+  .keys { display:flex; align-items:center; gap:5px; font-size:11px; font-weight:800; }
+  .key { min-width:34px; border:1px solid rgba(80,94,112,0.22); border-radius:4px; padding:5px 7px; background:#fff; text-align:center; }
+  .arrow { color:var(--muted); }
+  .settings-list { display:grid; gap:1px; background:rgba(109,122,140,0.14); }
+  .setting-row { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; min-height:42px; padding:8px 10px; background:rgba(255,255,255,0.9); font-size:12px; font-weight:700; }
+  .nav { display:flex; gap:8px; margin-top:14px; }
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <span>Connections</span>
+    <span></span>
+  </div>
+  <div class="content">
+    <div class="toolbar">
+      <span class="status"><span class="dot"></span>Windows 11 Desktop</span>
+      <a class="button" href="flowgrid-mac-add-device.html">Add Device</a>
+    </div>
+    <div class="device">
+      <div class="device-icon">PC</div>
+      <div>
+        <p class="device-name">Windows 11 Desktop</p>
+        <p class="device-meta">NearLink · AES-256-GCM · 240Hz</p>
+      </div>
+      <div class="latency" id="latency">2.4ms</div>
+    </div>
+    <div class="section">
+      <div class="section-head">Automatic Key Mapping <span class="badge">Windows → macOS</span></div>
+      <div class="mapping">
+        <div class="keypair"><div class="keys"><span class="key">Ctrl</span><span class="arrow">→</span><span class="key">⌘</span></div><p style="margin:3px 0 0;color:var(--muted);font-size:11px;">Edit commands</p></div>
+        <div class="keypair"><div class="keys"><span class="key">Win</span><span class="arrow">→</span><span class="key">⌥</span></div><p style="margin:3px 0 0;color:var(--muted);font-size:11px;">System menu</p></div>
+        <div class="keypair"><div class="keys"><span class="key">Alt</span><span class="arrow">→</span><span class="key">Ctrl</span></div><p style="margin:3px 0 0;color:var(--muted);font-size:11px;">Terminal</p></div>
+      </div>
+    </div>
+    <div class="section">
+      <div class="section-head">Connection Mode <span class="badge" id="modeBadge">Auto</span></div>
+      <div class="settings-list">
+        <div class="setting-row" style="cursor:pointer;" onclick="setMode('NearLink')">
+          <div>NearLink<p style="margin:3px 0 0;color:var(--muted);font-size:11px;">BLE discovery + Wi-Fi Direct</p></div>
+          <span class="badge" id="nearBadge">Preferred</span>
+        </div>
+        <div class="setting-row" style="cursor:pointer;" onclick="setMode('DirectLink')">
+          <div>DirectLink<p style="margin:3px 0 0;color:var(--muted);font-size:11px;">Raw Ethernet under 0.5ms</p></div>
+          <span class="badge" id="directBadge" style="background:#f1f5f9;color:#64748b;">Fallback</span>
+        </div>
+      </div>
+    </div>
+    <div class="nav">
+      <a class="button secondary" href="flowgrid-mac-tray.html">Menu Bar</a>
+      <a class="button secondary" href="flowgrid-mac-latency.html">Latency</a>
+    </div>
+  </div>
+</div>
+<script>
+  function setMode(mode) {
+    const near = document.getElementById('nearBadge');
+    const direct = document.getElementById('directBadge');
+    const modeBadge = document.getElementById('modeBadge');
+    if (mode === 'NearLink') {
+      near.style.background = '#e8f7ff'; near.style.color = '#0675b9'; near.textContent = 'Preferred';
+      direct.style.background = '#f1f5f9'; direct.style.color = '#64748b'; direct.textContent = 'Fallback';
+      modeBadge.textContent = 'Auto';
+    } else {
+      near.style.background = '#f1f5f9'; near.style.color = '#64748b'; near.textContent = 'Fallback';
+      direct.style.background = '#e8f7ff'; direct.style.color = '#0675b9'; direct.textContent = 'Preferred';
+      modeBadge.textContent = 'Direct';
+    }
+  }
+  setInterval(() => {
+    const v = (1.8 + Math.random() * 1.2).toFixed(1);
+    document.getElementById('latency').textContent = v + 'ms';
+  }, 1500);
+</script>
+</body>
+</html>

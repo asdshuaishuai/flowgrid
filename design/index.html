@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid Design System — Interactive Mock</title>
+<style>
+  :root { --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --blue:#2563eb; --green:#10b981; --kde:#3daee9; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:#f8fafc; font-family:"Segoe UI","SF Pro Text","Noto Sans SC",sans-serif; color:var(--ink); }
+  .container { max-width:1200px; margin:0 auto; padding:40px 24px; }
+  header { text-align:center; margin-bottom:48px; }
+  h1 { margin:0 0 8px; font-size:32px; font-weight:800; letter-spacing:-0.5px; }
+  .subtitle { margin:0; color:var(--muted); font-size:15px; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:24px; }
+  .card {
+    display:flex; flex-direction:column; gap:16px;
+    padding:28px; border-radius:16px; background:#fff;
+    border:1px solid var(--line); box-shadow:0 1px 3px rgba(0,0,0,0.04);
+    transition:all .2s ease; text-decoration:none; color:inherit;
+  }
+  .card:hover { transform:translateY(-3px); box-shadow:0 12px 28px rgba(0,0,0,0.08); border-color:#cbd5e1; }
+  .icon { width:48px; height:48px; border-radius:12px; display:grid; place-items:center; font-size:20px; }
+  .win .icon { background:#e0f2fe; color:#0284c7; }
+  .mac .icon { background:#f3e8ff; color:#9333ea; }
+  .kde .icon { background:#e0e7ff; color:#4f46e5; }
+  .card h2 { margin:0; font-size:18px; font-weight:700; }
+  .card p { margin:0; color:var(--muted); font-size:13px; line-height:1.5; }
+  .modules { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
+  .tag { font-size:11px; font-weight:600; padding:4px 10px; border-radius:999px; background:#f1f5f9; color:#475569; }
+  .card:hover .tag { background:#e2e8f0; }
+  .footer { text-align:center; margin-top:48px; color:var(--muted); font-size:12px; }
+  @media (max-width:800px) { .grid { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>FlowGrid Design System</h1>
+    <p class="subtitle">Interactive mock for Windows · macOS · KDE Plasma</p>
+  </header>
+  <div class="grid">
+    <a class="card win" href="win/index.html">
+      <div class="icon">⊞</div>
+      <div>
+        <h2>Windows 11 · Fluent</h2>
+        <p>Tray resident utility with NearLink discovery, key mapping, and real-time latency charts.</p>
+        <div class="modules">
+          <span class="tag">Main Window</span>
+          <span class="tag">Add Device</span>
+          <span class="tag">System Tray</span>
+          <span class="tag">Settings</span>
+        </div>
+      </div>
+    </a>
+    <a class="card mac" href="mac/index.html">
+      <div class="icon"></div>
+      <div>
+        <h2>macOS · Human Interface</h2>
+        <p>Menu-bar-first experience with latency monitor, AirDrop-style pairing, and auto key mapping.</p>
+        <div class="modules">
+          <span class="tag">Main Window</span>
+          <span class="tag">Add Device</span>
+          <span class="tag">Menu Bar</span>
+          <span class="tag">Latency</span>
+        </div>
+      </div>
+    </a>
+    <a class="card kde" href="kde/index.html">
+      <div class="icon">🐧</div>
+      <div>
+        <h2>KDE Plasma · Breeze</h2>
+        <p>System tray widget with protocol health monitor, keymap editor, and Plasma integration.</p>
+        <div class="modules">
+          <span class="tag">Main Window</span>
+          <span class="tag">Settings</span>
+          <span class="tag">Keymap Editor</span>
+          <span class="tag">System Tray</span>
+        </div>
+      </div>
+    </a>
+  </div>
+  <div class="footer">
+    FlowGrid Native UI Design Board · Interactive Mock · 2026
+  </div>
+</div>
+</body>
+</html>

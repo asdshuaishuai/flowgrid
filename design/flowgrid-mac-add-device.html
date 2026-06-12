@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — Add Device (macOS)</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --green:#10a36f; --blue:#007aff; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"SF Pro Text","SF Pro Display","PingFang SC","Noto Sans SC",sans-serif; color:var(--ink); display:grid; place-items:center; padding:24px; }
+  .dialog { width:360px; border-radius:12px; border:1px solid rgba(83,96,115,0.18); background:#fff; box-shadow:0 18px 38px rgba(15,23,42,0.18); overflow:hidden; }
+  .titlebar { display:flex; align-items:center; justify-content:space-between; height:34px; padding:0 10px; border-bottom:1px solid rgba(90,101,117,0.16); background:rgba(255,255,255,0.82); backdrop-filter:blur(16px); font-size:12px; font-weight:700; }
+  .traffic { display:flex; align-items:center; gap:7px; }
+  .traffic i { width:11px; height:11px; border-radius:50%; display:block; }
+  .traffic i:nth-child(1) { background:#ff5f57; }
+  .traffic i:nth-child(2) { background:#febc2e; }
+  .traffic i:nth-child(3) { background:#28c840; }
+  .dialog-body { padding:18px; text-align:center; }
+  .steps { display:flex; justify-content:center; gap:8px; margin-bottom:12px; }
+  .step { display:grid; width:18px; height:18px; place-items:center; border-radius:999px; background:#e6ebf2; color:#6f7d91; font-size:10px; font-weight:800; transition:all .3s; }
+  .step.active { background:var(--blue); color:#fff; }
+  .step.done { background:var(--green); color:#fff; }
+  h3 { margin:0 0 6px; font-size:15px; }
+  .small { margin:0; color:var(--muted); font-size:11px; line-height:1.35; }
+  .scanner { display:grid; width:96px; height:76px; place-items:center; margin:14px auto 10px; border-radius:7px; background:#f4f7fb; }
+  .ring { width:36px; height:36px; border:4px solid #d7ebff; border-top-color:var(--blue); border-radius:50%; animation:spin 1s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .device-list { display:grid; gap:8px; margin-top:10px; text-align:left; }
+  .mini-device { display:grid; grid-template-columns:32px 1fr auto; gap:9px; align-items:center; border:2px solid var(--blue); border-radius:6px; padding:8px; cursor:pointer; transition:all .15s; }
+  .mini-device:hover { background:#f6fbff; }
+  .mini-device.selected { background:#e8f4ff; border-color:#005bb5; }
+  .device-icon { display:grid; width:32px; height:32px; place-items:center; border-radius:6px; background:#e6f2ff; color:var(--blue); font-size:11px; font-weight:800; }
+  .device-name { margin:0; font-size:12px; font-weight:800; }
+  .badge { border-radius:999px; padding:3px 7px; background:#e8f7ff; color:#0675b9; font-size:10px; font-weight:800; }
+  .toolbar { display:flex; justify-content:center; gap:8px; margin-top:14px; }
+  .button { display:inline-flex; height:28px; align-items:center; justify-content:center; border:0; border-radius:6px; padding:0 14px; background:var(--blue); color:#fff; font-size:12px; font-weight:700; cursor:pointer; transition:filter .15s; text-decoration:none; }
+  .button:hover { filter:brightness(1.1); }
+  .button:active { filter:brightness(.9); transform:translateY(1px); }
+  .button.secondary { border:1px solid rgba(89,101,118,0.2); background:#fff; color:#334155; }
+  .button:disabled { opacity:.5; cursor:not-allowed; }
+  .success { display:none; padding:18px; text-align:center; }
+  .success-icon { width:48px; height:48px; margin:0 auto 10px; border-radius:50%; background:#e8fbf1; color:var(--green); display:grid; place-items:center; font-size:22px; }
+</style>
+</head>
+<body>
+<div class="dialog" id="dialog">
+  <div class="titlebar"><div class="traffic"><i></i><i></i><i></i></div><span>Add Device</span><span></span></div>
+  <div class="dialog-body" id="step1">
+    <div class="steps">
+      <span class="step active" id="s1">1</span>
+      <span class="step" id="s2">2</span>
+      <span class="step" id="s3">3</span>
+    </div>
+    <h3>Discover nearby devices</h3>
+    <div class="scanner" id="scanner"><span class="ring"></span></div>
+    <div class="device-list" id="deviceList" style="display:none;">
+      <div class="mini-device" onclick="selectDevice(this)">
+        <div class="device-icon">PC</div>
+        <div><p class="device-name">Windows PC</p><p class="small">LAN + NearLink available</p></div>
+        <span class="badge">-48dBm</span>
+      </div>
+      <div class="mini-device" onclick="selectDevice(this)">
+        <div class="device-icon">LX</div>
+        <div><p class="device-name">Linux Desktop</p><p class="small">Wi-Fi Direct · -55dBm</p></div>
+        <span class="badge">-55dBm</span>
+      </div>
+    </div>
+    <div class="toolbar">
+      <a class="button secondary" href="flowgrid-mac-main.html">Cancel</a>
+      <button class="button" id="connectBtn" disabled onclick="connect()">Connect</button>
+    </div>
+  </div>
+  <div class="success" id="success">
+    <div class="success-icon">✓</div>
+    <h3>Device Connected</h3>
+    <p class="small">Windows PC is now paired and ready</p>
+    <div class="toolbar" style="margin-top:18px;">
+      <a class="button" href="flowgrid-mac-main.html">Done</a>
+    </div>
+  </div>
+</div>
+<script>
+  let selected = null;
+  setTimeout(() => {
+    document.getElementById('scanner').style.display='none';
+    document.getElementById('deviceList').style.display='grid';
+  }, 2500);
+  function selectDevice(el) {
+    document.querySelectorAll('.mini-device').forEach(d => d.classList.remove('selected'));
+    el.classList.add('selected');
+    selected = el;
+    document.getElementById('connectBtn').disabled = false;
+  }
+  function connect() {
+    document.getElementById('s1').classList.add('done');
+    document.getElementById('s2').classList.add('active');
+    document.getElementById('connectBtn').disabled = true;
+    document.getElementById('connectBtn').textContent = 'Connecting...';
+    setTimeout(() => {
+      document.getElementById('s2').classList.add('done');
+      document.getElementById('s3').classList.add('active');
+      setTimeout(() => {
+        document.getElementById('step1').style.display='none';
+        document.getElementById('success').style.display='block';
+      }, 600);
+    }, 1200);
+  }
+</script>
+</body>
+</html>

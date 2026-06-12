@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — System Tray (KDE)</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --green:#10a36f; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"Noto Sans","Noto Sans SC","Segoe UI",sans-serif; color:var(--ink); display:grid; place-items:center; padding:24px; }
+  .tray { width:260px; border-radius:6px; border:1px solid rgba(71,84,103,0.2); background:rgba(247,249,251,0.95); box-shadow:0 16px 32px rgba(15,23,42,0.16); overflow:hidden; animation:fadeIn .2s ease; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+  .tray-head { display:flex; justify-content:space-between; gap:12px; padding:10px; border-bottom:1px solid rgba(110,123,141,0.16); font-size:12px; font-weight:800; }
+  .tray-item { display:flex; justify-content:space-between; padding:9px 10px; color:#273348; font-size:12px; cursor:pointer; transition:background .1s; text-decoration:none; }
+  .tray-item:hover { background:#f4f7fb; }
+  .tray-item:active { background:#e8f0f8; }
+  .shortcut { color:#8a94a4; font-size:11px; }
+  .sep { height:1px; background:rgba(110,123,141,0.14); margin:2px 0; }
+</style>
+</head>
+<body>
+<div class="tray" id="tray">
+  <div class="tray-head"><span>FlowGrid</span><span style="color:#0b9b6b">Connected</span></div>
+  <a class="tray-item" href="flowgrid-kde-main.html"><span>Latency</span><strong id="latVal">2.8ms</strong></a>
+  <a class="tray-item" href="flowgrid-kde-main.html"><span>Protocol</span><span class="shortcut">NearLink</span></a>
+  <a class="tray-item" href="flowgrid-kde-main.html"><span>MacBook Pro</span><span class="shortcut">Active</span></a>
+  <div class="sep"></div>
+  <a class="tray-item" href="flowgrid-kde-settings.html"><span>Settings</span></a>
+  <div class="tray-item" onclick="quit()" style="color:#b42318;"><span>Quit</span></div>
+</div>
+<script>
+  setInterval(() => {
+    document.getElementById('latVal').textContent = (2.0 + Math.random() * 1.5).toFixed(1) + 'ms';
+  }, 2000);
+  function quit() {
+    document.getElementById('tray').innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:12px;">FlowGrid exited</div>';
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — Latency Monitor (macOS)</title>
+<style>
+  :root { --ink:#171a1f; --muted:#68707d; --green:#10a36f; --blue:#007aff; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background: linear-gradient(180deg,#fbfcfd,#eff2f6); font-family:"SF Pro Text","SF Pro Display","PingFang SC","Noto Sans SC",sans-serif; color:var(--ink); display:grid; place-items:center; padding:24px; }
+  .window { width:380px; border-radius:12px; border:1px solid rgba(72,85,105,0.16); background:#fff; box-shadow:0 16px 28px rgba(15,23,42,0.16); overflow:hidden; }
+  .titlebar { display:flex; align-items:center; justify-content:space-between; height:34px; padding:0 10px; border-bottom:1px solid rgba(90,101,117,0.16); background:rgba(255,255,255,0.82); backdrop-filter:blur(16px); font-size:12px; font-weight:700; }
+  .traffic { display:flex; align-items:center; gap:7px; }
+  .traffic i { width:11px; height:11px; border-radius:50%; display:block; }
+  .traffic i:nth-child(1) { background:#ff5f57; }
+  .traffic i:nth-child(2) { background:#febc2e; }
+  .traffic i:nth-child(3) { background:#28c840; }
+  .content { padding:14px; }
+  .hero { display:flex; justify-content:space-between; align-items:end; }
+  .hero strong { font-size:34px; color:#08a76c; }
+  .hero strong span { font-size:13px; color:#08a76c; }
+  .small { margin:0; color:var(--muted); font-size:11px; line-height:1.5; }
+  .chart { display:flex; align-items:end; gap:4px; height:72px; padding:12px 0 0; }
+  .bar { flex:1; min-width:3px; border-radius:999px 999px 0 0; background:#9cccf8; transition:height .4s ease; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:14px; }
+  .stat { text-align:center; padding:10px; border-radius:8px; background:#f8fafc; }
+  .stat-value { font-size:16px; font-weight:800; color:var(--ink); }
+  .stat-label { font-size:10px; color:var(--muted); margin-top:4px; }
+  .nav { display:flex; gap:8px; margin-top:14px; }
+  .button { display:inline-flex; height:28px; align-items:center; justify-content:center; border:0; border-radius:6px; padding:0 11px; background:var(--blue); color:#fff; font-size:12px; font-weight:700; cursor:pointer; transition:filter .15s; text-decoration:none; }
+  .button:hover { filter:brightness(1.1); }
+  .button.secondary { border:1px solid rgba(89,101,118,0.2); background:#fff; color:#334155; }
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">
+    <div class="traffic"><i></i><i></i><i></i></div>
+    <span>Latency Monitor</span>
+    <span></span>
+  </div>
+  <div class="content">
+    <div class="hero">
+      <strong id="bigLatency">2.4<span>ms</span></strong>
+      <p class="small" style="text-align:right;">Min <span id="minVal">1.8</span>ms<br>Avg <span id="avgVal">2.3</span>ms</p>
+    </div>
+    <div class="chart" id="chart">
+      <span class="bar" style="height:22px"></span><span class="bar" style="height:18px"></span>
+      <span class="bar" style="height:29px"></span><span class="bar" style="height:24px"></span>
+      <span class="bar" style="height:38px"></span><span class="bar" style="height:31px"></span>
+      <span class="bar" style="height:26px"></span><span class="bar" style="height:34px"></span>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="stat-value" id="stCurrent">2.4ms</div><div class="stat-label">Current</div></div>
+      <div class="stat"><div class="stat-value" id="stMin">1.8ms</div><div class="stat-label">Minimum</div></div>
+      <div class="stat"><div class="stat-value" id="stMax">3.2ms</div><div class="stat-label">Maximum</div></div>
+    </div>
+    <div class="nav">
+      <a class="button secondary" href="flowgrid-mac-main.html">Back</a>
+      <a class="button secondary" href="flowgrid-mac-tray.html">Menu Bar</a>
+    </div>
+  </div>
+</div>
+<script>
+  const bars = document.querySelectorAll('.bar');
+  let minV = 1.8, maxV = 3.2;
+  setInterval(() => {
+    const values = [];
+    bars.forEach(bar => {
+      const h = 15 + Math.random() * 35;
+      bar.style.height = h + 'px';
+      values.push(h);
+    });
+    const cur = (1.5 + Math.random() * 2.0).toFixed(1);
+    document.getElementById('bigLatency').innerHTML = cur + '<span>ms</span>';
+    document.getElementById('stCurrent').textContent = cur + 'ms';
+    if (parseFloat(cur) < minV) { minV = parseFloat(cur); document.getElementById('minVal').textContent = minV; document.getElementById('stMin').textContent = minV + 'ms'; }
+    if (parseFloat(cur) > maxV) { maxV = parseFloat(cur); document.getElementById('stMax').textContent = maxV + 'ms'; }
+  }, 1000);
+</script>
+</body>
+</html>
