@@ -69,7 +69,10 @@ func TestClipboardRoundTrip(t *testing.T) {
 		MIMEType: "text/plain",
 		Data:     []byte("Hello, FlowGrid!"),
 	}
-	data := orig.Marshal()
+	data, err := orig.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
 	got, err := UnmarshalClipboard(data)
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +82,17 @@ func TestClipboardRoundTrip(t *testing.T) {
 	}
 	if string(got.Data) != string(orig.Data) {
 		t.Errorf("Data: got %q, want %q", got.Data, orig.Data)
+	}
+}
+
+func TestClipboardMIMETooLong(t *testing.T) {
+	longMIME := make([]byte, 256)
+	for i := range longMIME {
+		longMIME[i] = 'a'
+	}
+	p := &ClipboardPayload{MIMEType: string(longMIME), Data: []byte("x")}
+	if _, err := p.Marshal(); err == nil {
+		t.Error("expected error for MIME type > 255 bytes")
 	}
 }
 
@@ -118,7 +132,10 @@ func TestDisconnectRoundTrip(t *testing.T) {
 
 func TestErrorPayloadRoundTrip(t *testing.T) {
 	orig := &ErrorPayload{Code: ErrHmacMismatch, Message: "hmac verification failed"}
-	data := orig.Marshal()
+	data, err := orig.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
 	got, err := UnmarshalError(data)
 	if err != nil {
 		t.Fatal(err)
@@ -128,6 +145,14 @@ func TestErrorPayloadRoundTrip(t *testing.T) {
 	}
 	if got.Message != orig.Message {
 		t.Errorf("Message: got %q, want %q", got.Message, orig.Message)
+	}
+}
+
+func TestErrorMessageTooLong(t *testing.T) {
+	longMsg := make([]byte, 254) // MaxErrorMessageLen = 253
+	p := &ErrorPayload{Code: ErrHmacMismatch, Message: string(longMsg)}
+	if _, err := p.Marshal(); err == nil {
+		t.Error("expected error for message > 253 bytes")
 	}
 }
 

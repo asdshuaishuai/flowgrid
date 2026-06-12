@@ -64,3 +64,37 @@ func TestSequenceTrackerReset(t *testing.T) {
 		t.Errorf("after reset: got %d, want 500", tr.Current())
 	}
 }
+
+func TestSequenceTrackerCheckWrapAround(t *testing.T) {
+	tr := NewSequenceTracker(65534)
+	tr.Check(65534) // expected=65535
+	tr.Check(65535) // expected=0
+	if err := tr.Check(0); err != nil {
+		t.Errorf("Check(0) after wrap: %v", err)
+	}
+	if err := tr.Check(1); err != nil {
+		t.Errorf("Check(1) after wrap: %v", err)
+	}
+}
+
+func TestSequenceTrackerCheckOldFrame(t *testing.T) {
+	tr := NewSequenceTracker(0)
+	tr.Check(0) // expected=1
+	tr.Check(1) // expected=2
+	tr.Check(2) // expected=3
+	// Old/retransmitted frame — should be silently ignored
+	if err := tr.Check(0); err != nil {
+		t.Errorf("old frame should be ignored, got error: %v", err)
+	}
+}
+
+func TestSequenceTrackerCheckAfterReset(t *testing.T) {
+	tr := NewSequenceTracker(0)
+	tr.Check(0)
+	tr.Check(1)
+	tr.Reset(1000)
+	// After reset, Check should work from new init
+	if err := tr.Check(1000); err != nil {
+		t.Errorf("Check(1000) after reset: %v", err)
+	}
+}

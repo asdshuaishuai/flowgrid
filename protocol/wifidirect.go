@@ -110,20 +110,28 @@ func UnmarshalWiFiDirectResponse(data []byte) (*WiFiDirectResponse, error) {
 	}, nil
 }
 
-// PreferredWiFiChannels lists recommended channels to avoid Apple AWDL interference (§3.1.4).
-var PreferredWiFiChannels = struct {
-	Channels24GHz []uint8
-	Channels5GHz  []uint8
-}{
-	Channels24GHz: []uint8{1, 11},
-	Channels5GHz:  []uint8{36, 40, 48, 153, 157, 161},
+// preferredWiFiChannels lists recommended channels to avoid Apple AWDL interference (§3.1.4).
+var preferredChannels24GHz = []uint8{1, 11}
+var preferredChannels5GHz = []uint8{36, 40, 48, 153, 157, 161}
+
+// avoidedChannels lists channels occupied by Apple AWDL (§3.1.4).
+var avoidedChannels24GHz = []uint8{6}
+var avoidedChannels5GHz = []uint8{44, 149}
+
+// PreferredWiFiChannels returns copies of the recommended WiFi channels.
+func PreferredWiFiChannels() (channels24GHz, channels5GHz []uint8) {
+	c24 := make([]uint8, len(preferredChannels24GHz))
+	copy(c24, preferredChannels24GHz)
+	c5 := make([]uint8, len(preferredChannels5GHz))
+	copy(c5, preferredChannels5GHz)
+	return c24, c5
 }
 
-// AvoidedWiFiChannels lists channels occupied by Apple AWDL (§3.1.4).
-var AvoidedWiFiChannels = struct {
-	Channels24GHz []uint8
-	Channels5GHz  []uint8
-}{
-	Channels24GHz: []uint8{6},
-	Channels5GHz:  []uint8{44, 149},
+// AvoidedWiFiChannels returns copies of the WiFi channels to avoid.
+func AvoidedWiFiChannels() (channels24GHz, channels5GHz []uint8) {
+	c24 := make([]uint8, len(avoidedChannels24GHz))
+	copy(c24, avoidedChannels24GHz)
+	c5 := make([]uint8, len(avoidedChannels5GHz))
+	copy(c5, avoidedChannels5GHz)
+	return c24, c5
 }

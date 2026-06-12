@@ -46,9 +46,13 @@ func UnmarshalBLEAdvertising(data []byte) (*BLEAdvertisingData, error) {
 	if uuid != BLEServiceUUID16 {
 		return nil, fmt.Errorf("unexpected service UUID: 0x%04X", uuid)
 	}
+	p := Platform(data[3])
+	if p < PlatformMacOS || p > PlatformIOS {
+		return nil, fmt.Errorf("unknown platform: 0x%02X", data[3])
+	}
 	return &BLEAdvertisingData{
 		ProtocolVersion: data[2],
-		DevicePlatform:  Platform(data[3]),
+		DevicePlatform:  p,
 		CapabilityFlags: CapabilityFlags(data[4]),
 		WiFiDirectChan:  binary.BigEndian.Uint16(data[5:7]),
 	}, nil

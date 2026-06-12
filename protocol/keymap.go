@@ -121,26 +121,30 @@ const (
 	ModMeta  = ModLeftMeta | ModRightMeta
 )
 
+// usesMetaModifier returns true if the platform uses Meta (Cmd/Super) as the primary
+// command modifier (macOS, iOS), as opposed to Ctrl (Windows, Linux, Android).
+func usesMetaModifier(p Platform) bool {
+	return p == PlatformMacOS || p == PlatformIOS
+}
+
 // RemapModifiers remaps modifier keys between platforms (§6.3).
-// macOS Cmd <-> Windows/Linux Ctrl. Shift and Alt pass through unchanged.
+// macOS/iOS Cmd <-> Windows/Linux/Android Ctrl. Shift and Alt pass through unchanged.
 func RemapModifiers(mods uint8, fromPlatform, toPlatform Platform) uint8 {
-	// No remapping needed between Windows and Linux
 	if fromPlatform == toPlatform {
 		return mods
 	}
 
-	// macOS <-> Windows/Linux: swap Meta and Ctrl
-	isFromMac := fromPlatform == PlatformMacOS
-	isToMac := toPlatform == PlatformMacOS
+	fromMeta := usesMetaModifier(fromPlatform)
+	toMeta := usesMetaModifier(toPlatform)
 
-	if isFromMac == isToMac {
+	if fromMeta == toMeta {
 		return mods
 	}
 
 	result := mods & ^(ModLeftCtrl | ModRightCtrl | ModLeftMeta | ModRightMeta)
 
-	if isFromMac {
-		// macOS -> Windows/Linux: Cmd becomes Ctrl
+	if fromMeta {
+		// Meta platform -> Ctrl platform: Cmd becomes Ctrl
 		if mods&ModLeftMeta != 0 {
 			result |= ModLeftCtrl
 		}
@@ -148,7 +152,7 @@ func RemapModifiers(mods uint8, fromPlatform, toPlatform Platform) uint8 {
 			result |= ModRightCtrl
 		}
 	} else {
-		// Windows/Linux -> macOS: Ctrl becomes Cmd
+		// Ctrl platform -> Meta platform: Ctrl becomes Cmd
 		if mods&ModLeftCtrl != 0 {
 			result |= ModLeftMeta
 		}

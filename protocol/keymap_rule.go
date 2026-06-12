@@ -3,6 +3,7 @@ package protocol
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -37,14 +38,19 @@ type KeyMapFile struct {
 }
 
 // platformFromString converts a YAML string to Platform.
+// Input is normalized to lowercase before matching.
 func platformFromString(s string) (Platform, error) {
-	switch s {
-	case "macos", "macOS", "mac":
+	switch strings.ToLower(s) {
+	case "macos", "mac":
 		return PlatformMacOS, nil
-	case "windows", "Windows", "win":
+	case "windows", "win":
 		return PlatformWindows, nil
-	case "linux", "Linux":
+	case "linux":
 		return PlatformLinux, nil
+	case "android":
+		return PlatformAndroid, nil
+	case "ios", "ipados":
+		return PlatformIOS, nil
 	default:
 		return 0, fmt.Errorf("unknown platform: %s", s)
 	}
@@ -108,7 +114,9 @@ func ParseKeyMap(data []byte) (*KeyMapFile, error) {
 	return &kmf, nil
 }
 
-// KeyMapTable is a lookup structure for efficient key remapping.
+// KeyMapTable is an immutable lookup structure for efficient key remapping.
+// After construction via NewKeyMapTable, the table should not be modified.
+// For hot-reload (§11.3), replace the entire table pointer atomically.
 type KeyMapTable struct {
 	rules []KeyMapRule
 }
@@ -123,9 +131,11 @@ func NewKeyMapTable(kmf *KeyMapFile) *KeyMapTable {
 }
 
 // Lookup finds a matching rule for the given parameters.
+// Precedence: context-specific rules (app/game) > global rules.
 // Returns the remapped key code, modifiers, and true if a rule matched.
 // If no rule matches, returns the original key and modifiers unchanged.
 func (t *KeyMapTable) Lookup(fromOS, toOS Platform, keyCode uint16, modifiers uint8, context KeyMapContext) (uint16, uint8, bool) {
+	// First pass: look for context-specific rules (app or game)
 	for _, rule := range t.rules {
 		if rule.FromOS != fromOS || rule.ToOS != toOS {
 			continue
@@ -133,10 +143,21 @@ func (t *KeyMapTable) Lookup(fromOS, toOS Platform, keyCode uint16, modifiers ui
 		if rule.FromKey != keyCode {
 			continue
 		}
-		if rule.Context != ContextGlobal && rule.Context != context {
+		if rule.Context == context {
+			return rule.ToKey, rule.Modifiers, true
+		}
+	}
+	// Second pass: look for global rules
+	for _, rule := range t.rules {
+		if rule.FromOS != fromOS || rule.ToOS != toOS {
 			continue
 		}
-		return rule.ToKey, rule.Modifiers, true
+		if rule.FromKey != keyCode {
+			continue
+		}
+		if rule.Context == ContextGlobal {
+			return rule.ToKey, rule.Modifiers, true
+		}
 	}
 	return keyCode, modifiers, false
 }

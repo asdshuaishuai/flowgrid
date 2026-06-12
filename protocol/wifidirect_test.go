@@ -64,11 +64,20 @@ func TestWiFiDirectResponseRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got.Version != orig.Version {
+		t.Errorf("Version: got %d, want %d", got.Version, orig.Version)
+	}
 	if got.Status != orig.Status {
 		t.Errorf("Status: got %d, want %d", got.Status, orig.Status)
 	}
 	if got.Port != orig.Port {
 		t.Errorf("Port: got %d, want %d", got.Port, orig.Port)
+	}
+	if got.Channel != orig.Channel {
+		t.Errorf("Channel: got %d, want %d", got.Channel, orig.Channel)
+	}
+	if got.Band != orig.Band {
+		t.Errorf("Band: got %d, want %d", got.Band, orig.Band)
 	}
 }
 
@@ -87,5 +96,19 @@ func TestWiFiDirectResponseReject(t *testing.T) {
 	}
 	if got.Status != WiFiDirectRejectBusy {
 		t.Errorf("Status: got %d, want %d", got.Status, WiFiDirectRejectBusy)
+	}
+}
+
+func TestWiFiDirectRequestShortData(t *testing.T) {
+	_, err := UnmarshalWiFiDirectRequest(make([]byte, 10))
+	if err == nil {
+		t.Fatal("expected error for short request")
+	}
+}
+
+func TestWiFiDirectResponseShortData(t *testing.T) {
+	_, err := UnmarshalWiFiDirectResponse(make([]byte, 4))
+	if err == nil {
+		t.Fatal("expected error for short response")
 	}
 }

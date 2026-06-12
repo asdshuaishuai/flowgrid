@@ -73,12 +73,14 @@ func (s *ReconnectState) State() ConnState {
 // SetConnected transitions to connected state, resetting attempt counter.
 func (s *ReconnectState) SetConnected() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.state = ConnStateConnected
 	s.attempt = 0
 	s.backoff = ReconnectInitBackoff
-	if s.callback.OnConnected != nil {
-		s.callback.OnConnected()
+	cb := s.callback.OnConnected
+	s.mu.Unlock()
+
+	if cb != nil {
+		cb()
 	}
 }
 
@@ -86,12 +88,13 @@ func (s *ReconnectState) SetConnected() {
 // Returns false if max attempts exceeded (transitions to idle).
 func (s *ReconnectState) StartReconnect() (time.Duration, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if s.attempt >= ReconnectMaxAttempts {
 		s.state = ConnStateIdle
-		if s.callback.OnIdle != nil {
-			s.callback.OnIdle()
+		cb := s.callback.OnIdle
+		s.mu.Unlock()
+		if cb != nil {
+			cb()
 		}
 		return 0, false
 	}
@@ -106,14 +109,18 @@ func (s *ReconnectState) StartReconnect() (time.Duration, bool) {
 		actualBackoff = 0
 	}
 
-	if s.callback.OnReconnecting != nil {
-		s.callback.OnReconnecting(s.attempt, actualBackoff)
-	}
+	attempt := s.attempt
+	cb := s.callback.OnReconnecting
 
 	// Increase backoff for next attempt
 	s.backoff = s.backoff * time.Duration(ReconnectMultiplier)
 	if s.backoff > ReconnectMaxBackoff {
 		s.backoff = ReconnectMaxBackoff
+	}
+	s.mu.Unlock()
+
+	if cb != nil {
+		cb(attempt, actualBackoff)
 	}
 
 	return actualBackoff, true

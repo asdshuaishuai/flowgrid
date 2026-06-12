@@ -48,17 +48,12 @@ func (t *SequenceTracker) Check(received uint16) error {
 		t.expected++
 		return nil
 	}
-	if diff == 1 {
-		// One frame skipped
+	if diff > 0 && diff < 0x8000 {
+		// Frame(s) skipped
 		t.expected = received + 1
 		return NewError(ErrSequenceGap, "seq_gap")
 	}
-	if diff > 1 && diff < 0x8000 {
-		// Multiple frames skipped
-		t.expected = received + 1
-		return NewError(ErrSequenceGap, "seq_gap")
-	}
-	// diff is negative (old frame) or very large (wrap-around) — ignore old frames
+	// diff >= 0x8000 means received is behind expected (old/retransmitted frame) — ignore
 	return nil
 }
 

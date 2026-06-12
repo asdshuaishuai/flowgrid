@@ -26,13 +26,14 @@ func TestFragmentFrameSplit(t *testing.T) {
 		bigData[i] = byte(i % 256)
 	}
 	payload := &ClipboardPayload{MIMEType: "text/plain", Data: bigData}
+	payloadBytes, _ := payload.Marshal()
 	frame := &HIDFrame{
 		Header: FrameHeader{
 			FrameType: FrameClipboard,
 			Sequence:  42,
 			Timestamp: 999,
 		},
-		Payload: payload.Marshal(),
+		Payload: payloadBytes,
 	}
 
 	frags := FragmentFrame(frame, 100) // small MTU to force fragmentation

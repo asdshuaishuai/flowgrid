@@ -41,6 +41,28 @@ func TestBLEAdvertisingBadUUID(t *testing.T) {
 	}
 }
 
+func TestBLEAdvertisingShortData(t *testing.T) {
+	if _, err := UnmarshalBLEAdvertising([]byte{0x50, 0x18, 0x01}); err == nil {
+		t.Error("expected error for short BLE data")
+	}
+}
+
+func TestBLEAdvertisingBadPlatform(t *testing.T) {
+	// Valid UUID but unknown platform 0xFF
+	data := []byte{0x50, 0x18, 0x01, 0xFF, 0x01, 0x00, 0x24}
+	if _, err := UnmarshalBLEAdvertising(data); err == nil {
+		t.Error("expected error for unknown platform")
+	}
+}
+
+func TestMdnsTXTMalformedLines(t *testing.T) {
+	lines := []string{"no-equals", "version=1", ""}
+	got := UnmarshalTXT(lines)
+	if got.Version != "1" {
+		t.Errorf("Version: got %q, want %q", got.Version, "1")
+	}
+}
+
 func TestMdnsTXTRoundTrip(t *testing.T) {
 	orig := &MdnsTXTRecord{
 		Version:    "1",

@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 )
 
 // --- Payload structs for each frame type (§5.3) ---
@@ -135,8 +136,11 @@ type ClipboardPayload struct {
 
 const MaxClipboardSize = 65536
 
-func (p *ClipboardPayload) Marshal() []byte {
+func (p *ClipboardPayload) Marshal() ([]byte, error) {
 	mimeBytes := []byte(p.MIMEType)
+	if len(mimeBytes) > 255 {
+		return nil, fmt.Errorf("MIME type too long: %d bytes (max 255)", len(mimeBytes))
+	}
 	mimeLen := uint8(len(mimeBytes))
 	dataLen := uint32(len(p.Data))
 
@@ -145,7 +149,7 @@ func (p *ClipboardPayload) Marshal() []byte {
 	copy(buf[1:1+mimeLen], mimeBytes)
 	binary.BigEndian.PutUint32(buf[1+mimeLen:5+mimeLen], dataLen)
 	copy(buf[5+mimeLen:], p.Data)
-	return buf
+	return buf, nil
 }
 
 func UnmarshalClipboard(data []byte) (*ClipboardPayload, error) {
@@ -225,14 +229,20 @@ type ErrorPayload struct {
 	Message string
 }
 
-func (p *ErrorPayload) Marshal() []byte {
+// MaxErrorMessageLen is the maximum error message length (255 - 2 header bytes).
+const MaxErrorMessageLen = int(MaxPayloadLen) - 2
+
+func (p *ErrorPayload) Marshal() ([]byte, error) {
 	msgBytes := []byte(p.Message)
+	if len(msgBytes) > MaxErrorMessageLen {
+		return nil, fmt.Errorf("error message too long: %d bytes (max %d)", len(msgBytes), MaxErrorMessageLen)
+	}
 	msgLen := uint8(len(msgBytes))
 	buf := make([]byte, 2+msgLen)
 	buf[0] = uint8(p.Code)
 	buf[1] = msgLen
 	copy(buf[2:], msgBytes)
-	return buf
+	return buf, nil
 }
 
 func UnmarshalError(data []byte) (*ErrorPayload, error) {
