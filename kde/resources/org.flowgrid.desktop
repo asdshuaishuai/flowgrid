@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=FlowGrid
+Comment=Cross-platform keyboard and mouse sharing
+Exec=flowgrid
+Icon=flowgrid
+Type=Application
+Categories=Network;Utility;RemoteAccess;
+Keywords=keyboard;mouse;sharing;synergy;deskflow;kvm;
+StartupNotify=true
+Terminal=false
+X-KDE-Autostart-enabled=true

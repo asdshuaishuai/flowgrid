@@ -1,0 +1,4 @@
+# FlowGrid uinput access rule
+# Install: sudo cp 99-flowgrid.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+
+KERNEL=="uinput", MODE="0660", GROUP="input", TAG+="uaccess"

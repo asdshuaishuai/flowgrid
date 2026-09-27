@@ -1,0 +1,22 @@
+[package]
+name = "flowgrid-app"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "flowgrid-app"
+path = "src/main.rs"
+
+[dependencies]
+cxx-qt = { workspace = true }
+cxx-qt-lib = { workspace = true, features = ["qt_gui", "qt_qml"] }
+flowgrid-cxx-qt = { path = "../cxx-qt-bridge" }
+flowgrid-core = { path = "../core" }
+
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[build-dependencies]
+cxx-qt-build = { workspace = true }

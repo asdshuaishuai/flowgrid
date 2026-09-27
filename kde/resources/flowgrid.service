@@ -1,0 +1,12 @@
+[Unit]
+Description=FlowGrid - Cross-platform keyboard/mouse sharing
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/flowgrid
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
