@@ -1,0 +1,21 @@
+[package]
+name = "flowgrid-deepin-native"
+version = "1.0.0"
+edition = "2024"
+authors = ["FlowGrid Team"]
+license = "MIT OR Apache-2.0"
+
+# C ABI bridge between the DTK (C++) UI and the shared Rust core.
+# The KDE client uses cxx-qt/QML; deepin uses DTK widgets, which talk to the
+# core through this plain C interface instead.
+
+[lib]
+name = "flowgrid_deepin_native"
+crate-type = ["staticlib"]
+
+[dependencies]
+flowgrid-core = { path = "../../kde/rust/core" }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

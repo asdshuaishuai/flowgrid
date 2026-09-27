@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file alias="flowgrid-deepin.svg">../resources/icons/flowgrid-deepin.svg</file>
+        <file alias="flowgrid-deepin-dark.svg">../resources/icons/flowgrid-deepin-dark.svg</file>
+    </qresource>
+</RCC>

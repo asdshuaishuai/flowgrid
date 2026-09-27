@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=FlowGrid
+Name[zh_CN]=FlowGrid 键鼠共享
+Comment=Share one keyboard and mouse across computers
+Comment[zh_CN]=一套键鼠，控制多台电脑
+Exec=flowgrid-deepin
+Icon=flowgrid-deepin
+Terminal=false
+Categories=Utility;Network;
+Keywords=keyboard;mouse;share;flowgrid;键鼠共享;
+StartupNotify=true
