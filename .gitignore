@@ -23,3 +23,16 @@ Thumbs.db
 # Claude
 .claude/
 .superpowers/
+
+# Build outputs
+build/
+kde/build/
+deepin/build/
+kde/rust/target/
+deepin/native/target/
+protocol/cgo/*.a
+libflowgrid_*.a
+libflowgrid_*.h
+
+# Tooling index
+.codegraph/
