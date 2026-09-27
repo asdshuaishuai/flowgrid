@@ -113,6 +113,20 @@ const (
 	ModRightMeta uint8 = 0x80
 )
 
+// Platform-specific modifier key Usage IDs (§6.4). HID frames always carry the
+// standard masks above; these codes matter at the KeyMapper layer.
+const (
+	HIDKeyLCtrl  uint16 = 0xE0 // Windows/Linux LCtrl
+	HIDKeyLShift uint16 = 0xE1
+	HIDKeyLAlt   uint16 = 0xE2 // Windows LMenu / macOS LOption
+	HIDKeyLMeta  uint16 = 0xE3 // Windows LWin / macOS Cmd / Linux Super
+	HIDKeyRCtrl  uint16 = 0xE4
+	HIDKeyRShift uint16 = 0xE5
+	HIDKeyRAlt   uint16 = 0xE6 // AltGr
+	HIDKeyRMeta  uint16 = 0xE7
+	HIDKeyFn     uint16 = 0x3F // macOS only
+)
+
 // Convenience combined masks.
 const (
 	ModCtrl  = ModLeftCtrl | ModRightCtrl
@@ -168,21 +182,21 @@ func RemapModifiers(mods uint8, fromPlatform, toPlatform Platform) uint8 {
 // or 0 if it's not a modifier key.
 func ModifierFromSingleKey(hidKey uint16) uint8 {
 	switch hidKey {
-	case 0xE0: // Left Control (Windows/Linux)
+	case HIDKeyLCtrl:
 		return ModLeftCtrl
-	case 0xE1: // Left Shift
+	case HIDKeyLShift:
 		return ModLeftShift
-	case 0xE2: // Left Alt / Option
+	case HIDKeyLAlt:
 		return ModLeftAlt
-	case 0xE3: // Left Meta / Win / Cmd
+	case HIDKeyLMeta:
 		return ModLeftMeta
-	case 0xE4: // Right Control
+	case HIDKeyRCtrl:
 		return ModRightCtrl
-	case 0xE5: // Right Shift
+	case HIDKeyRShift:
 		return ModRightShift
-	case 0xE6: // Right Alt / AltGr
+	case HIDKeyRAlt:
 		return ModRightAlt
-	case 0xE7: // Right Meta
+	case HIDKeyRMeta:
 		return ModRightMeta
 	default:
 		return 0

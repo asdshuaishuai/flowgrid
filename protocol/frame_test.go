@@ -146,3 +146,78 @@ func TestFrameBigEndianEncoding(t *testing.T) {
 		t.Errorf("timestamp bytes: got %x", encoded[3:11])
 	}
 }
+
+func TestFrameHMACRoundTrip(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+	frame := HIDFrame{
+		Header: FrameHeader{
+			FrameType: FrameKeyDown,
+			Sequence:  7,
+			Timestamp: 42,
+		},
+		Payload: (&KeyDownPayload{KeyCode: HIDKeyC, Modifiers: ModLeftCtrl}).Marshal(),
+	}
+
+	encoded, err := frame.EncodeBytesWithHMAC(key)
+	if err != nil {
+		t.Fatalf("EncodeBytesWithHMAC: %v", err)
+	}
+	if len(encoded) != HeaderSize+len(frame.Payload)+HMACSize {
+		t.Fatalf("encoded length %d, want header+payload+%d", len(encoded), HMACSize)
+	}
+
+	decoded, n, err := DecodeFrameBytesWithHMAC(encoded, key)
+	if err != nil {
+		t.Fatalf("DecodeFrameBytesWithHMAC: %v", err)
+	}
+	if n != len(encoded) {
+		t.Errorf("consumed %d, want %d", n, len(encoded))
+	}
+	if !bytes.Equal(decoded.Payload, frame.Payload) {
+		t.Errorf("payload mismatch")
+	}
+}
+
+func TestFrameHMACTamperDetected(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+	frame := HIDFrame{
+		Header:  FrameHeader{FrameType: FrameKeyDown, Sequence: 1, Timestamp: 1},
+		Payload: []byte{0x00, 0x06, 0x01},
+	}
+
+	encoded, _ := frame.EncodeBytesWithHMAC(key)
+	encoded[len(encoded)-1] ^= 0xFF // flip a bit in the HMAC itself
+	if _, _, err := DecodeFrameBytesWithHMAC(encoded, key); err == nil {
+		t.Error("expected HMAC mismatch for tampered MAC")
+	}
+
+	encoded, _ = frame.EncodeBytesWithHMAC(key)
+	encoded[13] ^= 0xFF // flip a bit in the payload
+	if _, _, err := DecodeFrameBytesWithHMAC(encoded, key); err == nil {
+		t.Error("expected HMAC mismatch for tampered payload")
+	}
+}
+
+func TestFrameHMACMissingTrailerRejected(t *testing.T) {
+	// A key implies integrity is enabled: frames without the 4-byte HMAC
+	// suffix must be rejected, not silently accepted (§8.3).
+	key := []byte("0123456789abcdef0123456789abcdef")
+	frame := HIDFrame{
+		Header:  FrameHeader{FrameType: FrameHeartbeat, Sequence: 1, Timestamp: 1},
+		Payload: nil,
+	}
+
+	plain, _ := frame.EncodeBytes()
+	_, _, err := DecodeFrameBytesWithHMAC(plain, key)
+	if err == nil {
+		t.Fatal("expected error for missing HMAC trailer")
+	}
+	if pe, ok := err.(*ProtocolError); !ok || pe.Code != ErrHmacMismatch {
+		t.Errorf("got %v, want ErrHmacMismatch", err)
+	}
+
+	// Without a key the plain frame decodes fine.
+	if _, _, err := DecodeFrameBytesWithHMAC(plain, nil); err != nil {
+		t.Errorf("plain decode without key: %v", err)
+	}
+}

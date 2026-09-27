@@ -67,3 +67,45 @@ func (e *ProtocolError) Error() string {
 func NewError(code ErrorCode, msg string) *ProtocolError {
 	return &ProtocolError{Code: code, Message: msg}
 }
+
+// errorCodeNames maps every §12 code to its canonical spec name.
+var errorCodeNames = map[ErrorCode]string{
+	// §12.1 transport
+	ErrPeripheralNotFound:    "peripheralNotFound",
+	ErrConnectionFailed:      "connectionFailed",
+	ErrConnectionCancelled:   "connectionCancelled",
+	ErrConnectionTimeout:     "connectionTimeout",
+	ErrNotConnected:          "notConnected",
+	ErrSendFailed:            "sendFailed",
+	ErrDTLSError:             "dtlsError",
+	ErrBluetoothNotAvail:     "bluetoothNotAvailable",
+	ErrBluetoothPoweredOff:   "bluetoothPoweredOff",
+	ErrBluetoothUnauthorized: "bluetoothUnauthorized",
+	ErrBluetoothNotSupported: "bluetoothNotSupported",
+	ErrWiFiDirectFailed:      "wifiDirectFailed",
+	ErrMdnsError:             "mdnsError",
+	ErrNetworkUnavailable:    "networkUnavailable",
+	// §12.2 protocol
+	ErrHmacMismatch:         "hmacMismatch",
+	ErrUnknownFrameType:     "unknownFrameType",
+	ErrInvalidPayload:       "invalidPayload",
+	ErrVersionMismatch:      "versionMismatch",
+	ErrIdentifyRejected:     "identifyRejected",
+	ErrFragmentationTimeout: "fragmentationTimeout",
+	ErrSequenceGap:          "sequenceGap",
+	// §12.3 HAL
+	ErrAccessibilityDenied:    "accessibilityDenied",
+	ErrEventCreationFailed:    "eventCreationFailed",
+	ErrUnsupportedEventType:   "unsupportedEventType",
+	ErrPlatformNotSupported:   "platformNotSupported",
+	ErrUinputPermissionDenied: "uinputPermissionDenied",
+}
+
+// ErrorCodeString returns the canonical §12 name for a code, or a generic
+// "error 0x%02X" string for unknown codes (future versions may add codes).
+func ErrorCodeString(code ErrorCode) string {
+	if name, ok := errorCodeNames[code]; ok {
+		return name
+	}
+	return fmt.Sprintf("error 0x%02X", uint8(code))
+}

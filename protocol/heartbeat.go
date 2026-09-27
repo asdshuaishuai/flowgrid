@@ -52,11 +52,12 @@ type LatencySample struct {
 
 // LatencyMonitor tracks latency samples and provides statistics (§9.2).
 type LatencyMonitor struct {
-	mu         sync.Mutex
-	samples    []LatencySample
-	maxSamples int
-	lastPing   uint64 // timestamp of last sent PING
-	prevValue  float64
+	mu             sync.Mutex
+	samples        []LatencySample
+	maxSamples     int
+	lastPing       uint64  // timestamp of last sent PING
+	prevValue      float64
+	consecutiveBad int // consecutive samples above LatencyAlertThresholdMs
 }
 
 // NewLatencyMonitor creates a latency monitor with the given sample buffer size.
@@ -99,8 +100,21 @@ func (m *LatencyMonitor) RecordPong(pongTimestampUs, nowUs uint64) LatencySample
 		m.samples = m.samples[1:]
 	}
 	m.prevValue = latencyMs
+	if latencyMs > LatencyAlertThresholdMs {
+		m.consecutiveBad++
+	} else {
+		m.consecutiveBad = 0
+	}
 
 	return sample
+}
+
+// ConsecutiveBad returns the number of consecutive samples exceeding
+// LatencyAlertThresholdMs (§9.2: 3 in a row triggers the UI alert banner).
+func (m *LatencyMonitor) ConsecutiveBad() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.consecutiveBad
 }
 
 // Latest returns the most recent sample, or nil if none.

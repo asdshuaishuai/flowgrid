@@ -1,7 +1,7 @@
 # FlowGrid Protocol Specification v1.0
 
 > **Canonical Reference** — 所有平台实现必须遵循本文档。
-> 修订日期: 2026-06-08
+> 修订日期: 2026-09-20
 
 ---
 
@@ -283,6 +283,15 @@ Status: 0x00 = 接受, 0x01 = 版本不兼容, 0x02 = 拒绝, 0x03 = 需要用�
 3. 计算共享密钥: shared_secret = ECDH(local_private, remote_public)
 4. 派生会话密钥: session_key = HKDF-SHA256(shared_secret, salt="FlowGrid-v1", info="session-key")
 5. 持久化对端公钥指纹，后续连接自动信任
+```
+
+Wire 格式约定（所有平台一致）：
+
+```
+公钥编码:      SEC1 非压缩点, 65 字节 (0x04 || X || Y)
+共享密钥:      ECDH 输出, 32 字节 (P-256 x 坐标)
+会话密钥:      HKDF-SHA256 输出, 32 字节
+公钥指纹:      hex(SHA-256(公钥 65 字节)[0:16]) — 32 个十六进制字符
 ```
 
 ---
@@ -686,12 +695,17 @@ Client (Host)                           Server (Target)
 
 ```
 每帧可选 4 字节 HMAC:
-  hmac = SHA-256(session_key, frame_type || seq || timestamp || payload)[0:4]
+  hmac = HMAC-SHA256(session_key, 完整帧字节)[0:4]
+       = HMAC-SHA256(session_key, frame_type || seq || timestamp || payload_len || payload)[0:4]
+
+  即: 使用标准 HMAC-SHA256 构造 (非 plain SHA-256)，
+      输入为完整的 12+N 字节帧 (header + payload)。
 
 验证流程:
   1. 接收帧后计算 HMAC
   2. 比较帧尾 4 字节
-  3. 不匹配 → 丢弃帧 + 发送 ERROR (0xFF, code=0x10)
+  3. 不匹配或缺失 → 丢弃帧 + 发送 ERROR (0xFF, code=0x10)
+  4. 已启用 HMAC 的连接上，缺失 HMAC 尾的帧视为验证失败，不得静默放行
 
 何时启用:
   - NearLink (WiFi): 必须启用
@@ -1024,9 +1038,14 @@ Context 值:
 当 DTLS 未启用时 (如物理隔离的 Raw Ethernet 模式)，使用 CRC32 校验：
 
 ```
-位置: HMAC 字段前
-计算: CRC32(frame_type || seq || timestamp || payload)
+多项式: CRC-32/IEEE 802.3 (即 zlib / 以太网 FCS 使用的标准 CRC32)
+计算: CRC32(完整 12+N 帧字节) = CRC32(frame_type || seq || timestamp || payload_len || payload)
+存储: 4 字节, 大端序
 接收方验证失败 → 丢弃帧 + ERROR (0xFF, code=0x10)
+
+Raw Ethernet 帧中 CRC 与 HMAC 共存时的布局:
+  ... │ HID Frame (12+N) │ CRC (4B) │ HMAC (4B) │
+  两者均只覆盖 12+N 帧字节，互不嵌套。
 ```
 
 ## 附录 C: 鼠标插值参数 (Host 端)

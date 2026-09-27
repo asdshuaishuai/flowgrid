@@ -1,6 +1,8 @@
 package protocol
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -87,6 +89,61 @@ func (f *HIDFrame) EncodeBytes() ([]byte, error) {
 
 	buf = append(hdr, f.Payload...)
 	return buf, nil
+}
+
+// EncodeBytesWithHMAC returns the frame with a 4-byte HMAC-SHA256 truncation appended.
+// HMAC is computed over header+payload using the provided key.
+func (f *HIDFrame) EncodeBytesWithHMAC(key []byte) ([]byte, error) {
+	var buf []byte
+	f.Header.PayloadLen = uint8(len(f.Payload))
+
+	hdr := make([]byte, HeaderSize)
+	hdr[0] = f.Header.FrameType
+	binary.BigEndian.PutUint16(hdr[1:3], f.Header.Sequence)
+	binary.BigEndian.PutUint64(hdr[3:11], f.Header.Timestamp)
+	hdr[11] = f.Header.PayloadLen
+
+	buf = append(hdr, f.Payload...)
+	if len(key) > 0 {
+		hmac := ComputeHMAC(key, buf)
+		buf = append(buf, hmac[:]...)
+	}
+	return buf, nil
+}
+
+// ComputeHMAC computes SHA-256(key, data) and returns the first 4 bytes.
+func ComputeHMAC(key, data []byte) [4]byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(data)
+	sum := mac.Sum(nil)
+	var out [4]byte
+	copy(out[:], sum[:4])
+	return out
+}
+
+// DecodeFrameBytesWithHMAC decodes a frame and verifies the trailing 4-byte HMAC (§8.3).
+// When key is non-empty the frame MUST carry the 4-byte HMAC suffix; a missing or
+// mismatching HMAC is an ErrHmacMismatch error — frames are never accepted unverified.
+// Returns the frame and total bytes consumed (including the HMAC).
+func DecodeFrameBytesWithHMAC(data, key []byte) (*HIDFrame, int, error) {
+	frame, total, err := DecodeFrameBytes(data)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if len(key) > 0 {
+		if len(data) < total+4 {
+			return nil, 0, NewError(ErrHmacMismatch, "missing HMAC")
+		}
+		gotHMAC := data[total : total+4]
+		expected := ComputeHMAC(key, data[:total])
+		if !hmac.Equal(gotHMAC, expected[:]) {
+			return nil, 0, NewError(ErrHmacMismatch, "HMAC mismatch")
+		}
+		return frame, total + 4, nil
+	}
+
+	return frame, total, nil
 }
 
 // DecodeFrame reads one HIDFrame from r.

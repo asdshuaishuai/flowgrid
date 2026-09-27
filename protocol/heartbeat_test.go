@@ -111,3 +111,42 @@ func TestLatencyMonitorMaxSamples(t *testing.T) {
 		t.Errorf("samples: got %d, want 3", len(m.samples))
 	}
 }
+
+func TestLatencyConsecutiveBad(t *testing.T) {
+	m := NewLatencyMonitor(10)
+
+	// (now-pong)=12000µs → 6ms: above the 5ms alert threshold.
+	bad := func(now uint64) { m.RecordPong(now-12000, now) }
+	// (now-pong)=2000µs → 1ms: healthy.
+	good := func(now uint64) { m.RecordPong(now-2000, now) }
+
+	var now uint64 = 1000000
+	good(now)
+	if m.ConsecutiveBad() != 0 {
+		t.Fatalf("healthy sample: consecutive bad = %d, want 0", m.ConsecutiveBad())
+	}
+
+	now += 100000
+	bad(now)
+	now += 100000
+	bad(now)
+	if m.ConsecutiveBad() != 2 {
+		t.Fatalf("two bad samples: consecutive bad = %d, want 2", m.ConsecutiveBad())
+	}
+
+	now += 100000
+	good(now)
+	if m.ConsecutiveBad() != 0 {
+		t.Fatalf("healthy sample resets streak: got %d, want 0", m.ConsecutiveBad())
+	}
+
+	now += 100000
+	bad(now)
+	now += 100000
+	bad(now)
+	now += 100000
+	bad(now)
+	if m.ConsecutiveBad() != 3 {
+		t.Fatalf("three bad samples: consecutive bad = %d, want 3", m.ConsecutiveBad())
+	}
+}
