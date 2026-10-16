@@ -19,6 +19,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -187,6 +188,17 @@ FilesPanel::FilesPanel(QWidget *parent) : Panel(tr("文件传输"), parent)
     body->addWidget(buildDropZone());
     body->addWidget(buildRecords());
     setFooterWidget(buildFooter());
+
+    // 首帧就要画出空状态，否则只有两个小标题、下面什么都没有，看着像加载坏了。
+    rebuildTransfers();
+    rebuildRecords();
+
+    // 会话轮询早先只有 pollSessions() 这个方法、没有任何调用点，等于整块列表
+    // 是死的。这里按 500ms 拉一次：Go 侧是非阻塞出队，没数据时开销可忽略，
+    // 而面板「按需唤出」的形态也要求唤出瞬间状态就是新的。
+    auto *timer = new QTimer(this);
+    connect(timer, &QTimer::timeout, this, &FilesPanel::pollSessions);
+    timer->start(500);
 }
 
 QWidget *FilesPanel::buildTransferList()
@@ -207,6 +219,11 @@ QWidget *FilesPanel::buildTransferList()
     transferLayout_ = new QVBoxLayout(list);
     transferLayout_->setContentsMargins(0, 0, 0, 0);
     transferLayout_->setSpacing(0);   // ui.css .xfer 用 border-bottom 分隔，不留间隙
+    // 设计稿里「进行中」和「传输记录」都是 .list 卡片（1px line-2 描边 + r-card
+    // 圆角 + surface 底），和剪贴板屏的同步历史是同一个容器样式。
+    applyBoxStyle(list,
+                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.surface)));
     vl->addWidget(list);
     return box;
 }
@@ -271,6 +288,9 @@ QWidget *FilesPanel::buildRecords()
     recordsLayout_ = new QVBoxLayout(list);
     recordsLayout_->setContentsMargins(0, 0, 0, 0);
     recordsLayout_->setSpacing(0);
+    applyBoxStyle(list,
+                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.surface)));
     vl->addWidget(list);
     return box;
 }
@@ -496,9 +516,13 @@ void FilesPanel::rebuildTransfers()
     }
 
     if (active == 0) {
+        // 卡片留白来自 .xfer / .list__row 自己的 padding，空列表没有行，
+        // 不给的话文字会贴着卡片边框。
         auto *empty = new QLabel(tr("暂无进行中的传输"), host);
         empty->setFont(uiFont(tokens::kFont12));
         empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        empty->setAlignment(Qt::AlignCenter);
+        empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
         transferLayout_->addWidget(empty);
     }
 }
@@ -585,6 +609,8 @@ void FilesPanel::rebuildRecords()
         auto *empty = new QLabel(tr("暂无传输记录"), host);
         empty->setFont(uiFont(tokens::kFont11));
         empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        empty->setAlignment(Qt::AlignCenter);
+        empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
         recordsLayout_->addWidget(empty);
     }
 }

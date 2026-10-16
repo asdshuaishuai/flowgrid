@@ -78,6 +78,9 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         col->addWidget(caption);
         col->addWidget(bigValue_);
 
+        // 设计稿：这一行是 align-items:flex-end——两列**底对齐**。
+        // 早先两列都是顶对齐，链路名（大数字那列更高）被挤到行底之外，
+        // 文字下半截被裁掉一条。
         auto *linkCol = new QVBoxLayout;
         linkCol->setContentsMargins(0, 0, 0, 0);
         linkCol->setSpacing(2);
@@ -85,14 +88,34 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         linkCaption->setFont(uiFont(tokens::kFont11));
         linkCaption->setStyleSheet(
             QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
-        linkLabel_ = new QLabel(QStringLiteral("—"), row);
-        linkLabel_->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
-        linkCol->addWidget(linkCaption);
-        linkCol->addWidget(linkLabel_);
+        linkCaption->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
-        hl->addLayout(col);
+        // 设计稿里链路值是 [wifi 图标] + 名称，整体右对齐
+        auto *linkRow = new QWidget(row);
+        auto *lrl = new QHBoxLayout(linkRow);
+        lrl->setContentsMargins(0, 0, 0, 0);
+        lrl->setSpacing(tokens::kS1);
+        linkLabel_ = new QLabel(QStringLiteral("—"), linkRow);
+        linkLabel_->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
+        auto *wifi = new QLabel(linkRow);
+        wifi->setFixedSize(12, 12);
+        wifi->setPixmap(icons::icon(QStringLiteral("wifi"), 12,
+                                    Theme::instance().palette().text3).pixmap(12, 12));
+        lrl->addStretch(1);
+        lrl->addWidget(wifi);
+        lrl->addWidget(linkLabel_);
+        linkCol->addWidget(linkCaption);
+        linkCol->addWidget(linkRow);
+
+        // QHBoxLayout::addLayout 不收对齐参数（那是 QGridLayout 才有的重载），
+        // 要让两列底对齐只能各包一层 QWidget 再用 addWidget(..., alignment)。
+        auto *colBox = new QWidget(row);
+        colBox->setLayout(col);
+        hl->addWidget(colBox, 0, Qt::AlignBottom);
         hl->addStretch(1);
-        hl->addLayout(linkCol);
+        auto *linkBox = new QWidget(row);
+        linkBox->setLayout(linkCol);
+        hl->addWidget(linkBox, 0, Qt::AlignBottom);
         contentLayout_->addWidget(row);
     }
 
@@ -143,14 +166,10 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
     connect(&manager, &DeviceManager::sampled, this, &LatencyPanel::onSampled);
 
     refresh();
-    // 首屏用当前真实读数铺满窗口：推 0 会让一排柱子全是同一高度的矮柱，
-    // 既不像设计稿，也把"当前值"这一个信息丢掉了。
-    const double seed = manager.activeLatencyMs();
-    if (seed > 0.0) {
-        for (int i = 0; i < tokens::kChartBars; ++i) {
-            chart_->pushSample(seed);
-        }
-    }
+    // 首屏在第一次真实采样到达前没有历史；prime() 按 mock 源的抖动带铺一组
+    // 占位样本，全推同一个 seed 会让 12 根柱子齐平，既不像设计稿的 22~44px
+    // 起伏，也看不出「采样在动」。首次 sampled() 到达后即被真实数据顶掉。
+    chart_->prime(manager.activeLatencyMs());
 }
 
 QWidget *LatencyPanel::buildThresholdSection()

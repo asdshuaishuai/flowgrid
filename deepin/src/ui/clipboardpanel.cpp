@@ -299,9 +299,13 @@ void ClipboardPanel::rebuildHistory()
     auto *host = historyLayout_->parentWidget();
 
     if (history_.isEmpty()) {
+        // .list 卡片在设计稿里是靠 .list__row 的内边距撑出留白的；空列表没有行，
+        // 直接 addWidget 会让文字贴着卡片左边框。这里给一层上下留白 + 居中。
         auto *empty = new QLabel(tr("暂无历史条目"), host);
         empty->setFont(uiFont(tokens::kFont12));
         empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        empty->setAlignment(Qt::AlignCenter);
+        empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
         historyLayout_->addWidget(empty);
         return;
     }

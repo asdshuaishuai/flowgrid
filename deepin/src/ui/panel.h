@@ -42,6 +42,11 @@ public:
     // 显示时把浮板对齐到锚点（通常是托盘图标或屏幕右上角），并保证不越出屏幕。
     void popupAt(const QPoint &anchor);
 
+    // 按「内容实际需要多高」算整块浮板的高度，而不是让 QScrollArea 的 sizeHint
+    // 代替。后者不含折叠区展开后的真实高度，结果是屏幕明明放得下，浮板一打开
+    // 就凭空多出一条滚动条、末行还被裁掉半截。
+    QSize sizeHint() const override;
+
 protected:
     void paintEvent(QPaintEvent *) override;
     bool eventFilter(QObject *watched, QEvent *event) override;

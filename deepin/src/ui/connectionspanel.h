@@ -34,6 +34,12 @@ Q_SIGNALS:
     // 页脚「设置」按钮：切到设置浮板由 main 统一调度（浮板互斥逻辑在 main）。
     void settingsRequested();
 
+    // 设计稿里键位映射区的「编辑」、网络延迟区的「详情」、剪贴板区的入口，
+    // 同样是跨屏跳转，统一交给 main 调度。
+    void keymapRequested();
+    void latencyRequested();
+    void clipboardRequested();
+
 private:
     QWidget *buildDeviceList();
     QWidget *buildKeymapSection();
@@ -41,6 +47,7 @@ private:
     QWidget *buildClipboardSection();
     QWidget *buildFooter();
     void rebuildDeviceCards();
+    void updateLatencyBadge();
 
     QVBoxLayout *contentLayout_ = nullptr;
     QVBoxLayout *deviceListLayout_ = nullptr;

@@ -19,6 +19,7 @@
 #include <vector>
 
 class QLabel;
+class QLineEdit;
 class QHBoxLayout;
 class QVBoxLayout;
 class QGridLayout;
@@ -153,6 +154,11 @@ public:
     // 推入一个新样本；窗口满则挤出最旧的一个。
     void pushSample(double ms);
     void clear();
+
+    // 首屏铺底：第一次真实采样到达前图表是空的，折叠区一展开就是一片空白。
+    // 用当前读数填满一屏作为占位，抖动带与 devicemanager.cpp 的 mock 源一致，
+    // 首次 sampled() 到达后即被真实数据顶掉。seed <= 0（离线）时不铺。
+    void prime(double seed);
 
     QSize sizeHint() const override {
         return {120, tokens::kChartHeight};
@@ -325,6 +331,66 @@ protected:
 
 private:
     QLabel *hint_ = nullptr;
+};
+
+// ── 输入类控件：按设计稿 .input / .select 的规格上样式 ─────────────────
+//
+// QLineEdit 保留原生实现（文本编辑、光标、选区这套行为自己写不划算），
+// 只用样式表把几何和配色对齐设计稿；样式表里**不带选择器**，因为这些控件
+// 都是叶子节点、没有子控件，不存在级联问题。
+void applyInputStyle(QLineEdit *edit);
+
+// ── 键帽：设计稿 .key，min-width 34 / padding 5×7 / 底部 1px 阴影 ───────
+// 两屏共用：键位映射屏的规则行、设备与连接屏的折叠区。
+class FgKeycap : public QWidget {
+    Q_OBJECT
+public:
+    explicit FgKeycap(const QString &text, bool ghost = false,
+                      QWidget *parent = nullptr);
+
+    QSize sizeHint() const override;
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+
+private:
+    QString text_;
+    bool ghost_;
+};
+
+// ── 下拉选择：替代 QComboBox ──────────────────────────────────────────
+//
+// 不用 QComboBox 的原因：设计稿的 .select 是 appearance:none + 自绘 chevron
+// （ui.css .select-wrap .ic），而 Qt 样式表没法给 ::down-arrow 换一张随主题
+// 变色的图——深色模式下原生箭头要么发黑要么发白，都不对。自己画才可控。
+// 弹层用 QMenu，同样按 Theme 上色。
+class FgSelect : public QAbstractButton {
+    Q_OBJECT
+public:
+    FgSelect(const QStringList &options, int current = 0,
+             QWidget *parent = nullptr);
+
+    void setOptions(const QStringList &options);
+    int currentIndex() const { return current_; }
+    void setCurrentIndex(int index);
+    QString currentText() const;
+
+    QSize sizeHint() const override;
+
+Q_SIGNALS:
+    void currentIndexChanged(int index);
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+    void enterEvent(QEnterEvent *) override;
+    void leaveEvent(QEvent *) override;
+
+private:
+    void openMenu();
+
+    QStringList options_;
+    int current_ = 0;
+    bool hovered_ = false;
 };
 
 } // namespace fg

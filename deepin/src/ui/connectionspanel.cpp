@@ -11,6 +11,8 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
+#include <functional>
+
 namespace fg {
 namespace {
 
@@ -27,6 +29,32 @@ QFont uiFont(int px, int weight = QFont::Normal)
 QString css(const QColor &c)
 {
     return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
+}
+
+// 设计稿折叠区末尾的「说明 + 小按钮」一行：
+// <div class="row between" style="padding:0 var(--s-3) var(--s-3)">
+//   <span class="t-11 c-3">…</span><a class="btn btn--sm btn--secondary">…</a>
+// 三个折叠区共用，抽出来免得各写一遍 padding 又各漂一点。
+QWidget *makeSectionFooter(const QString &hint, const QString &buttonText, QWidget *parent,
+                           const std::function<void(FgButton *)> &onClick)
+{
+    const Palette &p = Theme::instance().palette();
+    auto *row = new QWidget(parent);
+    auto *hl = new QHBoxLayout(row);
+    hl->setContentsMargins(tokens::kS3, 0, tokens::kS3, tokens::kS3);
+    hl->setSpacing(tokens::kS2);
+
+    auto *label = new QLabel(hint, row);
+    label->setFont(uiFont(tokens::kFont11));
+    label->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    hl->addWidget(label);
+    hl->addStretch(1);
+
+    auto *btn = new FgButton(buttonText, FgButton::Variant::Secondary, true, row);
+    // 自由函数里没有 QObject 派生带来的 connect 重载，必须写全 QObject::connect。
+    QObject::connect(btn, &FgButton::clicked, row, [onClick, btn] { onClick(btn); });
+    hl->addWidget(btn);
+    return row;
 }
 
 } // namespace
@@ -76,6 +104,10 @@ ConnectionsPanel::ConnectionsPanel(QWidget *parent) : Panel(tr("设备与连接"
     connect(&manager, &DeviceManager::sampled, this, &ConnectionsPanel::onSampled);
 
     refresh();
+    // 折叠区默认展开，而第一次真实采样要等到下一个周期才到：不做铺底的话
+    // 「网络延迟」一打开就是一块 70px 的空白。prime() 只在构造时调一次，
+    // 之后一律由 onSampled 推真实样本。
+    chart_->prime(manager.activeLatencyMs());
 }
 
 QWidget *ConnectionsPanel::buildDeviceList()
@@ -91,38 +123,58 @@ QWidget *ConnectionsPanel::buildKeymapSection()
 {
     auto *body = new QWidget(this);
     auto *vl = new QVBoxLayout(body);
-    vl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
-    vl->setSpacing(tokens::kS2);
+    vl->setContentsMargins(0, 0, 0, 0);
+    vl->setSpacing(0);
 
-    // 键位映射屏尚未接通，这里按设计稿摆出静态结构并注明，不接假交互。
+    // 设计稿 ui.css .mapping：3 列网格，gap 8，padding 12；每格是 .keypair
+    // （竖排，gap 5，padding 8）= [源键]→[目标键] + 下方一行说明。
+    // 早先这里摆的是「2 列 × 3 行裸键帽」，既丢了箭头也丢了说明文字，
+    // 而且 QLabel 在网格里会被拉伸到整格宽，键帽变成横贯屏幕的长条。
+    struct Pair { const char *from; const char *to; const char *ctx; };
+    const Pair pairs[3] = {
+        {"Ctrl", "\xe2\x8c\x98", QT_TR_NOOP("复制 / 粘贴")},
+        {"Win", "\xe2\x8c\xa5", QT_TR_NOOP("系统快捷键")},
+        {"Alt", "Ctrl", QT_TR_NOOP("终端应用")},
+    };
+
     auto *grid = new QWidget(body);
     auto *gl = new QGridLayout(grid);
-    gl->setContentsMargins(0, 0, 0, 0);
+    gl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
     gl->setHorizontalSpacing(tokens::kS2);
     gl->setVerticalSpacing(tokens::kS2);
-    const char *pairs[3][2] = {{"Ctrl", "Cmd"}, {"Win", "Alt"}, {"Alt", "Ctrl"}};
-    for (int r = 0; r < 3; ++r) {
-        for (int c = 0; c < 2; ++c) {
-            auto *key = new QLabel(QString::fromUtf8(pairs[r][c]), grid);
-            key->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-            key->setAlignment(Qt::AlignCenter);
-            key->setMinimumWidth(34);
-            key->setStyleSheet(
-                QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3px;color:%4")
-                    .arg(css(Theme::instance().palette().line2))
-                    .arg(tokens::kRadiusCtl)
-                    .arg(css(Theme::instance().palette().surface))
-                    .arg(css(Theme::instance().palette().text1)));
-            gl->addWidget(key, r, c * 2);
-        }
+
+    const Palette &p = Theme::instance().palette();
+    for (int i = 0; i < 3; ++i) {
+        auto *cell = new QWidget(grid);
+        auto *cl = new QVBoxLayout(cell);
+        cl->setContentsMargins(tokens::kS2, tokens::kS2, tokens::kS2, tokens::kS2);
+        cl->setSpacing(5);   // ui.css .keypair gap
+
+        auto *keys = new QWidget(cell);
+        auto *kl = new QHBoxLayout(keys);
+        kl->setContentsMargins(0, 0, 0, 0);
+        kl->setSpacing(5);   // ui.css .keys gap
+        kl->addWidget(new FgKeycap(QString::fromUtf8(pairs[i].from), false, keys));
+        auto *arrow = new QLabel(keys);
+        arrow->setFixedSize(12, 12);
+        arrow->setPixmap(icons::icon(QStringLiteral("arrowRight"), 12, p.text3).pixmap(12, 12));
+        kl->addWidget(arrow, 0, Qt::AlignVCenter);
+        kl->addWidget(new FgKeycap(QString::fromUtf8(pairs[i].to), false, keys));
+        kl->addStretch(1);
+        cl->addWidget(keys);
+
+        auto *ctx = new QLabel(tr(pairs[i].ctx), cell);
+        ctx->setFont(uiFont(tokens::kFont11));
+        ctx->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        cl->addWidget(ctx);
+
+        gl->addWidget(cell, 0, i);
     }
     vl->addWidget(grid);
 
-    auto *note = new QLabel(tr("键位映射屏尚未接通，此处为设计稿静态结构"), body);
-    note->setFont(uiFont(tokens::kFont11));
-    note->setStyleSheet(
-        QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
-    vl->addWidget(note);
+    // 设计稿：映射网格下面还有一行「按应用切换映射，游戏内自动停用」+「编辑」。
+    vl->addWidget(makeSectionFooter(tr("按应用切换映射，游戏内自动停用"), tr("编辑"), body,
+                                    [this](FgButton *) { Q_EMIT keymapRequested(); }));
 
     auto *badge = new Badge(tr("3 条生效"), Badge::Variant::Neutral);
     return new Collapsible(tr("键位映射"), QStringLiteral("keyboard"), body, badge);
@@ -141,18 +193,24 @@ QWidget *ConnectionsPanel::buildLatencySection()
     auto *axis = new QWidget(body);
     auto *al = new QHBoxLayout(axis);
     al->setContentsMargins(tokens::kS3, 0, tokens::kS3, tokens::kS3);
-    auto *left = new QLabel(tr("采样历史"), axis);
-    left->setFont(uiFont(tokens::kFont11));
-    left->setStyleSheet(
-        QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
-    auto *right = new QLabel(tr("每 2 秒采样一次"), axis);
-    right->setFont(uiFont(tokens::kFont11));
-    right->setStyleSheet(
-        QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+    // 设计稿 ui.css .chart__axis：两端各一个时间标记（connections 是 24s 窗口，
+    // latency 浮板是 60s 窗口）。采样节奏那句话归下面的页脚行，别在这儿重复。
+    auto *left = new QLabel(tr("-24s"), axis);
+    auto *right = new QLabel(tr("现在"), axis);
+    for (QLabel *l : {left, right}) {
+        l->setFont(uiFont(tokens::kFont11));
+        l->setStyleSheet(
+            QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+    }
     al->addWidget(left);
     al->addStretch(1);
     al->addWidget(right);
     vl->addWidget(axis);
+
+    // 设计稿：图表区下面一行「每 2 秒采样一次」+「详情」。这里左侧文案和上面
+    // 的轴行是同一句，保留轴行放「采样历史 / 现在」，把采样节奏交给这行。
+    vl->addWidget(makeSectionFooter(tr("每 2 秒采样一次"), tr("详情"), body,
+                                    [this](FgButton *) { Q_EMIT latencyRequested(); }));
 
     latencyBadge_ = new Badge(tr("均值 --"), Badge::Variant::Ok);
     return new Collapsible(tr("网络延迟"), QStringLiteral("activity"), body, latencyBadge_);
@@ -162,15 +220,22 @@ QWidget *ConnectionsPanel::buildClipboardSection()
 {
     auto *body = new QWidget(this);
     auto *vl = new QVBoxLayout(body);
-    vl->setContentsMargins(tokens::kS2, tokens::kS2, tokens::kS2, tokens::kS2);
+    vl->setContentsMargins(0, tokens::kS2, 0, tokens::kS2);
     vl->setSpacing(tokens::kS1);
 
-    auto *note = new QLabel(tr("剪贴板屏尚未接通，且 cgo 桥尚未导出 ClipboardSession"), body);
+    // 设计稿这一区列的是最近几条已同步的剪贴板条目。Go 侧 ClipboardSession 只
+    // 提供一次性出队的 takePending，没有历史留存；剪贴板浮板已经把那批条目收走
+    // 并展示了，所以这里不再重复列一遍，也不再挂「cgo 桥尚未导出」这种早就过时
+    // 的说明——保留一个入口指向剪贴板浮板即可。
+    const Palette &p = Theme::instance().palette();
+    auto *note = new QLabel(tr("最近同步的条目在剪贴板浮板内查看"), body);
     note->setWordWrap(true);
     note->setFont(uiFont(tokens::kFont11));
-    note->setStyleSheet(
-        QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+    note->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
     vl->addWidget(note);
+
+    vl->addWidget(makeSectionFooter(QString(), tr("打开剪贴板"), body,
+                                    [this](FgButton *) { Q_EMIT clipboardRequested(); }));
 
     auto *badge = new Badge(QStringLiteral("0 项"), Badge::Variant::Neutral);
     return new Collapsible(tr("剪贴板同步"), QStringLiteral("clipboard"), body, badge);
@@ -254,6 +319,26 @@ void ConnectionsPanel::refresh()
     }
 
     rebuildDeviceCards();
+    updateLatencyBadge();
+}
+
+void ConnectionsPanel::updateLatencyBadge()
+{
+    if (latencyBadge_ == nullptr) {
+        return;
+    }
+    // 均值徽章跟着真实采样算，不写死；首帧也要算一次，否则折叠区一展开就摆着
+    // 「均值 --」直到下一个采样周期。
+    double sum = 0.0;
+    int n = 0;
+    for (const Device &d : DeviceManager::instance().devices()) {
+        if (d.online) {
+            sum += d.latencyMs;
+            ++n;
+        }
+    }
+    latencyBadge_->setText(n > 0 ? tr("均值 %1ms").arg(sum / n, 0, 'f', 1) : tr("无数据"));
+    latencyBadge_->setVariant(Badge::Variant::Ok);
 }
 
 void ConnectionsPanel::onSampled()
@@ -266,21 +351,7 @@ void ConnectionsPanel::onSampled()
         return;   // 离线：图表保留最后形状，不塞 0 假装有链路
     }
     chart_->pushSample(ms);
-
-    // 均值徽章跟随真实采样算，不写死。
-    if (latencyBadge_ != nullptr) {
-        double sum = 0.0;
-        int n = 0;
-        for (const Device &d : DeviceManager::instance().devices()) {
-            if (d.online) {
-                sum += d.latencyMs;
-                ++n;
-            }
-        }
-        latencyBadge_->setText(n > 0 ? tr("均值 %1ms").arg(sum / n, 0, 'f', 1)
-                                    : tr("无数据"));
-        latencyBadge_->setVariant(Badge::Variant::Ok);
-    }
+    updateLatencyBadge();
 }
 
 } // namespace fg

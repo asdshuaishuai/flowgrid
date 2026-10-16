@@ -212,6 +212,12 @@ int main(int argc, char *argv[])
     // 跨屏跳转一律交给 main：浮板互斥逻辑只有一处，避免各处各 hide 一遍。
     QObject::connect(g_connections, &ConnectionsPanel::settingsRequested, g_connections,
                      [] { showPanel(g_settings); });
+    QObject::connect(g_connections, &ConnectionsPanel::keymapRequested, g_connections,
+                     [] { showPanel(g_keymap); });
+    QObject::connect(g_connections, &ConnectionsPanel::latencyRequested, g_connections,
+                     [] { showPanel(g_latency); });
+    QObject::connect(g_connections, &ConnectionsPanel::clipboardRequested, g_connections,
+                     [] { g_clipboard->reloadHistory(); showPanel(g_clipboard); });
     QObject::connect(g_pairing, &PairingPanel::doneRequested, g_pairing,
                      [] { showPanel(g_connections); });
     QObject::connect(g_clipboard, &ClipboardPanel::clearHistoryRequested, g_clipboard, [] {

@@ -5,12 +5,12 @@
 
 #include "ui/panel.h"
 
-class QComboBox;
 class QLineEdit;
 
 namespace fg {
 
 // 前向声明必须落在 fg 内，否则声明出的是全局同名类。
+class FgSelect;
 class ToggleSwitch;
 class FgButton;
 class ListRow;
@@ -33,7 +33,7 @@ private:
     QWidget *buildSecurityGroup();
     QWidget *buildFooter();
 
-    QComboBox *preferredLink_ = nullptr;
+    FgSelect *preferredLink_ = nullptr;
     ToggleSwitch *autoRouting_ = nullptr;
     ToggleSwitch *autoStart_ = nullptr;
     ToggleSwitch *keymap_ = nullptr;

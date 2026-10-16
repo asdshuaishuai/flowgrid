@@ -18,6 +18,12 @@
 namespace fg {
 namespace {
 
+// 透明色必须带 alpha：ok-soft / accent-soft 这类柔和底色就是靠透明度叠出来的。
+QString colorHex(const QColor &c)
+{
+    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
+}
+
 QFont titleFont()
 {
     QFont f = QApplication::font();
@@ -139,7 +145,20 @@ Panel::Panel(const QString &title, QWidget *parent) : QWidget(parent)
     scroll->setAttribute(Qt::WA_TranslucentBackground, false);
 
     content_ = new QWidget(scroll);
-    content_->setAttribute(Qt::WA_TranslucentBackground);
+    // 内容区自己刷 surface 底色。早先是靠 Panel::paintEvent 那张圆角矩形
+    // 「透」上来的，实际测下来这块一直是全透明的（截图 alpha=0）：深色主题下
+    // 透明和 surface-2 差不了多少，肉眼看不出来；一换浅色主题整块浮板直接
+    // 没有底。子控件不透传、滚动区也不画底，能兜住底色的就只剩内容区自己。
+    //
+    // 左右各留 1px 描边：内容铺满整宽，不自己描边会把面板那圈 1px 边框盖掉
+    // （CSS 里子元素是裁在 padding box 内的，Qt 没有这个盒模型）。
+    content_->setObjectName(QStringLiteral("panelContent"));
+    content_->setAttribute(Qt::WA_StyledBackground, true);
+    content_->setStyleSheet(
+        QStringLiteral("#panelContent{border-left:1px solid %1;border-right:1px solid %1;"
+                       "background:%2;}")
+            .arg(colorHex(Theme::instance().palette().line2),
+                 colorHex(Theme::instance().palette().surface)));
     content_->setAutoFillBackground(false);
     auto *cl = new QVBoxLayout(content_);
     cl->setContentsMargins(tokens::kContentPadding, tokens::kContentPadding,
@@ -179,6 +198,26 @@ void Panel::popupAt(const QPoint &anchor)
 {
     placePopup(this, anchor);
     animatePopupIn(this);
+}
+
+QSize Panel::sizeHint() const
+{
+    // 浮板宽度固定、内容区是 setWidgetResizable 的，所以可以直接问内容布局
+    // 「在当前宽度下你要多高」，再把标题栏和页脚加回去。
+    const int w = qMax(1, width());
+    int body = 0;
+    if (content_ != nullptr && content_->layout() != nullptr) {
+        // 首次算 sizeHint 时浮板还没显示，content_->width() 可能还是 0，
+        // 这时退回浮板宽度。
+        const int cw = content_->width() > 0 ? content_->width() : w;
+        body = content_->layout()->heightForWidth(cw);
+    }
+    if (body <= 0) {
+        body = content_ != nullptr ? content_->sizeHint().height() : 0;
+    }
+    const int chrome = (titleBar_ != nullptr ? titleBar_->height() : 0)
+                       + (footer_ != nullptr ? footer_->height() : 0);
+    return QSize(w, qMax(body + chrome, QWidget::sizeHint().height()));
 }
 
 void Panel::showEvent(QShowEvent *e)

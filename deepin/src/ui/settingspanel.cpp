@@ -107,16 +107,18 @@ SettingsPanel::SettingsPanel(QWidget *parent) : Panel(tr("设置"), parent)
 
 QWidget *SettingsPanel::buildConnectionGroup()
 {
-    preferredLink_ = new QComboBox(this);
-    preferredLink_->addItems({tr("IntelligentLink 优先"), tr("DirectLink 优先"),
-                              tr("仅 IntelligentLink")});
-    preferredLink_->setFixedWidth(170);
+    // 用自绘的 FgSelect 而不是 QComboBox：原生下拉的箭头无法跟随主题
+    // （样式表换不了 ::down-arrow 的图），深色下会是一块发白的默认外观，
+    // 而且固定 170px 装不下 "IntelligentLink 优先"，文字被截成 "IntelligentLink ···"。
+    preferredLink_ = new FgSelect({tr("IntelligentLink 优先"), tr("DirectLink 优先"),
+                                   tr("仅 IntelligentLink")}, 0, this);
+    preferredLink_->setMinimumWidth(168);
     auto &s = Settings::instance();
     const int idx = s.preferredLink() == QLatin1String("DirectLink")        ? 1
                     : s.preferredLink() == QLatin1String("IntelligentLinkOnly") ? 2
                                                                                 : 0;
     preferredLink_->setCurrentIndex(idx);
-    QObject::connect(preferredLink_, &QComboBox::currentIndexChanged, this, [this](int i) {
+    QObject::connect(preferredLink_, &FgSelect::currentIndexChanged, this, [this](int i) {
         Settings::instance().setPreferredLink(i == 1   ? QStringLiteral("DirectLink")
                                                  : i == 2 ? QStringLiteral("IntelligentLinkOnly")
                                                           : QStringLiteral("IntelligentLink"));
@@ -158,12 +160,14 @@ QWidget *SettingsPanel::buildInputGroup()
     });
 
     edgeThreshold_ = new QLineEdit(QString::number(s.edgeThreshold()), this);
+    applyInputStyle(edgeThreshold_);
     edgeThreshold_->setFixedWidth(64);
     QObject::connect(edgeThreshold_, &QLineEdit::editingFinished, this, [this] {
         Settings::instance().setEdgeThreshold(edgeThreshold_->text().toInt());
     });
 
     switchHotkey_ = new QLineEdit(QString::number(s.switchHotkey()), this);
+    applyInputStyle(switchHotkey_);
     switchHotkey_->setFixedWidth(64);
     QObject::connect(switchHotkey_, &QLineEdit::editingFinished, this, [this] {
         Settings::instance().setSwitchHotkey(switchHotkey_->text().toInt());
@@ -202,6 +206,7 @@ QWidget *SettingsPanel::buildSyncGroup()
     });
 
     clipHistory_ = new QLineEdit(QString::number(s.clipboardHistory()), this);
+    applyInputStyle(clipHistory_);
     clipHistory_->setFixedWidth(64);
     QObject::connect(clipHistory_, &QLineEdit::editingFinished, this, [this] {
         Settings::instance().setClipboardHistory(clipHistory_->text().toInt());

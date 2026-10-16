@@ -6,9 +6,13 @@
 #include <QEnterEvent>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
+#include <QActionGroup>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QRandomGenerator>
 #include <QPropertyAnimation>
 #include <QVBoxLayout>
 
@@ -348,6 +352,22 @@ void BarChart::clear()
     update();
 }
 
+void BarChart::prime(double seed)
+{
+    if (seed <= 0.0) {
+        return;
+    }
+    samples_.clear();
+    // 抖动带 -600~1400µs 与 devicemanager.cpp 的 mock 源保持一致，
+    // 这样首屏形状和随后到达的真实采样是连续的，不会突然「跳」一下。
+    auto *rng = QRandomGenerator::global();
+    for (int i = 0; i < tokens::kChartBars; ++i) {
+        const double jitterMs = rng->bounded(-600, 1400) / 1000.0;
+        samples_.push_back(qMax(0.5, seed + jitterMs));
+    }
+    update();
+}
+
 void BarChart::paintEvent(QPaintEvent *)
 {
     if (samples_.empty()) {
@@ -366,15 +386,16 @@ void BarChart::paintEvent(QPaintEvent *)
     const qreal gap = 4.0;
     const qreal barW =
         qMax<qreal>(3.0, (width() - gap * (samples_.size() - 1)) / samples_.size());
-    const qreal usable = height() - tokens::kS2;
-
-    // 峰值只映射到可用高度的 60%：若让峰值顶满，采样都接近时（比如同一条
-    // 链路上都是 2.5ms）所有柱子会一样高，图就失去了「波动」这个信息本身。
-    // 设计稿的柱高区间（22~44px / 70px）正是这个比例。
-    const qreal full = usable * 0.6;
+    // 设计稿 ui.css .chart：内容盒 = 70 - padding(12 上 / 8 下) = 50px，
+    // 样例数据的柱高在 22~44px 之间波动。这里照抄这个区间而不是按比例缩满，
+    // 否则矮柱会被拉成近乎正方的色块。
+    const qreal usable = height() - tokens::kS3 - tokens::kS2;
+    const qreal maxBar = qMin(44.0, usable);
+    const qreal minBar = qMin(22.0, maxBar * 0.5);
 
     for (int i = 0; i < static_cast<int>(samples_.size()); ++i) {
-        const qreal h = qMax<qreal>(3.0, full * (samples_[i] / peak));
+        const qreal ratio = qBound(0.0, samples_[i] / peak, 1.0);
+        const qreal h = minBar + (maxBar - minBar) * ratio;
         const qreal x = i * (barW + gap);
         const qreal y = height() - h;
         pt.setPen(Qt::NoPen);
@@ -865,6 +886,213 @@ void ListRow::paintEvent(QPaintEvent *)
     QPainter p(this);
     p.setPen(Theme::instance().palette().hairline);
     p.drawLine(0, 0, width(), 0);
+}
+
+// ── applyInputStyle ───────────────────────────────────────────────────
+// 设计稿 ui.css .input：28px 高 / padding 0 8px / 1px line-2 描边 /
+// r-ctl 圆角 / surface 底 / text-1 字色；focus 时描边转主色并加 3px 主色浅底光晕。
+//
+// 原生 QLineEdit 不会跟随 DPalette——DTK 的窗口装饰只管到 QWidget 级，
+// 内部输入区仍走 Fusion 默认外观，深色下就是一块发白的浅灰。这里显式补上。
+void applyInputStyle(QLineEdit *edit)
+{
+    if (edit == nullptr) {
+        return;
+    }
+    const auto restyle = [edit] {
+        const Palette &p = Theme::instance().palette();
+        edit->setStyleSheet(QStringLiteral(
+            "QLineEdit {"
+            "  height:%1px; padding:0 %2px;"
+            "  border:1px solid %3; border-radius:%4px;"
+            "  background:%5; color:%6;"
+            "  selection-background-color:%7; selection-color:%8;"
+            "}"
+            "QLineEdit:focus { border-color:%7; }"
+            "QLineEdit:disabled { color:%9; background:%10; }")
+            .arg(tokens::kControlHeight)
+            .arg(tokens::kS2)
+            .arg(cssColor(p.line2), QString::number(tokens::kRadiusCtl),
+                 cssColor(p.surface), cssColor(p.text1),
+                 cssColor(p.accent), cssColor(p.onAccent),
+                 cssColor(p.text3), cssColor(p.surface3)));
+        // 光晕用外发光近似：Qt 样式表对 box-shadow 支持有限，这里靠 focus 时
+        // 换描边色 + 浅底来表达同一意图，不引入第二套视觉。
+    };
+    restyle();
+    QObject::connect(&Theme::instance(), &Theme::changed, edit, [edit, restyle] {
+        restyle();
+        edit->update();
+    });
+}
+
+// ── FgKeycap ──────────────────────────────────────────────────────────
+FgKeycap::FgKeycap(const QString &text, bool ghost, QWidget *parent)
+    : QWidget(parent), text_(text), ghost_(ghost)
+{
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+}
+
+QSize FgKeycap::sizeHint() const
+{
+    // ui.css .key：min-width 34 + padding 5×7 + 1px 描边
+    const QFontMetrics fm(uiFont(tokens::kFont11, QFont::DemiBold));
+    return QSize(qMax(34, fm.horizontalAdvance(text_) + tokens::kS2 * 2 + 2),
+                 fm.height() + 5 * 2 + 2);
+}
+
+void FgKeycap::paintEvent(QPaintEvent *)
+{
+    const Palette &p = Theme::instance().palette();
+    QPainter pt(this);
+    pt.setRenderHint(QPainter::Antialiasing, true);
+
+    if (ghost_) {
+        // .key--ghost：虚线描边、透明底、无底部阴影、文字用 text-3
+        QPen pen(p.line2, 1, Qt::DashLine);
+        pen.setDashPattern({4.0, 3.0});
+        pt.setPen(pen);
+        pt.setBrush(Qt::NoBrush);
+    } else {
+        pt.setPen(QPen(p.line2, 1));
+        pt.setBrush(p.surface);
+    }
+    pt.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+                       tokens::kRadiusCtl, tokens::kRadiusCtl);
+
+    if (!ghost_) {
+        // box-shadow: 0 1px 0 line-2 —— 键帽厚度
+        pt.setPen(Qt::NoPen);
+        pt.setBrush(p.line2);
+        pt.drawRoundedRect(QRectF(1.0, height() - 3.0, width() - 2.0, 2.5),
+                           tokens::kRadiusCtl, tokens::kRadiusCtl);
+    }
+
+    pt.setPen(ghost_ ? p.text3 : p.text1);
+    pt.setFont(uiFont(tokens::kFont11, QFont::DemiBold));
+    pt.drawText(rect(), Qt::AlignCenter, text_);
+}
+
+// ── FgSelect ──────────────────────────────────────────────────────────
+FgSelect::FgSelect(const QStringList &options, int current, QWidget *parent)
+    : QAbstractButton(parent), options_(options), current_(current)
+{
+    setCursor(Qt::PointingHandCursor);
+    setFocusPolicy(Qt::StrongFocus);
+    connect(this, &QAbstractButton::clicked, this, [this] { openMenu(); });
+}
+
+void FgSelect::setOptions(const QStringList &options)
+{
+    options_ = options;
+    if (current_ >= options_.size()) {
+        current_ = options_.isEmpty() ? 0 : options_.size() - 1;
+    }
+    updateGeometry();
+    update();
+}
+
+void FgSelect::setCurrentIndex(int index)
+{
+    if (index == current_ || index < 0 || index >= options_.size()) {
+        return;
+    }
+    current_ = index;
+    updateGeometry();
+    update();
+    Q_EMIT currentIndexChanged(current_);
+}
+
+QString FgSelect::currentText() const
+{
+    return current_ >= 0 && current_ < options_.size() ? options_.at(current_) : QString();
+}
+
+QSize FgSelect::sizeHint() const
+{
+    const QFontMetrics fm(uiFont(tokens::kFont12, QFont::DemiBold));
+    // 右侧给 chevron 留 24px（ui.css .select 的 padding-right: var(--s-6)）
+    return QSize(fm.horizontalAdvance(currentText()) + tokens::kS6 + tokens::kS2 * 2 + 4,
+                 tokens::kControlHeight);
+}
+
+void FgSelect::paintEvent(QPaintEvent *)
+{
+    const Palette &p = Theme::instance().palette();
+    QPainter pt(this);
+    pt.setRenderHint(QPainter::Antialiasing, true);
+
+    QColor bg = hovered_ ? p.surfaceHi : p.surface;
+    pt.setPen(QPen(p.line2, 1));
+    pt.setBrush(bg);
+    pt.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+                       tokens::kRadiusCtl, tokens::kRadiusCtl);
+
+    pt.setPen(p.text1);
+    pt.setFont(uiFont(tokens::kFont12, QFont::DemiBold));
+    const QRect textRect = rect().adjusted(tokens::kS2, 0, -tokens::kS6, 0);
+    pt.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
+                QFontMetrics(pt.font()).elidedText(currentText(), Qt::ElideRight,
+                                                   textRect.width()));
+
+    // chevron：.select-wrap .ic，right 8px、垂直居中
+    const int ic = 12;
+    pt.drawPixmap(QPoint(width() - tokens::kS2 - ic, (height() - ic) / 2),
+                  icons::icon(QStringLiteral("chevronDown"), ic, p.text3).pixmap(ic, ic));
+}
+
+void FgSelect::enterEvent(QEnterEvent *e)
+{
+    hovered_ = true;
+    update();
+    QAbstractButton::enterEvent(e);
+}
+
+void FgSelect::leaveEvent(QEvent *e)
+{
+    hovered_ = false;
+    update();
+    QAbstractButton::leaveEvent(e);
+}
+
+void FgSelect::openMenu()
+{
+    if (options_.isEmpty()) {
+        return;
+    }
+    const Palette &p = Theme::instance().palette();
+    const int rowH = tokens::kControlHeight + tokens::kS2;
+
+    QMenu menu(this);
+    menu.setStyleSheet(QStringLiteral(
+        "QMenu { background:%1; border:1px solid %2; border-radius:%3px; padding:4px 0; }"
+        "QMenu::item { padding:6px 12px; color:%4; font-size:%5px; border-radius:%4px; }"
+        "QMenu::item:selected { background:%6; color:%7; }"
+        "QMenu::separator { height:1px; background:%2; margin:4px 0; }")
+        .arg(cssColor(p.surface), cssColor(p.line2), QString::number(tokens::kRadiusCtl),
+             cssColor(p.text1), QString::number(tokens::kFont12),
+             cssColor(p.accent), cssColor(p.onAccent)));
+
+    // 用 QActionGroup 预选当前项：QMenu 本身没有 setCurrentAction，
+    // 而不预选的话弹出菜单第一项总是高亮，长列表里等于没有记忆。
+    auto *group = new QActionGroup(&menu);
+    group->setExclusive(true);
+    int idx = 0;
+    for (const QString &opt : options_) {
+        QAction *act = menu.addAction(opt);
+        act->setCheckable(true);
+        act->setChecked(idx == current_);
+        group->addAction(act);
+        ++idx;
+    }
+
+    // 弹在控件正下方；屏幕空间不够时 QMenu 自己会上翻。
+    QPoint pos = mapToGlobal(QPoint(0, height()));
+    menu.setGeometry(QRect(pos, QSize(width(), rowH * options_.size())));
+    QAction *chosen = menu.exec(pos);
+    if (chosen != nullptr) {
+        setCurrentIndex(menu.actions().indexOf(chosen));
+    }
 }
 
 } // namespace fg
