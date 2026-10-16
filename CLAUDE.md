@@ -4,15 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FlowGrid is a cross-platform keyboard and mouse sharing application (similar to Synergy/Deskflow/Logitech Flow) that lets one keyboard+mouse control multiple computers. Currently in the **design phase** — no implementation code exists yet, only protocol specs, architecture docs, and HTML UI mockups under `design/`.
+FlowGrid is a cross-platform keyboard and mouse sharing application (similar to Synergy/Deskflow/Logitech Flow) that lets one keyboard+mouse control multiple computers. The protocol layer (Go protocol library + session modules for clipboard and file transfer) **is implemented**; the client implementations (KDE / deepin) were **removed in 2026-10 and are pending a rewrite** on top of the protocol session API; macOS / Windows remain design specs only. **For current implementation status, directory map, build/test commands, and gotchas, read [AGENTS.md](AGENTS.md) §九「仓库实况速览」— it is the source of truth.** This file retains the still-valid design-phase architecture documentation below.
 
 **Documentation language:** Most docs are written in Chinese with English technical terms.
 
 ## Repository Structure
 
 ```
+protocol/                 — Go protocol library (github.com/flowgrid/protocol) + cgo bridge, implemented
+                            incl. session layer: session.go / clipboard.go / filetransfer.go
 design/
-├── PROTOCOL.md              — Canonical protocol specification (v1.0), the source of truth for all wire formats
+├── PROTOCOL.md              — Canonical protocol specification (v1.1), the source of truth for all wire formats
 ├── D2link.html              — Product design bluebook: architecture, competitive analysis, 5-layer model
 ├── index.html               — Design system landing page (colors, typography, spacing tokens)
 ├── mac/DEVELOPMENT.md       — macOS implementation spec (Swift 6 + SwiftUI)

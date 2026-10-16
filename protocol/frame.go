@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 )
 
@@ -24,6 +25,15 @@ const (
 	FrameIdentifyRes uint8 = 0x11
 	FrameDisconnect  uint8 = 0x20
 	FrameError       uint8 = 0xFF
+)
+
+// File transfer frame types (§7.4). Per Appendix D, frame types added after
+// v1.0 use values > 0x20.
+const (
+	FrameFileOffer uint8 = 0x21 // Sender → Receiver: 发起传输，等对端确认
+	FrameFileAck   uint8 = 0x22 // Receiver → Sender: 接受/拒绝/完成确认
+	FrameFileChunk uint8 = 0x23 // Sender → Receiver: 文件数据块
+	FrameFileAbort uint8 = 0x24 // 双向: 取消传输
 )
 
 // Protocol version constants (§2.3)
@@ -55,8 +65,21 @@ type HIDFrame struct {
 	Payload []byte // length must match Header.PayloadLen
 }
 
+// checkPayloadLen rejects payloads that cannot be represented in the 1-byte
+// wire length field (§5.1). Encoding an oversized payload would silently wrap
+// the length byte and corrupt the frame, so it must fail loudly instead.
+func (f *HIDFrame) checkPayloadLen() error {
+	if len(f.Payload) > int(MaxPayloadLen) {
+		return NewError(ErrInvalidPayload, fmt.Sprintf("payload too large: %d bytes (max %d)", len(f.Payload), MaxPayloadLen))
+	}
+	return nil
+}
+
 // Encode writes the frame to w in wire format (big-endian, tight packing).
 func (f *HIDFrame) Encode(w io.Writer) error {
+	if err := f.checkPayloadLen(); err != nil {
+		return err
+	}
 	f.Header.PayloadLen = uint8(len(f.Payload))
 
 	var buf [HeaderSize]byte
@@ -78,6 +101,9 @@ func (f *HIDFrame) Encode(w io.Writer) error {
 
 // EncodeBytes returns the frame as a byte slice.
 func (f *HIDFrame) EncodeBytes() ([]byte, error) {
+	if err := f.checkPayloadLen(); err != nil {
+		return nil, err
+	}
 	var buf []byte
 	f.Header.PayloadLen = uint8(len(f.Payload))
 
@@ -91,9 +117,12 @@ func (f *HIDFrame) EncodeBytes() ([]byte, error) {
 	return buf, nil
 }
 
-// EncodeBytesWithHMAC returns the frame with a 4-byte HMAC-SHA256 truncation appended.
+// EncodeBytesWithHMAC returns the frame with an 8-byte HMAC-SHA256 truncation appended.
 // HMAC is computed over header+payload using the provided key.
 func (f *HIDFrame) EncodeBytesWithHMAC(key []byte) ([]byte, error) {
+	if err := f.checkPayloadLen(); err != nil {
+		return nil, err
+	}
 	var buf []byte
 	f.Header.PayloadLen = uint8(len(f.Payload))
 
@@ -111,19 +140,23 @@ func (f *HIDFrame) EncodeBytesWithHMAC(key []byte) ([]byte, error) {
 	return buf, nil
 }
 
-// ComputeHMAC computes SHA-256(key, data) and returns the first 4 bytes.
-func ComputeHMAC(key, data []byte) [4]byte {
+// ComputeHMAC computes HMAC-SHA256(key, data) and returns the first 8 bytes (§8.3).
+// 64-bit truncation keeps online forgery at ~2^64 attempts; v1.0's 4-byte
+// truncation was brute-forceable at line rate.
+func ComputeHMAC(key, data []byte) [8]byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write(data)
 	sum := mac.Sum(nil)
-	var out [4]byte
-	copy(out[:], sum[:4])
+	var out [8]byte
+	copy(out[:], sum[:8])
 	return out
 }
 
-// DecodeFrameBytesWithHMAC decodes a frame and verifies the trailing 4-byte HMAC (§8.3).
-// When key is non-empty the frame MUST carry the 4-byte HMAC suffix; a missing or
-// mismatching HMAC is an ErrHmacMismatch error — frames are never accepted unverified.
+// DecodeFrameBytesWithHMAC decodes a frame and verifies the trailing 8-byte HMAC (§8.3).
+// A non-empty key means integrity is REQUIRED: the frame must carry the 8-byte
+// HMAC suffix, and a missing or mismatching MAC is an ErrHmacMismatch error.
+// An empty key disables verification entirely — only pass an empty key on
+// links where integrity is provided below this layer (DTLS/TLS).
 // Returns the frame and total bytes consumed (including the HMAC).
 func DecodeFrameBytesWithHMAC(data, key []byte) (*HIDFrame, int, error) {
 	frame, total, err := DecodeFrameBytes(data)
@@ -132,15 +165,15 @@ func DecodeFrameBytesWithHMAC(data, key []byte) (*HIDFrame, int, error) {
 	}
 
 	if len(key) > 0 {
-		if len(data) < total+4 {
+		if len(data) < total+HMACSize {
 			return nil, 0, NewError(ErrHmacMismatch, "missing HMAC")
 		}
-		gotHMAC := data[total : total+4]
+		gotHMAC := data[total : total+HMACSize]
 		expected := ComputeHMAC(key, data[:total])
 		if !hmac.Equal(gotHMAC, expected[:]) {
 			return nil, 0, NewError(ErrHmacMismatch, "HMAC mismatch")
 		}
-		return frame, total + 4, nil
+		return frame, total+HMACSize, nil
 	}
 
 	return frame, total, nil
@@ -199,13 +232,12 @@ func DecodeFrameBytes(data []byte) (*HIDFrame, int, error) {
 	return &HIDFrame{Header: hdr, Payload: payload}, total, nil
 }
 
-// Validate checks that the frame header is consistent.
+// Validate checks that the frame header is consistent. The 255-byte payload
+// ceiling is enforced at encode time (checkPayloadLen) — PayloadLen is a
+// uint8 and cannot exceed it by construction.
 func (f *HIDFrame) Validate() error {
 	if len(f.Payload) != int(f.Header.PayloadLen) {
 		return errors.New("payload length mismatch")
-	}
-	if int(f.Header.PayloadLen) > int(MaxPayloadLen) {
-		return errors.New("payload exceeds max length")
 	}
 	return nil
 }

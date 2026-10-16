@@ -22,13 +22,13 @@ func TestAppendTCPRoundTrip(t *testing.T) {
 	var buf []byte
 	for _, f := range frames {
 		var err error
-		buf, err = AppendTCPFrame(buf, f)
+		buf, err = AppendTCPFrame(buf, f, nil)
 		if err != nil {
 			t.Fatalf("AppendTCPFrame: %v", err)
 		}
 	}
 
-	decoded, consumed, err := ParseTCPFrames(buf)
+	decoded, consumed, err := ParseTCPFrames(buf, nil)
 	if err != nil {
 		t.Fatalf("ParseTCPFrames: %v", err)
 	}
@@ -52,16 +52,16 @@ func TestParseTCPPartialStream(t *testing.T) {
 	// A TCP read may split records anywhere; the parser must only consume
 	// complete records and report the rest as pending.
 	f1, f2 := testFrame(1, 4), testFrame(2, 4)
-	buf, err := AppendTCPFrame(nil, f1)
+	buf, err := AppendTCPFrame(nil, f1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	buf, err = AppendTCPFrame(buf, f2)
+	buf, err = AppendTCPFrame(buf, f2, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	frames, consumed, err := ParseTCPFrames(buf[:len(buf)-3]) // cut into frame 2
+	frames, consumed, err := ParseTCPFrames(buf[:len(buf)-3], nil) // cut into frame 2
 	if err != nil {
 		t.Fatalf("ParseTCPFrames: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestParseTCPPartialStream(t *testing.T) {
 		t.Fatalf("expected only frame 1, got %d frames", len(frames))
 	}
 
-	frames, _, err = ParseTCPFrames(append(buf[consumed:len(buf)-3], buf[len(buf)-3:]...))
+	frames, _, err = ParseTCPFrames(append(buf[consumed:len(buf)-3], buf[len(buf)-3:]...), nil)
 	if err != nil {
 		t.Fatalf("ParseTCPFrames rest: %v", err)
 	}
@@ -80,8 +80,88 @@ func TestParseTCPPartialStream(t *testing.T) {
 
 func TestParseTCPInvalidLength(t *testing.T) {
 	buf := []byte{0x00, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05} // length 5 < HeaderSize
-	if _, _, err := ParseTCPFrames(buf); err == nil {
+	frames, consumed, err := ParseTCPFrames(buf, nil)
+	if err == nil {
 		t.Error("expected error for length below header size")
+	}
+	if consumed != 2 {
+		t.Errorf("consumed %d, want 2 (bad prefix skipped for resync)", consumed)
+	}
+	if len(frames) != 0 {
+		t.Errorf("decoded %d frames, want 0", len(frames))
+	}
+}
+
+// A record that parses as a length but whose content is malformed must be
+// skipped entirely (error + consumed past it) so the caller does not retry the
+// same bytes forever.
+func TestParseTCPMalformedRecordResyncs(t *testing.T) {
+	// Record 1: length 12 (header only) but its PayloadLen byte claims 255
+	// bytes — a truncated frame. Record 2 appended right behind it is healthy.
+	bad := []byte{0x00, 0x0C}
+	bad = append(bad, make([]byte, 12)...)
+	bad[13] = 0xFF // record 1 content[11] = PayloadLen 255, but the record ends
+	buf, err := AppendTCPFrame(bad, testFrame(7, 2), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	frames, consumed, err := ParseTCPFrames(buf, nil)
+	if err == nil {
+		t.Fatal("expected error for malformed record")
+	}
+	if len(frames) != 0 {
+		t.Fatalf("expected no frames yet, got %d", len(frames))
+	}
+	// consumed must point at the start of record 2
+	rest, _, err := ParseTCPFrames(buf[consumed:], nil)
+	if err != nil {
+		t.Fatalf("resume after resync: %v", err)
+	}
+	if len(rest) != 1 || rest[0].Header.Sequence != 7 {
+		t.Fatalf("expected frame 7 after resync, got %d frames", len(rest))
+	}
+}
+
+// TCP frames must be HMAC-verified when a key is configured (§8.3): the HMAC
+// trailer lives inside the length prefix, and a tampered or missing MAC
+// rejects the whole record.
+func TestParseTCPHMACRoundTrip(t *testing.T) {
+	key := []byte("tcp-session-key-0123456789abcdef")
+	buf, err := AppendTCPFrame(nil, testFrame(1, 6), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf, err = AppendTCPFrame(buf, testFrame(2, 6), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	frames, consumed, err := ParseTCPFrames(buf, key)
+	if err != nil {
+		t.Fatalf("ParseTCPFrames: %v", err)
+	}
+	if consumed != len(buf) {
+		t.Errorf("consumed %d, want %d", consumed, len(buf))
+	}
+	if len(frames) != 2 || frames[0].Header.Sequence != 1 || frames[1].Header.Sequence != 2 {
+		t.Fatalf("expected frames 1 and 2, got %d", len(frames))
+	}
+
+	// Tamper with one byte inside record 1's payload: that record must be
+	// rejected while record 2 still parses after the resync.
+	bad := append([]byte(nil), buf...)
+	bad[2+12] ^= 0xFF
+	frames, consumed, err = ParseTCPFrames(bad, key)
+	if err == nil {
+		t.Fatal("expected HMAC mismatch error")
+	}
+	if len(frames) != 0 {
+		t.Fatalf("tampered record must not decode, got %d", len(frames))
+	}
+	rest, _, err := ParseTCPFrames(bad[consumed:], key)
+	if err != nil || len(rest) != 1 || rest[0].Header.Sequence != 2 {
+		t.Fatalf("expected frame 2 after resync, got %d frames (err=%v)", len(rest), err)
 	}
 }
 

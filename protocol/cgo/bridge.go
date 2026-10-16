@@ -28,8 +28,11 @@ func (r *registry[T]) put(v T) uintptr {
 	if r.items == nil {
 		r.items = make(map[uintptr]T)
 	}
-	id := r.next
+	// Handles start at 1: C/Rust callers treat 0 as the null/error sentinel
+	// (e.g. fg_keymap_load_file returns 0 on failure), so a valid handle
+	// must never be 0.
 	r.next++
+	id := r.next
 	r.items[id] = v
 	return id
 }
@@ -45,6 +48,34 @@ func (r *registry[T]) remove(id uintptr) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.items, id)
+}
+
+// goString copies a NUL-terminated C string, tolerating NULL (returns "").
+func goString(s *C.char) string {
+	if s == nil {
+		return ""
+	}
+	return C.GoString(s)
+}
+
+// cBuffer allocates C memory for a returned buffer and copies src into it.
+// Returns nil on allocation failure; callers must signal the error to the
+// C/Rust side instead of building a slice over nil memory.
+//
+// SAFETY: buf comes from C.malloc and the unsafe.Slice view of it is confined
+// to this call; the bytes copied in are plain data, never Go pointers.
+// Ownership transfers to the C/Rust caller, who must release it exactly once
+// via fg_free_buffer.
+func cBuffer(src []byte) *C.uint8_t {
+	if len(src) == 0 {
+		return nil
+	}
+	buf := C.malloc(C.size_t(len(src)))
+	if buf == nil {
+		return nil
+	}
+	copy(unsafe.Slice((*byte)(buf), len(src)), src)
+	return (*C.uint8_t)(buf)
 }
 
 var (
@@ -79,10 +110,13 @@ func fg_frame_encode(frameType C.uint8_t, sequence C.uint16_t, timestamp C.uint6
 		*outLen = 0
 		return nil
 	}
+	out := cBuffer(data)
+	if out == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(data))
-	buf := C.malloc(C.size_t(len(data)))
-	copy(unsafe.Slice((*byte)(buf), len(data)), data)
-	return (*C.uint8_t)(buf)
+	return out
 }
 
 //export fg_frame_decode
@@ -101,9 +135,11 @@ func fg_frame_decode(data *C.uint8_t, len C.size_t, outType *C.uint8_t, outSeq *
 	*outTs = C.uint64_t(f.Header.Timestamp)
 	*outPayloadLen = C.uint8_t(f.Header.PayloadLen)
 	if f.Header.PayloadLen > 0 {
-		buf := C.malloc(C.size_t(f.Header.PayloadLen))
-		copy(unsafe.Slice((*byte)(buf), int(f.Header.PayloadLen)), f.Payload)
-		*outPayload = (*C.uint8_t)(buf)
+		buf := cBuffer(f.Payload)
+		if buf == nil {
+			return -1
+		}
+		*outPayload = buf
 	} else {
 		*outPayload = nil
 	}
@@ -135,10 +171,13 @@ func fg_frame_encode_with_hmac(frameType C.uint8_t, sequence C.uint16_t, timesta
 		*outLen = 0
 		return nil
 	}
+	out := cBuffer(data)
+	if out == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(data))
-	buf := C.malloc(C.size_t(len(data)))
-	copy(unsafe.Slice((*byte)(buf), len(data)), data)
-	return (*C.uint8_t)(buf)
+	return out
 }
 
 //export fg_frame_decode_with_hmac
@@ -161,9 +200,11 @@ func fg_frame_decode_with_hmac(data *C.uint8_t, len C.size_t, hmacKey *C.uint8_t
 	*outTs = C.uint64_t(f.Header.Timestamp)
 	*outPayloadLen = C.uint8_t(f.Header.PayloadLen)
 	if f.Header.PayloadLen > 0 {
-		buf := C.malloc(C.size_t(f.Header.PayloadLen))
-		copy(unsafe.Slice((*byte)(buf), int(f.Header.PayloadLen)), f.Payload)
-		*outPayload = (*C.uint8_t)(buf)
+		buf := cBuffer(f.Payload)
+		if buf == nil {
+			return -1
+		}
+		*outPayload = buf
 	} else {
 		*outPayload = nil
 	}
@@ -197,87 +238,114 @@ func fg_frame_validate(frameType C.uint8_t, sequence C.uint16_t, timestamp C.uin
 //export fg_payload_keydown
 func fg_payload_keydown(keyCode C.uint16_t, modifiers C.uint8_t, outLen *C.size_t) *C.uint8_t {
 	p := (&protocol.KeyDownPayload{KeyCode: uint16(keyCode), Modifiers: uint8(modifiers)}).Marshal()
+	buf := cBuffer(p)
+	if buf == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(p))
-	buf := C.malloc(C.size_t(len(p)))
-	copy(unsafe.Slice((*byte)(buf), len(p)), p)
-	return (*C.uint8_t)(buf)
+	return buf
 }
 
 //export fg_payload_keyup
 func fg_payload_keyup(keyCode C.uint16_t, outLen *C.size_t) *C.uint8_t {
 	p := (&protocol.KeyUpPayload{KeyCode: uint16(keyCode)}).Marshal()
+	buf := cBuffer(p)
+	if buf == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(p))
-	buf := C.malloc(C.size_t(len(p)))
-	copy(unsafe.Slice((*byte)(buf), len(p)), p)
-	return (*C.uint8_t)(buf)
+	return buf
 }
 
 //export fg_payload_mousemove
 func fg_payload_mousemove(deltaX C.int16_t, deltaY C.int16_t, outLen *C.size_t) *C.uint8_t {
 	p := (&protocol.MouseMovePayload{DeltaX: int16(deltaX), DeltaY: int16(deltaY)}).Marshal()
+	buf := cBuffer(p)
+	if buf == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(p))
-	buf := C.malloc(C.size_t(len(p)))
-	copy(unsafe.Slice((*byte)(buf), len(p)), p)
-	return (*C.uint8_t)(buf)
+	return buf
 }
 
 //export fg_payload_mousebtn
 func fg_payload_mousebtn(buttonID C.uint8_t, state C.uint8_t, outLen *C.size_t) *C.uint8_t {
 	p := (&protocol.MouseButtonPayload{ButtonID: uint8(buttonID), State: uint8(state)}).Marshal()
+	buf := cBuffer(p)
+	if buf == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(p))
-	buf := C.malloc(C.size_t(len(p)))
-	copy(unsafe.Slice((*byte)(buf), len(p)), p)
-	return (*C.uint8_t)(buf)
+	return buf
 }
 
 //export fg_payload_scroll
 func fg_payload_scroll(deltaY C.int16_t, deltaX C.int16_t, outLen *C.size_t) *C.uint8_t {
 	p := (&protocol.ScrollPayload{DeltaY: int16(deltaY), DeltaX: int16(deltaX)}).Marshal()
+	buf := cBuffer(p)
+	if buf == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(p))
-	buf := C.malloc(C.size_t(len(p)))
-	copy(unsafe.Slice((*byte)(buf), len(p)), p)
-	return (*C.uint8_t)(buf)
+	return buf
 }
 
 //export fg_payload_latency_ping
 func fg_payload_latency_ping(timestamp C.uint64_t, outLen *C.size_t) *C.uint8_t {
 	p := (&protocol.LatencyPingPayload{Timestamp: uint64(timestamp)}).Marshal()
+	buf := cBuffer(p)
+	if buf == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(p))
-	buf := C.malloc(C.size_t(len(p)))
-	copy(unsafe.Slice((*byte)(buf), len(p)), p)
-	return (*C.uint8_t)(buf)
+	return buf
 }
 
 //export fg_payload_latency_pong
 func fg_payload_latency_pong(timestamp C.uint64_t, outLen *C.size_t) *C.uint8_t {
 	p := (&protocol.LatencyPongPayload{Timestamp: uint64(timestamp)}).Marshal()
+	buf := cBuffer(p)
+	if buf == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(p))
-	buf := C.malloc(C.size_t(len(p)))
-	copy(unsafe.Slice((*byte)(buf), len(p)), p)
-	return (*C.uint8_t)(buf)
+	return buf
 }
 
 //export fg_payload_disconnect
 func fg_payload_disconnect(reason C.uint8_t, outLen *C.size_t) *C.uint8_t {
 	p := (&protocol.DisconnectPayload{Reason: uint8(reason)}).Marshal()
+	buf := cBuffer(p)
+	if buf == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(p))
-	buf := C.malloc(C.size_t(len(p)))
-	copy(unsafe.Slice((*byte)(buf), len(p)), p)
-	return (*C.uint8_t)(buf)
+	return buf
 }
 
 //export fg_payload_error
 func fg_payload_error(code C.uint8_t, msg *C.char, outLen *C.size_t) *C.uint8_t {
-	message := C.GoString(msg)
+	message := goString(msg)
 	p, err := (&protocol.ErrorPayload{Code: protocol.ErrorCode(code), Message: message}).Marshal()
 	if err != nil {
 		*outLen = 0
 		return nil
 	}
+	buf := cBuffer(p)
+	if buf == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(p))
-	buf := C.malloc(C.size_t(len(p)))
-	copy(unsafe.Slice((*byte)(buf), len(p)), p)
-	return (*C.uint8_t)(buf)
+	return buf
 }
 
 //export fg_payload_unmarshal_keydown
@@ -372,7 +440,8 @@ func fg_payload_unmarshal_disconnect(data *C.uint8_t, len C.size_t, outReason *C
 //export fg_payload_clipboard
 func fg_payload_clipboard(mime *C.char, data *C.uint8_t, dataLen C.size_t, outLen *C.size_t) *C.uint8_t {
 	p := &protocol.ClipboardPayload{
-		MIMEType: C.GoString(mime),
+		MIMEType: goString(mime),
+		FragTot:  1,
 		Data:     make([]byte, dataLen),
 	}
 	if dataLen > 0 && data != nil {
@@ -400,18 +469,18 @@ func fg_payload_unmarshal_clipboard(data *C.uint8_t, n C.size_t, outMimeLen *C.u
 		return -1
 	}
 	mimeBytes := []byte(p.MIMEType)
-	*outMimeLen = C.uint8_t(len(mimeBytes))
-	mimeBuf := C.malloc(C.size_t(len(mimeBytes)))
-	copy(unsafe.Slice((*byte)(mimeBuf), len(mimeBytes)), mimeBytes)
-	*outMime = (*C.uint8_t)(mimeBuf)
-	*outDataLen = C.size_t(len(p.Data))
-	if len(p.Data) > 0 {
-		dataBuf := C.malloc(C.size_t(len(p.Data)))
-		copy(unsafe.Slice((*byte)(dataBuf), len(p.Data)), p.Data)
-		*outData = (*C.uint8_t)(dataBuf)
-	} else {
-		*outData = nil
+	mimeBuf := cBuffer(mimeBytes)
+	if mimeBuf == nil && len(mimeBytes) > 0 {
+		return -1
 	}
+	*outMimeLen = C.uint8_t(len(mimeBytes))
+	*outMime = mimeBuf
+	*outDataLen = C.size_t(len(p.Data))
+	dataBuf := cBuffer(p.Data)
+	if dataBuf == nil && len(p.Data) > 0 {
+		return -1
+	}
+	*outData = dataBuf
 	return 0
 }
 
@@ -419,7 +488,7 @@ func fg_payload_unmarshal_clipboard(data *C.uint8_t, n C.size_t, outMimeLen *C.u
 
 //export fg_keymap_load_file
 func fg_keymap_load_file(path *C.char, outVersion **C.char, outRuleCount *C.size_t) uintptr {
-	p := C.GoString(path)
+	p := goString(path)
 	kmf, err := protocol.LoadKeyMapFile(p)
 	if err != nil {
 		*outVersion = nil
@@ -438,10 +507,8 @@ func fg_keymap_lookup(handle unsafe.Pointer, fromPlatform C.uint8_t, toPlatform 
 		return -1
 	}
 	ctx := protocol.ContextGlobal
-	if context != nil {
-		if s := C.GoString(context); s != "" {
-			ctx = protocol.KeyMapContext(s)
-		}
+	if s := goString(context); s != "" {
+		ctx = protocol.KeyMapContext(s)
 	}
 	key, mods, found := table.Lookup(
 		protocol.Platform(fromPlatform),
@@ -496,10 +563,13 @@ func fg_ble_advertising_encode(protocolVer C.uint8_t, platform C.uint8_t, caps C
 		WiFiDirectChan:  uint16(wifiChan),
 	}
 	data := d.MarshalBLEAdvertising()
+	out := cBuffer(data)
+	if out == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(data))
-	buf := C.malloc(C.size_t(len(data)))
-	copy(unsafe.Slice((*byte)(buf), len(data)), data)
-	return (*C.uint8_t)(buf)
+	return out
 }
 
 //export fg_ble_advertising_decode
@@ -528,7 +598,11 @@ func fg_classify_rssi(rssi C.int) C.int {
 // --- WiFi Direct ---
 
 //export fg_wifidirect_request_encode
+// pskHash is ignored: v1.1 removed the PSK hash from the wire format (§3.1.3 —
+// broadcasting it enabled offline PSK guessing). The parameter is kept so the
+// C ABI in cgo.h stays stable until clients are rebuilt.
 func fg_wifidirect_request_encode(version C.uint8_t, port C.uint16_t, ipAddr *C.uint8_t, subnet *C.uint8_t, channel C.uint8_t, band C.uint8_t, security C.uint8_t, pskHash *C.uint8_t, outLen *C.size_t) *C.uint8_t {
+	_ = pskHash
 	r := &protocol.WiFiDirectRequest{
 		Version:  uint8(version),
 		Port:     uint16(port),
@@ -542,14 +616,14 @@ func fg_wifidirect_request_encode(version C.uint8_t, port C.uint16_t, ipAddr *C.
 	if subnet != nil {
 		copy(r.Subnet[:], unsafe.Slice((*byte)(unsafe.Pointer(subnet)), 4))
 	}
-	if pskHash != nil {
-		copy(r.PSKHash[:], unsafe.Slice((*byte)(unsafe.Pointer(pskHash)), 4))
-	}
 	data := r.Marshal()
+	out := cBuffer(data)
+	if out == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(data))
-	buf := C.malloc(C.size_t(len(data)))
-	copy(unsafe.Slice((*byte)(buf), len(data)), data)
-	return (*C.uint8_t)(buf)
+	return out
 }
 
 //export fg_wifidirect_response_encode
@@ -562,10 +636,13 @@ func fg_wifidirect_response_encode(version C.uint8_t, status C.uint8_t, port C.u
 		Band:    uint8(band),
 	}
 	data := r.Marshal()
+	out := cBuffer(data)
+	if out == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(data))
-	buf := C.malloc(C.size_t(len(data)))
-	copy(unsafe.Slice((*byte)(buf), len(data)), data)
-	return (*C.uint8_t)(buf)
+	return out
 }
 
 // --- Latency ---
@@ -589,7 +666,10 @@ func fg_latency_record_pong(id uintptr, pongTimestampUs C.uint64_t, nowUs C.uint
 	if !ok {
 		return -1
 	}
-	sample := m.RecordPong(uint64(pongTimestampUs), uint64(nowUs))
+	sample, ok := m.RecordPong(uint64(pongTimestampUs), uint64(nowUs))
+	if !ok {
+		return -1 // rejected: future/stale/implausible pong timestamp
+	}
 	*outMs = C.double(sample.ValueMs)
 	*outJitter = C.double(sample.Jitter)
 	return 0
@@ -777,10 +857,12 @@ func fg_fragment_feed(id uintptr, data *C.uint8_t, dataLen C.size_t, outLen *C.s
 		*outData = nil
 		return 0 // more fragments needed
 	}
+	buf := cBuffer(assembled)
+	if buf == nil {
+		return -1
+	}
 	*outLen = C.size_t(len(assembled))
-	buf := C.malloc(C.size_t(len(assembled)))
-	copy(unsafe.Slice((*byte)(buf), len(assembled)), assembled)
-	*outData = (*C.uint8_t)(buf)
+	*outData = buf
 	return 1 // assembled
 }
 
@@ -813,13 +895,16 @@ func fg_identify_payload_encode(version C.uint8_t, platform C.uint8_t, role C.ui
 		Role:     protocol.Role(role),
 		Caps:     protocol.CapabilityFlags(caps),
 		SeqInit:  uint32(seqInit),
-		Name:     C.GoString(name),
+		Name:     goString(name),
 	}
 	data := p.Marshal()
+	out := cBuffer(data)
+	if out == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(data))
-	buf := C.malloc(C.size_t(len(data)))
-	copy(unsafe.Slice((*byte)(buf), len(data)), data)
-	return (*C.uint8_t)(buf)
+	return out
 }
 
 //export fg_identify_response_encode
@@ -828,13 +913,16 @@ func fg_identify_response_encode(status C.uint8_t, platform C.uint8_t, caps C.ui
 		Status:   uint8(status),
 		Platform: protocol.Platform(platform),
 		Caps:     protocol.CapabilityFlags(caps),
-		Name:     C.GoString(name),
+		Name:     goString(name),
 	}
 	data := p.Marshal()
+	out := cBuffer(data)
+	if out == nil {
+		*outLen = 0
+		return nil
+	}
 	*outLen = C.size_t(len(data))
-	buf := C.malloc(C.size_t(len(data)))
-	copy(unsafe.Slice((*byte)(buf), len(data)), data)
-	return (*C.uint8_t)(buf)
+	return out
 }
 
 // --- Main (required for c-archive) ---

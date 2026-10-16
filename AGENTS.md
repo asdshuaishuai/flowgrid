@@ -115,12 +115,11 @@ AI 能写代码不代表你可以不懂代码。把 AI 当加速器，审查输�
 
 ### 27. 安全优先
 - 所有 `unsafe` 代码必须附带 `SAFETY` 注释
-- 涉及 FFI 的指针操作（Go cgo 返回的 `*mut u8`）必须立即释放
+- 涉及 FFI 的指针操作（cgo 返回的缓冲）由调用方经 `fg_free_buffer` 释放，且只释放一次
 - DTLS 证书和密钥管理是安全边界，不能为了简化而走捷径
-- uinput 设备权限错误必须有清晰的用户提示（`99-flowgrid.rules`）
 
 ### 28. 跨平台兼容
-Go 协议库是共享的。修改协议库时，必须确认 macOS / Windows 客户端也能编译通过。协议版本号是跨平台契约，`1.0` 不能随意升级。
+Go 协议库是 wire format 的唯一权威实现。未来任何平台的客户端都必须经 `protocol/cgo`（或直接引用 Go 库）消费协议，禁止自行实现帧编解码。协议版本号语义见 PROTOCOL.md §2.3：版本 1 即当前线格式（v1.0 从未对外发布），不兼容变更必须升号或加能力位。
 
 ---
 
@@ -129,54 +128,43 @@ Go 协议库是共享的。修改协议库时，必须确认 macOS / Windows 客
 > 日常改代码前先读这节。文档语言：中文为主 + 英文术语。
 
 ### 项目现状
-FlowGrid 是一套键鼠共享软件（类 Synergy/Logitech Flow）。Linux 有两个客户端：**KDE 客户端**（`kde/`，Qt Quick/QML + Kirigami）和 **deepin 客户端**（`deepin/`，**DTK 原生 C++ Widgets**，UI 参考 `design/flowgrid-mac-*.html` 设计稿，deepin 蓝主色）。两者共享同一 Rust core 与 Go 协议库，但 UI 桥不同：KDE 走 cxx-qt，deepin 走纯 C ABI。macOS / Windows 仅有设计规格，没有代码。`CLAUDE.md` 还停留在"纯设计阶段"的描述，已过时，以本文件和实际代码为准。
+FlowGrid 是一套键鼠共享软件（类 Synergy/Logitech Flow）。**当前仓库只包含协议层**：Go 协议库（wire format 编解码 + 会话层：剪贴板/文件传输）加 cgo 桥。旧的两个 Linux 客户端（`kde/`、`deepin/`）实现已于 2026-10 整体移除，计划重写——新客户端直接消费 protocol 的会话 API（FrameStream / ClipboardSession / FileSender / FileReceiver），只写 GUI 与传输绑定。旧客户端代码与 deepin DTK 实践经验可从 git 历史（e8d205c / d1e71e4）找回。`CLAUDE.md` 保留设计期架构文档（双协议、五层模型仍有效），实现现状以本文件和实际代码为准。
 
 ### 目录地图
 ```
-design/PROTOCOL.md        — 协议规范 v1.0（唯一权威，见原则 26）
-design/*.html             — 各平台 UI 高保真原型
-protocol/                 — Go 协议库（github.com/flowgrid/protocol），平台无关逻辑，一个文件对应规范一节
-protocol/cgo/bridge.go    — cgo 桥，构建产物为 c-archive（libflowgrid_protocol.a/.h）
-kde/rust/                 — KDE 客户端 Rust workspace（edition 2024）：
-  core/                     hal/（uinput 注入）、keymapper/、transport/（near_link/direct_link）、
-                            protocol_ffi.rs（FFI 调 Go c-archive）、cert_manager、device_manager
-  cxx-qt-bridge/            cxx-qt 桥 + qml/（KDE QML）
-  app/                      main.rs 入口
-kde/CMakeLists.txt        — KDE 构建入口：先编 Go c-archive，再 cargo build --release
-deepin/                   — deepin 客户端（DTK 原生，无 QML/cxx-qt/Kirigami）：
-  native/                   Rust staticlib：fg_core_* 纯 C ABI（JSON 数据 + 轮询事件），复用 kde/rust/core
-  ui/                       C++ DTK Widgets（main_window/add_device_dialog/latency_panel/core_client）
-  CMakeLists.txt            Qt6 Widgets + Dtk6 + 两个静态库链接；udev 规则与 service 复用 kde/resources/
-openspec/                 — 规格驱动开发：changes/archive/<日期-名称>/{proposal,design,tasks}.md + specs/
+design/PROTOCOL.md        — 协议规范 v1.1（唯一权威，见原则 26）
+design/*.html             — 各平台 UI 高保真原型（未来客户端重写的参考）
+protocol/                 — Go 协议库（github.com/flowgrid/protocol），一个文件对应规范一节
+protocol/session.go       — FrameStream：会话层发送接缝（seq/时钟/transport sink）
+protocol/clipboard.go     — ClipboardSession：剪贴板收发会话（§5.3 分段/重组/超时）
+protocol/filetransfer.go  — FileSender/FileReceiver：文件传输状态机（§7.4，SHA-256 校验）
+protocol/cgo/bridge.go    — cgo 桥，构建产物 c-archive；句柄从 1 起，缓冲经 fg_free_buffer 释放
+openspec/                 — 规格驱动开发：changes/archive/<日期-名称>/ + specs/
 ```
 
-### 实际功能链路（两个客户端共用）
-- **Target 注入**：入站 HID 帧 → device_manager `inject_hid` → KeyMapper 重映射 → uinput。KEY_UP 是逐键语义：修饰键通过 0xE0-0xE7 键码帧独立按下/释放，不再随 KEY_UP 批量释放。
-- **Host 捕获**：`core/src/capture/mod.rs`（InputCapture）读 /dev/input/event*（EVIOCGRAB 独占），linux→HID 翻译用 `hal/keymap_tables.rs`（完整双向表，单一来源），REL 事件 5ms 合并后发 MOUSE_MOVE；deepin UI 的"控制其他设备"开关经 `fg_core_set_capturing` 启停。使用需把用户加入 input 组并安装 udev 规则（Target 注入同理）。
+### 会话层链路（未来客户端的对接面）
+- **发送**：客户端把传输 send 函数接成 `FrameSink` → `NewFrameStream` → `ClipboardSession.SendClipboard` / `FileSender.OfferFile` + `Pump`
+- **接收**：传输收到的字节 → `DecodeFrameBytesWithHMAC` → `SequenceTracker.Check`（返回错误即丢帧，stale 帧不回 ERROR）→ 按 FrameType 分发：`CLIPBOARD` → `ClipboardSession.HandleFrame`；`FILE_*` → `FileReceiver.HandleFrame`
 
 ### 构建与测试
 ```bash
-cd protocol && go test ./...                    # Go 协议库测试
-cargo test --manifest-path kde/rust/Cargo.toml  # Rust 单测（core 各模块都有 #[cfg(test)]）
-cmake --build kde/build                         # KDE 完整构建
-cmake -B deepin/build -S deepin && cmake --build deepin/build   # deepin 完整构建
+cd protocol && go test .        # 当前唯一测试入口（协议根包，110+ 用例）
 ```
-deepin 构建要求：Qt6 + DTK6 dev（libdtk6widget/gui/core-dev）+ qmake6 + pkgconf。**ZCode 运行在玲珑容器内，宿主桌面（Qt6/DTK/dde-dock）在容器外**：容器内构建用用户级自举环境 `. ~/.local/bin/fgenv.sh`（含 cmake 3.31.6 官方二进制、make、g++-12、pkgconf、Qt6/DTK 运行库与开发头，全部在 ~/.local/qt6-dev），configure 需 `-DCMAKE_PREFIX_PATH=~/.local/qt6-dev/usr/lib/x86_64-linux-gnu/cmake`（CMake 会在 configure 时固化 cargo 所需的 OPENSSL_DIR/PKG_CONFIG_* 等值）。CMakeLists 已把 OpenGL/OpenSSL/Cups/Vulkan 的 INCLUDE_DIR 隔离到 build/safe-include，防止用户树的 glibc 头以 -isystem 混入破坏 libstdc++（concurrence.h 报错即此症）。验证窗口：容器内无 xdotool，用 `gcc-12 /tmp/xlist.c -lX11 -lxcb` 自制枚举器查宿主 X 树。core 的 `build.rs` 用 `CARGO_MANIFEST_DIR` 向上三级定位 `protocol/cgo`，从任何客户端构建都能找到。单独 `cargo build` 之前必须先有 Go c-archive。
+
+### 当前检出环境（Windows 开发机，2026-10）
+- **可跑**：`cd protocol && go test .`（全绿）。
+- **不可跑**：`go test ./...` 会挂在 cgo 子包——bridge.go 是 cgo 文件，本机无 gcc 时 `CGO_ENABLED=0`，cgo 文件被整体排除，报 `undefined: registry`。装 MinGW-w64（gcc 入 PATH）后 cgo 测试与 c-archive 生成才可用；**新增/修改 cgo 导出后必须在 Linux 上重新生成 cgo.h**。
+- 本机直连 GitHub 不通，origin 暂指向 ghfast.top 镜像（只读加速）；**push 前必须** `git remote set-url origin https://github.com/asdshuaishuai/flowgrid.git`。
+- Shell 是 CMD（无 ls/cat/head/tail，用 dir/type/findstr）；控制台 GBK 编码下 git log 中文显示乱码，属显示问题（`chcp 65001` 可解）。
 
 ### 架构边界（改动的固定顺序）
-wire format / 键码 / 握手有任何变动：**PROTOCOL.md → protocol/ Go 库 → protocol/cgo → Rust core（protocol_ffi.rs）→ UI 层**。Go 库里不写 Linux 专属逻辑；Linux 专属代码只进 `kde/rust/core/src/hal/`（两个客户端共用）。UI 层各自独立：KDE 是 cxx-qt 桥 + QML；deepin 是 `deepin/native` 的 C ABI（fg_core_*，JSON 数据、事件轮询，见 native/flowgrid_core_capi.h）+ DTK C++。改 core 的 DeviceManagerClient/KeyMapper 公开 API 时，两个桥（cxx-qt-bridge 与 deepin/native）都要同步。
+wire format / 键码 / 握手有任何变动：**PROTOCOL.md → protocol/ Go 库 → protocol/cgo →（未来客户端）**。协议库不写平台专属逻辑——uinput / SendInput / IOKit / 传输加密（DTLS/TLS）都属于未来客户端的实现范围；协议库只做编解码、完整性与会话状态机。cgo 是未来 C/Rust 客户端的唯一 FFI 面：改 Go 导出签名必须同步 cgo.h。
 
 ### 工作流与 gotchas
-- 功能变更走 OpenSpec 流程（propose → apply → archive → sync，命令模板在 `.opencode/commands/opsx-*.md`）
-- uinput 权限依赖 `kde/resources/99-flowgrid.rules`（udev），随 CMake 安装；还有 systemd user service 和 .desktop 文件
-- **deepin UI 视觉必须完全符合 DDE 风格**：`design/flowgrid-mac-*.html` 只作布局与交互参考，配色/控件/字体一律用 DTK 原生（DHeaderLine、DBackgroundGroup、DSuggestButton、DWarningButton、DSwitchButton、DSpinner、DPalette 语义角色），禁止硬编码主题色/背景色 stylesheet（语义状态色如延迟红绿黄除外），保证深浅色主题自动跟随
-- deepin 应用身份与单实例：applicationName 必须等于可执行名（flowgrid-deepin），desktop 文件 ID 同名（resources/flowgrid-deepin.desktop），否则 dde-application-manager 把进程归到启动者（如 zcode）；首实例注册 org.flowgrid.DDE（/org/flowgrid/DDE，Q_CLASSINFO 固定接口名，ExportAllContents 导出 CoreClient），二次启动经 D-Bus 调 requestShowMainWindow 唤醒首实例后退出
-- deepin 字体与托盘图标：大号展示字用 `DFontManager::get(T1, base)`（DTK6 类名是 DFontManager，无 instance()，公开构造自建实例，T1-T11 随系统缩放），不要硬编码 pixelSize；托盘图标按 tray skill 提供亮暗两套（resources/flowgrid-deepin{,-dark}.svg），经 hostThemeChanged 在 refreshTray 里切换
-- deepin UI 细节规范（dtk-development gotchas 2.1/2.2）：禁止 QPalette::PlaceholderText，一律 `Theme::applicationPalette().color(DPalette::TextTips/TextTitle/ItemBackground)`（theme.h 提供唯一入口，底层是 DGuiApplicationHelper::applicationPalette）；托盘弹板用 `DBlurEffectWidget`（BehindWindowBlend + AutoColor + 圆角 12）而非自绘半透明；操作按钮用 `DIconButton(QStyle::SP_*)`，进度条用 `DProgressBar`；不要给 DTK 控件挂任何 QSS（会冻结 chameleon 绘制）
-- deepin 主题跟随：DGuiApplicationHelper::themeType() 在 Deepin 25 上探测不到深色（新属性是 Appearance1/GlobalTheme="bloom.dark"）；CoreClient::applyHostTheme() 直接读该属性并订阅 PropertiesChanged 实时切换 palette（QDBusVariant 解包，不能直接接 QString）
-- deepin 托盘走 SNI 协议（dde-shell 的 dde-dock 提供 org.kde.StatusNotifierWatcher）：QSystemTrayIcon 设置 Title/Id/ItemIsMenu 属性保常驻，托盘菜单含 Host 捕获开关；开机自启装 `/etc/xdg/autostart/flowgrid-deepin-autostart.desktop`（cmake --install，绝对路径 destination）
-- 运行未安装的二进制时用 `FLOWGRID_QML_PATH` 指向 QML 目录，否则找不到界面
-- `kde/tests/` 目前是空目录，测试在 Rust `#[cfg(test)]` 和 Go `_test.go` 里
+- 功能变更走 OpenSpec 流程（propose → apply → archive → sync，命令模板在 `.opencode/commands/opsx-*.md`）；协议级变更归档示例见 `openspec/changes/archive/2026-10-16-protocol-v1-1/`
+- 协议库改动的最小验证：`cd protocol && go test -count=1 . && go vet .`
+- 新增协议文件后记得同步 PROTOCOL.md 目录映射与本文档的目录地图
+- 旧客户端相关 gotchas（deepin DTK 规范、udev 规则、SNI 托盘、cxx-qt 等）已随代码移除，需要时从 git 历史 e8d205c / d1e71e4 / 6b9aafa 找回
 
 ---
 

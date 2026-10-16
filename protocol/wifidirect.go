@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"encoding/binary"
-	"errors"
 )
 
 // WiFi band constants (§3.1.3)
@@ -26,6 +25,9 @@ const (
 )
 
 // WiFiDirectRequest is the 20-byte BLE characteristic exchange (§3.1.3).
+// Bytes 15-18 are reserved and must be zero: v1.1 removed the PSK hash prefix
+// that used to live there — broadcasting it over BLE enabled offline PSK
+// dictionary attacks. PSK possession is proven during the DTLS/TLS pairing.
 type WiFiDirectRequest struct {
 	Version  uint8   // 0x01
 	Port     uint16  // data port
@@ -34,12 +36,11 @@ type WiFiDirectRequest struct {
 	Channel  uint8   // WiFi channel
 	Band     uint8   // 0x01=2.4GHz, 0x02=5GHz
 	Security uint8   // 0x01=WPA2, 0x02=WPA3
-	PSKHash  [4]byte // first 4 bytes of SHA-256(PSK)
 }
 
 const wifiDirectReqSize = 20
 
-// Marshal encodes the WiFi Direct request to 20 bytes.
+// Marshal encodes the WiFi Direct request to 20 bytes (reserved bytes zeroed).
 func (r *WiFiDirectRequest) Marshal() []byte {
 	buf := make([]byte, wifiDirectReqSize)
 	buf[0] = r.Version
@@ -49,16 +50,14 @@ func (r *WiFiDirectRequest) Marshal() []byte {
 	buf[11] = r.Channel
 	buf[12] = r.Band
 	buf[13] = r.Security
-	// buf[14] reserved (0x00)
-	copy(buf[15:19], r.PSKHash[:])
-	// buf[19] reserved (0x00)
+	// buf[14], buf[15:19], buf[19] reserved (0x00)
 	return buf
 }
 
 // UnmarshalWiFiDirectRequest decodes a 20-byte WiFi Direct request.
 func UnmarshalWiFiDirectRequest(data []byte) (*WiFiDirectRequest, error) {
 	if len(data) < wifiDirectReqSize {
-		return nil, errors.New("WiFi Direct request too short")
+		return nil, NewError(ErrInvalidPayload, "WiFi Direct request too short")
 	}
 	r := &WiFiDirectRequest{
 		Version:  data[0],
@@ -69,7 +68,6 @@ func UnmarshalWiFiDirectRequest(data []byte) (*WiFiDirectRequest, error) {
 	}
 	copy(r.IPAddr[:], data[3:7])
 	copy(r.Subnet[:], data[7:11])
-	copy(r.PSKHash[:], data[15:19])
 	return r, nil
 }
 
@@ -99,7 +97,7 @@ func (r *WiFiDirectResponse) Marshal() []byte {
 // UnmarshalWiFiDirectResponse decodes an 8-byte WiFi Direct response.
 func UnmarshalWiFiDirectResponse(data []byte) (*WiFiDirectResponse, error) {
 	if len(data) < wifiDirectRespSize {
-		return nil, errors.New("WiFi Direct response too short")
+		return nil, NewError(ErrInvalidPayload, "WiFi Direct response too short")
 	}
 	return &WiFiDirectResponse{
 		Version: data[0],

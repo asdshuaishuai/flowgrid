@@ -103,6 +103,9 @@ func LoadKeyMapFile(path string) (*KeyMapFile, error) {
 }
 
 // ParseKeyMap parses YAML keymap data.
+// A non-empty version must match the supported KeyMapVersion exactly (§11.3
+// step 3: validate before loading — silently adopting a foreign version's
+// rule semantics would misapply mappings).
 func ParseKeyMap(data []byte) (*KeyMapFile, error) {
 	var kmf KeyMapFile
 	if err := yaml.Unmarshal(data, &kmf); err != nil {
@@ -110,6 +113,8 @@ func ParseKeyMap(data []byte) (*KeyMapFile, error) {
 	}
 	if kmf.Version == "" {
 		kmf.Version = KeyMapVersion
+	} else if kmf.Version != KeyMapVersion {
+		return nil, NewError(ErrVersionMismatch, fmt.Sprintf("keymap version %q, want %q", kmf.Version, KeyMapVersion))
 	}
 	return &kmf, nil
 }

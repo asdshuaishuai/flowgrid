@@ -199,7 +199,7 @@ func TestFrameHMACTamperDetected(t *testing.T) {
 }
 
 func TestFrameHMACMissingTrailerRejected(t *testing.T) {
-	// A key implies integrity is enabled: frames without the 4-byte HMAC
+	// A key implies integrity is enabled: frames without the 8-byte HMAC
 	// suffix must be rejected, not silently accepted (§8.3).
 	key := []byte("0123456789abcdef0123456789abcdef")
 	frame := HIDFrame{
@@ -219,5 +219,38 @@ func TestFrameHMACMissingTrailerRejected(t *testing.T) {
 	// Without a key the plain frame decodes fine.
 	if _, _, err := DecodeFrameBytesWithHMAC(plain, nil); err != nil {
 		t.Errorf("plain decode without key: %v", err)
+	}
+}
+
+// Regression: payloads over the 255-byte wire limit (§5.1 UInt8 length) must
+// be rejected by every encoder — the length byte used to wrap silently,
+// producing corrupted frames (300-byte payload encoded as PayloadLen=44).
+func TestFrameOversizedPayloadRejected(t *testing.T) {
+	frame := HIDFrame{
+		Header:  FrameHeader{FrameType: FrameClipboard, Sequence: 1, Timestamp: 1},
+		Payload: make([]byte, 300),
+	}
+
+	if _, err := frame.EncodeBytes(); err == nil {
+		t.Error("EncodeBytes: expected error for 300-byte payload")
+	}
+	if err := frame.Encode(&bytes.Buffer{}); err == nil {
+		t.Error("Encode: expected error for 300-byte payload")
+	}
+	if _, err := frame.EncodeBytesWithHMAC([]byte("k")); err == nil {
+		t.Error("EncodeBytesWithHMAC: expected error for 300-byte payload")
+	}
+
+	// Boundary: 255 bytes is the exact wire limit and must still encode.
+	boundary := HIDFrame{
+		Header:  FrameHeader{FrameType: FrameClipboard, Sequence: 1, Timestamp: 1},
+		Payload: make([]byte, 255),
+	}
+	encoded, err := boundary.EncodeBytes()
+	if err != nil {
+		t.Errorf("255-byte payload should encode: %v", err)
+	}
+	if len(encoded) != 12+255 {
+		t.Errorf("encoded length: got %d, want %d", len(encoded), 12+255)
 	}
 }

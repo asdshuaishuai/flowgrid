@@ -82,9 +82,26 @@ func TestSequenceTrackerCheckOldFrame(t *testing.T) {
 	tr.Check(0) // expected=1
 	tr.Check(1) // expected=2
 	tr.Check(2) // expected=3
-	// Old/retransmitted frame — should be silently ignored
-	if err := tr.Check(0); err != nil {
-		t.Errorf("old frame should be ignored, got error: %v", err)
+	// Old/replayed frame — must be rejected so the caller drops it (§10.3),
+	// never injected, and answered with silence instead of an ERROR frame.
+	err := tr.Check(0)
+	if err == nil {
+		t.Fatal("stale frame must be rejected, not accepted")
+	}
+	if pe, ok := err.(*ProtocolError); !ok || pe.Code != ErrSequenceGap {
+		t.Errorf("error code: got %v, want ErrSequenceGap", err)
+	}
+}
+
+// The first frame on a connection must carry the negotiated seq_init; a
+// mismatch is a gap, after which the tracker re-syncs to the observed stream.
+func TestSequenceTrackerFirstFrameMismatch(t *testing.T) {
+	tr := NewSequenceTracker(100)
+	if err := tr.Check(5); err == nil {
+		t.Error("first frame not matching seq_init must be rejected")
+	}
+	if err := tr.Check(6); err != nil {
+		t.Errorf("tracker should re-sync after the mismatch: %v", err)
 	}
 }
 

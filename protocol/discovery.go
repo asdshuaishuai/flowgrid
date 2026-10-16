@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -38,17 +37,22 @@ func (d *BLEAdvertisingData) MarshalBLEAdvertising() []byte {
 }
 
 // UnmarshalBLEAdvertising decodes a 7-byte BLE advertising packet.
+// The protocol version must match exactly (§3.1.2, version-negotiation
+// checkpoint) and the platform must be a known value.
 func UnmarshalBLEAdvertising(data []byte) (*BLEAdvertisingData, error) {
 	if len(data) < 7 {
-		return nil, errors.New("BLE advertising data too short")
+		return nil, NewError(ErrInvalidPayload, "BLE advertising data too short")
 	}
 	uuid := binary.BigEndian.Uint16(data[0:2])
 	if uuid != BLEServiceUUID16 {
-		return nil, fmt.Errorf("unexpected service UUID: 0x%04X", uuid)
+		return nil, NewError(ErrInvalidPayload, fmt.Sprintf("unexpected service UUID: 0x%04X", uuid))
+	}
+	if data[2] != ProtocolVersion {
+		return nil, NewError(ErrVersionMismatch, fmt.Sprintf("BLE advertising version %d, want %d", data[2], ProtocolVersion))
 	}
 	p := Platform(data[3])
 	if p < PlatformMacOS || p > PlatformIOS {
-		return nil, fmt.Errorf("unknown platform: 0x%02X", data[3])
+		return nil, NewError(ErrInvalidPayload, fmt.Sprintf("unknown platform: 0x%02X", data[3]))
 	}
 	return &BLEAdvertisingData{
 		ProtocolVersion: data[2],

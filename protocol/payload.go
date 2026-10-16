@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 )
 
@@ -23,7 +22,7 @@ func (p *KeyDownPayload) Marshal() []byte {
 
 func UnmarshalKeyDown(data []byte) (*KeyDownPayload, error) {
 	if len(data) < 3 {
-		return nil, errors.New("KEY_DOWN payload too short")
+		return nil, NewError(ErrInvalidPayload, "KEY_DOWN payload too short")
 	}
 	return &KeyDownPayload{
 		KeyCode:   binary.BigEndian.Uint16(data[0:2]),
@@ -44,7 +43,7 @@ func (p *KeyUpPayload) Marshal() []byte {
 
 func UnmarshalKeyUp(data []byte) (*KeyUpPayload, error) {
 	if len(data) < 2 {
-		return nil, errors.New("KEY_UP payload too short")
+		return nil, NewError(ErrInvalidPayload, "KEY_UP payload too short")
 	}
 	return &KeyUpPayload{
 		KeyCode: binary.BigEndian.Uint16(data[0:2]),
@@ -66,7 +65,7 @@ func (p *MouseMovePayload) Marshal() []byte {
 
 func UnmarshalMouseMove(data []byte) (*MouseMovePayload, error) {
 	if len(data) < 4 {
-		return nil, errors.New("MOUSE_MOVE payload too short")
+		return nil, NewError(ErrInvalidPayload, "MOUSE_MOVE payload too short")
 	}
 	return &MouseMovePayload{
 		DeltaX: int16(binary.BigEndian.Uint16(data[0:2])),
@@ -93,14 +92,29 @@ func (p *MouseButtonPayload) Marshal() []byte {
 	return []byte{p.ButtonID, p.State}
 }
 
+// Validate rejects button IDs and states outside the §5.3 MOUSE_BTN table.
+func (p *MouseButtonPayload) Validate() error {
+	if p.ButtonID < MouseButtonLeft || p.ButtonID > MouseButtonForward {
+		return NewError(ErrInvalidPayload, fmt.Sprintf("unknown mouse button id 0x%02X", p.ButtonID))
+	}
+	if p.State > 1 {
+		return NewError(ErrInvalidPayload, fmt.Sprintf("invalid mouse button state 0x%02X", p.State))
+	}
+	return nil
+}
+
 func UnmarshalMouseButton(data []byte) (*MouseButtonPayload, error) {
 	if len(data) < 2 {
-		return nil, errors.New("MOUSE_BTN payload too short")
+		return nil, NewError(ErrInvalidPayload, "MOUSE_BTN payload too short")
 	}
-	return &MouseButtonPayload{
+	p := &MouseButtonPayload{
 		ButtonID: data[0],
 		State:    data[1],
-	}, nil
+	}
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // ScrollPayload is the payload for SCROLL (0x05) — 4 bytes.
@@ -119,7 +133,7 @@ func (p *ScrollPayload) Marshal() []byte {
 
 func UnmarshalScroll(data []byte) (*ScrollPayload, error) {
 	if len(data) < 4 {
-		return nil, errors.New("SCROLL payload too short")
+		return nil, NewError(ErrInvalidPayload, "SCROLL payload too short")
 	}
 	return &ScrollPayload{
 		DeltaY: int16(binary.BigEndian.Uint16(data[0:2])),
@@ -127,47 +141,147 @@ func UnmarshalScroll(data []byte) (*ScrollPayload, error) {
 	}, nil
 }
 
-// ClipboardPayload is the payload for CLIPBOARD (0x07) — variable length.
-// Max data length: 65536 bytes (64KB). Larger payloads use fragmentation.
+// ClipboardPayload is the payload for CLIPBOARD (0x07) — variable length (v1.1 §5.3).
+// The wire format embeds segmentation: TotalSize counts the whole clipboard,
+// FragIdx/FragTot address this frame's chunk of it. A clipboard that fits one
+// frame is a single fragment (FragTot=1). The v1.0 "unsegmented full data"
+// layout is gone — it could never carry more than ~250 bytes against the 64KB
+// target because of the UInt8 frame payload limit.
 type ClipboardPayload struct {
-	MIMEType string // e.g. "text/plain"
-	Data     []byte
+	MIMEType  string // e.g. "text/plain"
+	TotalSize uint32 // full clipboard size across all fragments (max 63240)
+	FragIdx   uint8  // 0-based index of this chunk
+	FragTot   uint8  // total fragment count (>= 1)
+	Data      []byte // this frame's chunk
 }
 
-const MaxClipboardSize = 65536
+const (
+	// MaxClipboardSize is the absolute wire cap: 255 fragments × the largest
+	// chunk (248 bytes, empty MIME). The v1.0 "64KB" figure was unreachable
+	// under the UInt8 fragment count and is corrected here.
+	MaxClipboardSize = 255 * (int(MaxPayloadLen) - clipboardFixedLen) // 63240
+	// clipboardFixedLen is the per-frame overhead: MIME len byte + 4-byte
+	// TotalSize + FragIdx + FragTot (the MIME itself is extra).
+	clipboardFixedLen = 7
+)
+
+// MaxClipboardChunk returns the largest Data chunk a single CLIPBOARD frame
+// can carry for a MIME type of the given encoded length (§5.3).
+func MaxClipboardChunk(mimeLen int) int {
+	if mimeLen < 0 {
+		return 0
+	}
+	return int(MaxPayloadLen) - clipboardFixedLen - mimeLen
+}
+
+// SegmentClipboard splits a whole clipboard into per-frame payloads (§5.3).
+// Each returned payload carries one chunk with its own FragIdx/FragTot; send
+// them in order as CLIPBOARD frames.
+func SegmentClipboard(mime string, data []byte) ([]ClipboardPayload, error) {
+	if uint64(len(data)) > uint64(MaxClipboardSize) {
+		return nil, NewError(ErrInvalidPayload, fmt.Sprintf("clipboard too large: %d bytes (max %d)", len(data), MaxClipboardSize))
+	}
+	chunk := MaxClipboardChunk(len(mime))
+	if chunk <= 0 {
+		return nil, NewError(ErrInvalidPayload, fmt.Sprintf("MIME type too long for clipboard frames: %d bytes", len(mime)))
+	}
+	fragTot := (len(data) + chunk - 1) / chunk
+	if fragTot == 0 {
+		fragTot = 1 // empty clipboard is one empty chunk
+	}
+	if fragTot > 255 {
+		return nil, NewError(ErrInvalidPayload, fmt.Sprintf("clipboard needs %d fragments (max 255); raise per-frame chunking", fragTot))
+	}
+	out := make([]ClipboardPayload, 0, fragTot)
+	for i := 0; i < fragTot; i++ {
+		start := i * chunk
+		end := start + chunk
+		if end > len(data) {
+			end = len(data)
+		}
+		out = append(out, ClipboardPayload{
+			MIMEType:  mime,
+			TotalSize: uint32(len(data)),
+			FragIdx:   uint8(i),
+			FragTot:   uint8(fragTot),
+			Data:      data[start:end],
+		})
+	}
+	return out, nil
+}
 
 func (p *ClipboardPayload) Marshal() ([]byte, error) {
 	mimeBytes := []byte(p.MIMEType)
 	if len(mimeBytes) > 255 {
-		return nil, fmt.Errorf("MIME type too long: %d bytes (max 255)", len(mimeBytes))
+		return nil, NewError(ErrInvalidPayload, fmt.Sprintf("MIME type too long: %d bytes (max 255)", len(mimeBytes)))
 	}
-	mimeLen := uint8(len(mimeBytes))
-	dataLen := uint32(len(p.Data))
+	if p.FragTot == 0 {
+		return nil, NewError(ErrInvalidPayload, "clipboard FragTot must be >= 1")
+	}
+	if p.FragIdx >= p.FragTot {
+		return nil, NewError(ErrInvalidPayload, fmt.Sprintf("clipboard FragIdx %d out of range for FragTot %d", p.FragIdx, p.FragTot))
+	}
+	// Convenience: a single-fragment clipboard derives its total size.
+	if p.FragTot == 1 && p.TotalSize == 0 {
+		p.TotalSize = uint32(len(p.Data))
+	}
+	if uint64(len(p.Data)) > uint64(MaxClipboardSize) {
+		return nil, NewError(ErrInvalidPayload, fmt.Sprintf("clipboard chunk too large: %d bytes", len(p.Data)))
+	}
+	if len(p.Data) > MaxClipboardChunk(len(mimeBytes)) {
+		return nil, NewError(ErrInvalidPayload, fmt.Sprintf("clipboard chunk %d exceeds per-frame budget %d; use SegmentClipboard", len(p.Data), MaxClipboardChunk(len(mimeBytes))))
+	}
+	if uint64(p.TotalSize) < uint64(len(p.Data)) {
+		return nil, NewError(ErrInvalidPayload, "clipboard TotalSize smaller than chunk")
+	}
+	// Convenience: a single-fragment clipboard derives its total size.
+	if p.FragTot == 1 && p.TotalSize == 0 {
+		p.TotalSize = uint32(len(p.Data))
+	}
 
-	buf := make([]byte, 1+int(mimeLen)+4+len(p.Data))
-	buf[0] = mimeLen
-	copy(buf[1:1+mimeLen], mimeBytes)
-	binary.BigEndian.PutUint32(buf[1+mimeLen:5+mimeLen], dataLen)
-	copy(buf[5+mimeLen:], p.Data)
+	buf := make([]byte, clipboardFixedLen+len(mimeBytes)+len(p.Data))
+	buf[0] = uint8(len(mimeBytes))
+	copy(buf[1:1+len(mimeBytes)], mimeBytes)
+	binary.BigEndian.PutUint32(buf[1+len(mimeBytes):5+len(mimeBytes)], p.TotalSize)
+	buf[5+len(mimeBytes)] = p.FragIdx
+	buf[6+len(mimeBytes)] = p.FragTot
+	copy(buf[7+len(mimeBytes):], p.Data)
 	return buf, nil
 }
 
 func UnmarshalClipboard(data []byte) (*ClipboardPayload, error) {
-	if len(data) < 5 {
-		return nil, errors.New("CLIPBOARD payload too short")
+	if len(data) < clipboardFixedLen {
+		return nil, NewError(ErrInvalidPayload, "CLIPBOARD payload too short")
 	}
 	mimeLen := int(data[0])
-	if len(data) < 1+mimeLen+4 {
-		return nil, errors.New("CLIPBOARD payload truncated")
+	if len(data) < clipboardFixedLen+mimeLen {
+		return nil, NewError(ErrInvalidPayload, "CLIPBOARD payload truncated")
 	}
 	mimeType := string(data[1 : 1+mimeLen])
-	dataLen := binary.BigEndian.Uint32(data[1+mimeLen : 5+mimeLen])
-	if len(data) < 5+mimeLen+int(dataLen) {
-		return nil, errors.New("CLIPBOARD data truncated")
+	totalSize := binary.BigEndian.Uint32(data[1+mimeLen : 5+mimeLen])
+	fragIdx, fragTot := data[5+mimeLen], data[6+mimeLen]
+	if fragTot == 0 || fragIdx >= fragTot {
+		return nil, NewError(ErrInvalidPayload, "CLIPBOARD fragment index/total invalid")
 	}
-	clipData := make([]byte, dataLen)
-	copy(clipData, data[5+mimeLen:5+mimeLen+int(dataLen)])
-	return &ClipboardPayload{MIMEType: mimeType, Data: clipData}, nil
+	if uint64(totalSize) > uint64(MaxClipboardSize) {
+		return nil, NewError(ErrInvalidPayload, fmt.Sprintf("CLIPBOARD total size %d exceeds limit", totalSize))
+	}
+	chunkLen := len(data) - clipboardFixedLen - mimeLen
+	if chunkLen > MaxClipboardChunk(mimeLen) {
+		return nil, NewError(ErrInvalidPayload, "CLIPBOARD chunk exceeds per-frame budget")
+	}
+	if uint64(totalSize) < uint64(chunkLen) {
+		return nil, NewError(ErrInvalidPayload, "CLIPBOARD total size smaller than chunk")
+	}
+	clipData := make([]byte, chunkLen)
+	copy(clipData, data[clipboardFixedLen+mimeLen:])
+	return &ClipboardPayload{
+		MIMEType:  mimeType,
+		TotalSize: totalSize,
+		FragIdx:   fragIdx,
+		FragTot:   fragTot,
+		Data:      clipData,
+	}, nil
 }
 
 // LatencyPingPayload is the payload for LATENCY_PING (0x09) — 8 bytes.
@@ -183,7 +297,7 @@ func (p *LatencyPingPayload) Marshal() []byte {
 
 func UnmarshalLatencyPing(data []byte) (*LatencyPingPayload, error) {
 	if len(data) < 8 {
-		return nil, errors.New("LATENCY_PING payload too short")
+		return nil, NewError(ErrInvalidPayload, "LATENCY_PING payload too short")
 	}
 	return &LatencyPingPayload{Timestamp: binary.BigEndian.Uint64(data[:8])}, nil
 }
@@ -202,7 +316,7 @@ func (p *LatencyPongPayload) Marshal() []byte {
 
 func UnmarshalLatencyPong(data []byte) (*LatencyPongPayload, error) {
 	if len(data) < 8 {
-		return nil, errors.New("LATENCY_PONG payload too short")
+		return nil, NewError(ErrInvalidPayload, "LATENCY_PONG payload too short")
 	}
 	return &LatencyPongPayload{Timestamp: binary.BigEndian.Uint64(data[:8])}, nil
 }
@@ -218,7 +332,7 @@ func (p *DisconnectPayload) Marshal() []byte {
 
 func UnmarshalDisconnect(data []byte) (*DisconnectPayload, error) {
 	if len(data) < 1 {
-		return nil, errors.New("DISCONNECT payload too short")
+		return nil, NewError(ErrInvalidPayload, "DISCONNECT payload too short")
 	}
 	return &DisconnectPayload{Reason: data[0]}, nil
 }
@@ -235,7 +349,7 @@ const MaxErrorMessageLen = int(MaxPayloadLen) - 2
 func (p *ErrorPayload) Marshal() ([]byte, error) {
 	msgBytes := []byte(p.Message)
 	if len(msgBytes) > MaxErrorMessageLen {
-		return nil, fmt.Errorf("error message too long: %d bytes (max %d)", len(msgBytes), MaxErrorMessageLen)
+		return nil, NewError(ErrInvalidPayload, fmt.Sprintf("error message too long: %d bytes (max %d)", len(msgBytes), MaxErrorMessageLen))
 	}
 	msgLen := uint8(len(msgBytes))
 	buf := make([]byte, 2+msgLen)
@@ -247,12 +361,12 @@ func (p *ErrorPayload) Marshal() ([]byte, error) {
 
 func UnmarshalError(data []byte) (*ErrorPayload, error) {
 	if len(data) < 2 {
-		return nil, errors.New("ERROR payload too short")
+		return nil, NewError(ErrInvalidPayload, "ERROR payload too short")
 	}
 	code := ErrorCode(data[0])
 	msgLen := int(data[1])
 	if len(data) < 2+msgLen {
-		return nil, errors.New("ERROR message truncated")
+		return nil, NewError(ErrInvalidPayload, "ERROR message truncated")
 	}
 	return &ErrorPayload{
 		Code:    code,

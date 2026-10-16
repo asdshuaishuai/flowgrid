@@ -30,7 +30,8 @@ const (
 	ErrInvalidPayload       ErrorCode = 0x12
 	ErrVersionMismatch      ErrorCode = 0x13
 	ErrIdentifyRejected     ErrorCode = 0x14
-	ErrFragmentationTimeout ErrorCode = 0x15
+	ErrTransferTimeout      ErrorCode = 0x15 // clipboard/file transfer incomplete (v1.1 renamed from fragmentationTimeout)
+	ErrTransferRejected     ErrorCode = 0x16 // clipboard/file transfer rejected or aborted (v1.1 added)
 	ErrSequenceGap          ErrorCode = 0x20
 )
 
@@ -90,9 +91,10 @@ var errorCodeNames = map[ErrorCode]string{
 	ErrUnknownFrameType:     "unknownFrameType",
 	ErrInvalidPayload:       "invalidPayload",
 	ErrVersionMismatch:      "versionMismatch",
-	ErrIdentifyRejected:     "identifyRejected",
-	ErrFragmentationTimeout: "fragmentationTimeout",
-	ErrSequenceGap:          "sequenceGap",
+	ErrIdentifyRejected:   "identifyRejected",
+	ErrTransferTimeout:    "transferTimeout",
+	ErrTransferRejected:   "transferRejected",
+	ErrSequenceGap:        "sequenceGap",
 	// §12.3 HAL
 	ErrAccessibilityDenied:    "accessibilityDenied",
 	ErrEventCreationFailed:    "eventCreationFailed",

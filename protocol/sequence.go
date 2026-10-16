@@ -30,8 +30,13 @@ func (t *SequenceTracker) Next() uint16 {
 	return seq
 }
 
-// Check verifies a received sequence number and detects gaps.
-// Returns nil if sequential, or an error describing the gap.
+// Check verifies a received sequence number (§10.3).
+// The first frame after (re)sync must carry the negotiated seq_init; a gap
+// ahead of expected reports ErrSequenceGap and re-syncs to the received frame;
+// a duplicate or stale frame (behind expected — e.g. a replay) is rejected
+// with ErrSequenceGap as well. The caller must DROP any frame whose Check
+// returns an error: do not inject it, and do not answer with an ERROR frame
+// (stale frames are answered with silence to avoid error-storm amplification).
 func (t *SequenceTracker) Check(received uint16) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -39,6 +44,9 @@ func (t *SequenceTracker) Check(received uint16) error {
 	if !t.started {
 		t.started = true
 		t.expected = received + 1
+		if received != t.init {
+			return NewError(ErrSequenceGap, "first frame does not match seq_init")
+		}
 		return nil
 	}
 
@@ -53,8 +61,10 @@ func (t *SequenceTracker) Check(received uint16) error {
 		t.expected = received + 1
 		return NewError(ErrSequenceGap, "seq_gap")
 	}
-	// diff >= 0x8000 means received is behind expected (old/retransmitted frame) — ignore
-	return nil
+	// diff >= 0x8000: received is behind expected — duplicate, stale or replayed
+	// frame. Reject it; on DTLS links DTLS already has its own replay window,
+	// on HMAC-only links this check is the replay defense (§10.3).
+	return NewError(ErrSequenceGap, "duplicate or stale frame")
 }
 
 // Reset reinitializes the tracker with a new sequence init value.

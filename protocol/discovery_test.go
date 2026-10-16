@@ -41,6 +41,19 @@ func TestBLEAdvertisingBadUUID(t *testing.T) {
 	}
 }
 
+// The BLE advertisement is a version-negotiation checkpoint (§3.1.2): a
+// foreign protocol version must be rejected with ErrVersionMismatch.
+func TestBLEAdvertisingBadVersion(t *testing.T) {
+	data := []byte{0x18, 0x50, 0x02, 0x03, 0x01, 0x00, 0x24} // valid UUID, version 2
+	_, err := UnmarshalBLEAdvertising(data)
+	if err == nil {
+		t.Fatal("expected error for foreign protocol version")
+	}
+	if pe, ok := err.(*ProtocolError); !ok || pe.Code != ErrVersionMismatch {
+		t.Errorf("got %v, want ErrVersionMismatch", err)
+	}
+}
+
 func TestBLEAdvertisingShortData(t *testing.T) {
 	if _, err := UnmarshalBLEAdvertising([]byte{0x50, 0x18, 0x01}); err == nil {
 		t.Error("expected error for short BLE data")
@@ -48,8 +61,8 @@ func TestBLEAdvertisingShortData(t *testing.T) {
 }
 
 func TestBLEAdvertisingBadPlatform(t *testing.T) {
-	// Valid UUID but unknown platform 0xFF
-	data := []byte{0x50, 0x18, 0x01, 0xFF, 0x01, 0x00, 0x24}
+	// Valid UUID + valid version but unknown platform 0xFF
+	data := []byte{0x18, 0x50, 0x01, 0xFF, 0x01, 0x00, 0x24}
 	if _, err := UnmarshalBLEAdvertising(data); err == nil {
 		t.Error("expected error for unknown platform")
 	}

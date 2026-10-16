@@ -87,3 +87,38 @@ func TestIdentifyTooShort(t *testing.T) {
 		t.Error("expected error for short IDENTIFY_RESPONSE")
 	}
 }
+
+// IDENTIFY is the version-negotiation checkpoint: a foreign version or a
+// out-of-range enum must fail the decode with the proper protocol error.
+func TestIdentifyInvalidFieldsRejected(t *testing.T) {
+	good := (&IdentifyPayload{
+		Version: ProtocolVersion, Platform: PlatformLinux, Role: RoleBoth, SeqInit: 1, Name: "x",
+	}).Marshal()
+
+	badVersion := append([]byte(nil), good...)
+	badVersion[0] = 99
+	if _, err := UnmarshalIdentify(badVersion); err == nil {
+		t.Error("foreign version must be rejected")
+	} else if pe, ok := err.(*ProtocolError); !ok || pe.Code != ErrVersionMismatch {
+		t.Errorf("got %v, want ErrVersionMismatch", err)
+	}
+
+	badRole := append([]byte(nil), good...)
+	badRole[2] = 0x7F
+	if _, err := UnmarshalIdentify(badRole); err == nil {
+		t.Error("unknown role must be rejected")
+	} else if pe, ok := err.(*ProtocolError); !ok || pe.Code != ErrInvalidPayload {
+		t.Errorf("got %v, want ErrInvalidPayload", err)
+	}
+
+	badPlatform := append([]byte(nil), good...)
+	badPlatform[1] = 0x06
+	if _, err := UnmarshalIdentify(badPlatform); err == nil {
+		t.Error("unknown platform must be rejected")
+	}
+
+	badRespPlatform := []byte{IdentifyAccepted, 0x00, 0x01, 'n', 0}
+	if _, err := UnmarshalIdentifyResponse(badRespPlatform); err == nil {
+		t.Error("unknown response platform must be rejected")
+	}
+}

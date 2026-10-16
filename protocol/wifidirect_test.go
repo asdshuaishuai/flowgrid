@@ -13,11 +13,17 @@ func TestWiFiDirectRequestRoundTrip(t *testing.T) {
 		Channel:  36,
 		Band:     WiFiBand5GHz,
 		Security: WiFiSecurityWPA3,
-		PSKHash:  [4]byte{0xAB, 0xCD, 0xEF, 0x01},
 	}
 	data := orig.Marshal()
 	if len(data) != 20 {
 		t.Fatalf("got %d bytes, want 20", len(data))
+	}
+	// v1.1: bytes 15-18 are reserved-zeroed (PSK hash removed, §3.1.3)
+	for _, b := range data[14:] {
+		if b != 0x00 {
+			t.Errorf("reserved byte not zeroed: %x", data[14:])
+			break
+		}
 	}
 
 	got, err := UnmarshalWiFiDirectRequest(data)
@@ -41,9 +47,6 @@ func TestWiFiDirectRequestRoundTrip(t *testing.T) {
 	}
 	if got.Security != orig.Security {
 		t.Errorf("Security: got %d, want %d", got.Security, orig.Security)
-	}
-	if got.PSKHash != orig.PSKHash {
-		t.Errorf("PSKHash: got %v, want %v", got.PSKHash, orig.PSKHash)
 	}
 }
 

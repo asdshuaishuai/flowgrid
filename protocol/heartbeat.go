@@ -43,6 +43,10 @@ func ClassifyLatency(ms float64) LatencyQuality {
 	}
 }
 
+// maxPlausibleRTTUs bounds latency samples: a PONG implying more than 10s of
+// RTT is bogus (future/garbage timestamp), not a measurement.
+const maxPlausibleRTTUs = 10_000_000
+
 // LatencySample records a single latency measurement (§9.2).
 type LatencySample struct {
 	Timestamp time.Time
@@ -62,6 +66,9 @@ type LatencyMonitor struct {
 
 // NewLatencyMonitor creates a latency monitor with the given sample buffer size.
 func NewLatencyMonitor(maxSamples int) *LatencyMonitor {
+	if maxSamples < 1 {
+		maxSamples = 1
+	}
 	return &LatencyMonitor{
 		samples:    make([]LatencySample, 0, maxSamples),
 		maxSamples: maxSamples,
@@ -76,12 +83,24 @@ func (m *LatencyMonitor) RecordPing(sendTimeUs uint64) {
 }
 
 // RecordPong calculates latency from a LATENCY_PONG and records the sample.
-// nowUs is the current time in microseconds.
-func (m *LatencyMonitor) RecordPong(pongTimestampUs, nowUs uint64) LatencySample {
+// nowUs is the current time in microseconds. Returns ok=false and no sample
+// for a pong that cannot be trusted: a timestamp in the future, an RTT above
+// maxPlausibleRTTUs, or — once a ping time is known — a timestamp that does
+// not match the last recorded ping (stale or forged pong).
+func (m *LatencyMonitor) RecordPong(pongTimestampUs, nowUs uint64) (LatencySample, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if pongTimestampUs > nowUs {
+		return LatencySample{}, false
+	}
 	rttUs := nowUs - pongTimestampUs
+	if rttUs > maxPlausibleRTTUs {
+		return LatencySample{}, false
+	}
+	if m.lastPing != 0 && pongTimestampUs != m.lastPing {
+		return LatencySample{}, false
+	}
 	latencyMs := float64(rttUs) / 2000.0 // half RTT, convert µs to ms
 
 	jitter := latencyMs - m.prevValue
@@ -106,7 +125,7 @@ func (m *LatencyMonitor) RecordPong(pongTimestampUs, nowUs uint64) LatencySample
 		m.consecutiveBad = 0
 	}
 
-	return sample
+	return sample, true
 }
 
 // ConsecutiveBad returns the number of consecutive samples exceeding
@@ -152,9 +171,10 @@ func (m *LatencyMonitor) Stats() (min, max, avg float64) {
 
 // HeartbeatTracker monitors heartbeat liveness (§9.1).
 type HeartbeatTracker struct {
-	mu             sync.Mutex
-	missed         int
-	lastReceived   time.Time
+	mu               sync.Mutex
+	missed           int
+	lastReceived     time.Time
+	lostFired        bool // onConnectionLost fires once per loss episode
 	onConnectionLost func()
 }
 
@@ -167,27 +187,36 @@ func NewHeartbeatTracker(onLost func()) *HeartbeatTracker {
 	}
 }
 
-// ReceivedHeartbeat records a received heartbeat.
+// ReceivedHeartbeat records a received heartbeat and re-arms the lost callback.
 func (t *HeartbeatTracker) ReceivedHeartbeat() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.missed = 0
+	t.lostFired = false
 	t.lastReceived = time.Now()
 }
 
 // Tick should be called every HeartbeatInterval.
-// Returns true if connection is lost.
+// Returns true once the connection is considered lost (missed >= timeout).
+// The onConnectionLost callback fires once per loss episode — subsequent ticks
+// stay lost without re-firing — and is re-armed by ReceivedHeartbeat/Reset.
+// The callback runs without the lock held so it may call back into the tracker.
 func (t *HeartbeatTracker) Tick() bool {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	t.missed++
-	if t.missed >= HeartbeatTimeout {
-		if t.onConnectionLost != nil {
-			t.onConnectionLost()
-		}
-		return true
+	if t.missed < HeartbeatTimeout {
+		t.mu.Unlock()
+		return false
 	}
-	return false
+	fire := !t.lostFired
+	t.lostFired = true
+	cb := t.onConnectionLost
+	t.mu.Unlock()
+
+	if fire && cb != nil {
+		cb()
+	}
+	return true
 }
 
 // Reset resets the tracker.
@@ -195,5 +224,6 @@ func (t *HeartbeatTracker) Reset() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.missed = 0
+	t.lostFired = false
 	t.lastReceived = time.Now()
 }

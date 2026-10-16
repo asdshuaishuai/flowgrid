@@ -9,7 +9,10 @@ func TestLatencyMonitorRecordPong(t *testing.T) {
 
 	// Simulate: PING sent at t=1000µs, PONG received at t=3000µs
 	// RTT = 2000µs, latency = 1000µs = 1.0ms
-	sample := m.RecordPong(1000, 3000)
+	sample, ok := m.RecordPong(1000, 3000)
+	if !ok {
+		t.Fatal("expected sample to be accepted")
+	}
 	if sample.ValueMs != 1.0 {
 		t.Errorf("latency: got %f, want 1.0", sample.ValueMs)
 	}
@@ -29,9 +32,34 @@ func TestLatencyMonitorJitter(t *testing.T) {
 	// First sample: 1.0ms
 	m.RecordPong(1000, 3000)
 	// Second sample: 2.0ms -> jitter = |2.0 - 1.0| = 1.0
-	sample := m.RecordPong(1000, 5000)
+	sample, ok := m.RecordPong(1000, 5000)
+	if !ok {
+		t.Fatal("expected sample to be accepted")
+	}
 	if sample.Jitter != 1.0 {
 		t.Errorf("jitter: got %f, want 1.0", sample.Jitter)
+	}
+}
+
+// A PONG whose timestamp lies in the future (uint64 underflow risk), implies
+// an absurd RTT, or does not match the recorded ping must be rejected — it
+// would otherwise poison latency stats and trigger false alert banners.
+func TestLatencyMonitorRejectsBogusPong(t *testing.T) {
+	m := NewLatencyMonitor(10)
+	m.RecordPing(5000)
+
+	if _, ok := m.RecordPong(9000, 8000); ok {
+		t.Error("future timestamp (pong > now) must be rejected")
+	}
+	if _, ok := m.RecordPong(0, 999999999); ok {
+		t.Error("RTT above the plausibility cap must be rejected")
+	}
+	if _, ok := m.RecordPong(4321, 64321); ok {
+		t.Error("pong not matching the recorded ping must be rejected")
+	}
+	sample, ok := m.RecordPong(5000, 7000) // RTT 2000µs → 1.0ms, matches ping
+	if !ok || sample.ValueMs != 1.0 {
+		t.Errorf("matching pong should be accepted: ok=%v sample=%+v", ok, sample)
 	}
 }
 
@@ -86,6 +114,54 @@ func TestHeartbeatTrackerTimeout(t *testing.T) {
 
 	if !lost {
 		t.Error("expected connection lost after 3 missed heartbeats")
+	}
+}
+
+// The lost callback fires once per loss episode: ticks after the timeout keep
+// reporting lost but must not re-fire the callback, and a received heartbeat
+// re-arms it.
+func TestHeartbeatTrackerFiresOncePerEpisode(t *testing.T) {
+	fired := 0
+	tracker := NewHeartbeatTracker(func() { fired++ })
+
+	for i := 0; i < 6; i++ {
+		lost := tracker.Tick()
+		if want := i >= 2; lost != want {
+			t.Fatalf("tick %d: lost=%v, want %v", i, lost, want)
+		}
+	}
+	if fired != 1 {
+		t.Fatalf("callback fired %d times, want 1", fired)
+	}
+
+	tracker.ReceivedHeartbeat()
+	if tracker.Tick() {
+		t.Error("should not be lost right after a heartbeat")
+	}
+	tracker.Tick()
+	tracker.Tick()
+	tracker.Tick()
+	if fired != 2 {
+		t.Fatalf("callback fired %d times after re-arm, want 2", fired)
+	}
+}
+
+// The lost callback must run without the tracker lock held so it can call
+// back into the tracker (e.g. Reset) without deadlocking.
+func TestHeartbeatTrackerCallbackMayReenter(t *testing.T) {
+	done := make(chan struct{})
+	var tracker *HeartbeatTracker
+	tracker = NewHeartbeatTracker(func() {
+		tracker.Reset() // would deadlock if the callback held the lock
+		close(done)
+	})
+	tracker.Tick()
+	tracker.Tick()
+	tracker.Tick()
+	select {
+	case <-done:
+	default:
+		t.Fatal("callback deadlocked or did not run")
 	}
 }
 

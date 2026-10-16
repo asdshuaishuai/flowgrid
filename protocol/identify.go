@@ -2,7 +2,7 @@ package protocol
 
 import (
 	"encoding/binary"
-	"errors"
+	"fmt"
 )
 
 // IdentifyStatus values for IDENTIFY_RESPONSE (§4.2).
@@ -23,6 +23,23 @@ type IdentifyPayload struct {
 	Name     string // UTF-8 device name, \0 terminated on wire
 }
 
+// Validate enforces the §4.2 field rules: the protocol version must match
+// exactly (this is the version-negotiation checkpoint — a mismatch is a
+// ErrVersionMismatch, answered with IDENTIFY_RESPONSE status 0x01), and the
+// Platform/Role enums must be in range.
+func (p *IdentifyPayload) Validate() error {
+	if p.Version != ProtocolVersion {
+		return NewError(ErrVersionMismatch, fmt.Sprintf("IDENTIFY version %d, want %d", p.Version, ProtocolVersion))
+	}
+	if p.Platform < PlatformMacOS || p.Platform > PlatformIOS {
+		return NewError(ErrInvalidPayload, fmt.Sprintf("unknown platform 0x%02X", uint8(p.Platform)))
+	}
+	if p.Role < RoleHost || p.Role > RoleBoth {
+		return NewError(ErrInvalidPayload, fmt.Sprintf("unknown role 0x%02X", uint8(p.Role)))
+	}
+	return nil
+}
+
 // Marshal encodes the IDENTIFY payload to bytes.
 func (p *IdentifyPayload) Marshal() []byte {
 	nameBytes := []byte(p.Name)
@@ -38,10 +55,11 @@ func (p *IdentifyPayload) Marshal() []byte {
 	return buf
 }
 
-// UnmarshalIdentify decodes an IDENTIFY payload from bytes.
+// UnmarshalIdentify decodes an IDENTIFY payload from bytes and validates it
+// (version negotiation checkpoint + enum range checks, §4.2).
 func UnmarshalIdentify(data []byte) (*IdentifyPayload, error) {
 	if len(data) < 8 {
-		return nil, errors.New("IDENTIFY payload too short")
+		return nil, NewError(ErrInvalidPayload, "IDENTIFY payload too short")
 	}
 	p := &IdentifyPayload{
 		Version:  data[0],
@@ -59,6 +77,9 @@ func UnmarshalIdentify(data []byte) (*IdentifyPayload, error) {
 		}
 	}
 	p.Name = string(data[8:nameEnd])
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
 	return p, nil
 }
 
@@ -82,10 +103,11 @@ func (p *IdentifyResponsePayload) Marshal() []byte {
 	return buf
 }
 
-// UnmarshalIdentifyResponse decodes an IDENTIFY_RESPONSE payload.
+// UnmarshalIdentifyResponse decodes an IDENTIFY_RESPONSE payload and validates
+// the Platform enum (Status is forward-compatible and passed through, §4.2).
 func UnmarshalIdentifyResponse(data []byte) (*IdentifyResponsePayload, error) {
 	if len(data) < 3 {
-		return nil, errors.New("IDENTIFY_RESPONSE payload too short")
+		return nil, NewError(ErrInvalidPayload, "IDENTIFY_RESPONSE payload too short")
 	}
 	p := &IdentifyResponsePayload{
 		Status:   data[0],
@@ -100,5 +122,8 @@ func UnmarshalIdentifyResponse(data []byte) (*IdentifyResponsePayload, error) {
 		}
 	}
 	p.Name = string(data[3:nameEnd])
+	if p.Platform < PlatformMacOS || p.Platform > PlatformIOS {
+		return nil, NewError(ErrInvalidPayload, fmt.Sprintf("unknown platform 0x%02X", p.Platform))
+	}
 	return p, nil
 }

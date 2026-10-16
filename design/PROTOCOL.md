@@ -1,7 +1,25 @@
-# FlowGrid Protocol Specification v1.0
+# FlowGrid Protocol Specification v1.1
 
 > **Canonical Reference** — 所有平台实现必须遵循本文档。
-> 修订日期: 2026-09-20
+> 修订日期: 2026-10-16
+
+> **v1.1 修订记录 (2026-10-16)**
+> 1. CLIPBOARD 载荷改为内嵌分段 (Total Size / Frag Idx / Frag Tot, §5.3)——v1.0 的
+>    "64KB 剪贴板" 与 UInt8 载荷上限在数学上不可共存，属规范级缺陷。
+> 2. 废除 §7.3 帧外分片机制 (合法帧最大 267 字节，永远用不到)。
+> 3. 帧完整性 HMAC 截断 4 → 8 字节 (§8.3)，4 字节截断可在线暴破。
+> 4. 移除 BLE WiFi Direct 参数交换中的 PSK Hash (§3.1.3)——广播哈希前缀构成
+>    PSK 离线字典攻击面。
+> 5. 澄清 §10.3 序列号判定 (首帧须等于 seq_init；重复/过期帧必须丢弃)。
+> 6. 修正 §6.4 码制标注与 §11.1 示例键码。
+> 7. 新增 §7.4 文件传输协议 (FILE_OFFER/ACK/CHUNK/ABORT, ≤16MiB, SHA-256 校验)。
+> 8. 剪贴板接收侧规则明确: Idx=0 换代、5s 超时、同刻单传输；错误码 0x15
+>    更名为 transferTimeout。
+> 9. 澄清 §2.3 版本语义（v1.0 线格式从未发布，版本 1 即本文档线格式）。
+> 10. 客户端实现整体移除待重写；§12.2 新增 0x16 transferRejected。
+> 11. 稳定性强化（线格式零变更）：§5.3 超时改为"5 秒无进展"（活动锚点）、
+>     孤儿段静默丢弃、剪贴板支持整轮重发；§7.4 发送方自动重发轮次
+>     （默认额外 2 轮，接收端按 ChunkIdx 去重幂等）、迟到 CHUNK 静默丢弃。
 
 ---
 
@@ -65,6 +83,11 @@ Protocol Version:  1
 Frame Version:     1
 Key Map Version:   "1.0"
 ```
+
+**版本语义（v1.1 澄清）**：Protocol Version `1` 唯一标识**本文档**定义的线格式。
+v1.0 文档描述的线格式从未有对外发布的实现（客户端实现已于 2026-10 重置），
+因此无需升号；BLE 广播（§3.1.2）与 IDENTIFY（§4.2）的版本检查点均以本字段为准。
+未来任何不兼容的线格式变更必须升号或新增能力位。
 
 ---
 
@@ -130,13 +153,16 @@ Bit 6-7:       保留 (置零)
 请求 (Host → Target, 20 bytes):
 ┌──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┐
 │ Byte 0   │ Byte 1-2 │ Byte 3-6 │ Byte 7-10│ Byte 11  │ Byte 12  │ Byte 13  │ Byte 14  │ Byte 15-18│ Byte 19  │
-│ Version  │ Port     │ IP Addr  │ Subnet   │ Channel  │ Band     │ Security │ Reserved │ PSK Hash  │ Reserved │
-│ (0x01)   │ (UInt16) │ (IPv4)   │ Mask     │ (UInt8)  │ (UInt8)  │ (UInt8)  │ (0x00)   │ (SHA256[0:4])│ (0x00) │
+│ Version  │ Port     │ IP Addr  │ Subnet   │ Channel  │ Band     │ Security │ Reserved │ Reserved │ Reserved │
+│ (0x01)   │ (UInt16) │ (IPv4)   │ Mask     │ (UInt8)  │ (UInt8)  │ (UInt8)  │ (0x00)   │ (0x00)   │ (0x00)   │
 └──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
 
 Band:  0x01 = 2.4GHz, 0x02 = 5GHz
 Security: 0x01 = WPA2, 0x02 = WPA3
-PSK Hash: SHA-256(PSK) 的前 4 字节，用于验证
+
+v1.0 曾在 Byte 15-18 携带 SHA-256(PSK) 前 4 字节用于"验证"，已移除：
+在无保护的广播信道上传输 PSK 哈希前缀，允许攻击者对 PSK 做离线字典攻击。
+PSK 所有权在 DTLS/TLS 配对握手中证明，发现信道不携带任何 PSK 衍生物。
 ```
 
 ```
@@ -336,6 +362,10 @@ Wire 格式约定（所有平台一致）：
  IDENTIFY     0x10    双向              身份交换
  IDENTIFY_RES 0x11    双向              身份响应
  DISCONNECT   0x20    双向              主动断开
+ FILE_OFFER   0x21    Sender→Receiver   文件传输请求 (§7.4)
+ FILE_ACK     0x22    Receiver→Sender   接受/拒绝/完成确认 (§7.4)
+ FILE_CHUNK   0x23    Sender→Receiver   文件数据块 (§7.4)
+ FILE_ABORT   0x24    双向              取消传输 (§7.4)
  ERROR        0xFF    双向              错误通知
 ──────────────────────────────────────────────────────────
 ```
@@ -394,17 +424,39 @@ Offset  Size   Field         说明
 
 注: 滚动量单位为像素 (pixel-based scrolling)。
 
-#### CLIPBOARD (0x07) — 变长
+#### CLIPBOARD (0x07) — 变长 (v1.1)
 
 ```
 Offset  Size   Field         说明
  0      1      MIME Type Len MIME 类型长度 M
  1      M      MIME Type     UTF-8 编码 MIME 类型 (如 "text/plain")
- 1+M    4      Data Length   剪贴板数据长度 D (UInt32 BE)
- 5+M    D      Data          剪贴板原始数据
+ 1+M    4      Total Size    剪贴板数据总长度 D (UInt32 BE)
+ 5+M    1      Frag Idx      分段索引 (UInt8, 0-based)
+ 6+M    1      Frag Tot      总分段数 (UInt8, ≥1)
+ 7+M    N      Data          本段数据 (N ≤ 255-(7+M))
 ```
 
-最大数据长度: 65536 字节 (64KB)。超过此限制时分片传输。
+单帧可载数据上限为 `255-(7+M)` 字节（MIME 为 "text/plain" 时约 238 字节）。
+剪贴板总大小上限 = `255 × (248-M)` 字节：空 MIME 时全局上限 **63240 字节**，
+"text/plain" 时 60690 字节。（v1.0 宣称的 64KB=65536 在 UInt8 分段数下不可达，
+一并修正。）超过单帧上限的剪贴板按 Frag Idx / Frag Tot 分段：每段一个独立
+CLIPBOARD 帧、按 Sequence 顺序发送；接收方按 Idx 收齐 Tot 段后按序拼接，
+拼接总长必须等于 Total Size。
+
+网络波动行为（接收方）：
+- **重复段**：静默忽略（按 Idx 去重）
+- **乱序段**：按 Idx 缓冲，到达顺序无关
+- **丢段**：**5 秒无进展**（未收到任何新段）则丢弃整份；有进展则计时器重锚，
+  慢而不断的传输不会被误杀。发送方可整轮重发修复丢段（接收方按 Idx 去重）
+- **孤儿段**：无进行中传输时收到的非零 Idx 段（完成后或超时后的迟到副本）
+  静默丢弃；只有 Idx=0 的段可以开启新一份传输。**因此发送端在可能乱序/丢段
+  的传输上必须使用 ≥2 轮（SendClipboardPasses）**——载荷无传输 ID，单轮纯
+  乱序无法与迟到副本区分
+- **换代**：进行中传输收到 Idx=0 且形状（Tot/MIME/TotalSize）不同的段 → 替换
+- 同一时刻只允许一个剪贴板传输（设备配对为 1:1）。
+
+v1.0 的 "Data Length + 全量 Data" 单帧格式已废除：UInt8 载荷上限下单帧最多
+携带约 250 字节，64KB 目标必须走分段。
 
 #### HEARTBEAT (0x08) — 0 bytes
 
@@ -544,6 +596,12 @@ HID 帧中修饰键使用 **位掩码** 编码：
 ### 6.4 平台特定键码
 
 ```
+注意: 本表各列码制不同，仅供 KeyMapper 层查表参考:
+  macOS 列   = macOS 虚拟键码 (NSEvent keyCode)
+  Windows 列 = Windows/HID 混合标注 (LCtrl 0xE0 为 HID Usage ID)
+  Linux 列   = evdev 键码
+HID 帧内一律使用标准 USB HID Usage ID，修饰键统一用 §6.2 位掩码。
+
  Key             macOS          Windows        Linux (X11/evdev)
 ──────────────────────────────────────────────────────────────
  Command/Win     0x37 (Cmd)     0xE3 (LWin)    0x85 (Super)
@@ -592,12 +650,12 @@ HID 帧中修饰键使用 **位掩码** 编码：
 
 帧封装:
   使用 Length-Prefix Framing:
-  ┌──────────────┬───────────────────┐
-  │ Length (2B)   │ HID Frame (12+N)  │
-  │ UInt16 BE    │                   │
-  └──────────────┴───────────────────┘
+  ┌───────────────────────┬───────────────────┐
+  │ Length (2B) UInt16 BE │ HID Frame (12+N)  │
+  └───────────────────────┴───────────────────┘
 
   Length = HID 帧总长度 (含 header)
+  启用帧 HMAC 时 (§8.3, 建议启用), Length 覆盖 帧体 + 8 字节 HMAC 尾。
   一个 TCP 包可包含多个帧 (批量发送)
 ```
 
@@ -608,14 +666,14 @@ HID 帧中修饰键使用 **位掩码** 编码：
   EtherType:  0xF1A0 (FlowGrid 自定义)
   帧格式:
   ┌──────────────┬──────────┬──────────────┬──────────┬──────────┐
-  │ Dest MAC (6B)│Src MAC(6B)│ EtherType(2B)│ HID Frame│ HMAC(4B) │
+  │ Dest MAC (6B)│Src MAC(6B)│ EtherType(2B)│ HID Frame│ HMAC(8B) │
   │              │          │ 0xF1A0       │          │ 可选      │
   └──────────────┴──────────┴──────────────┴──────────┴──────────┘
 
-  总帧长: 14 + (12+N) + 4 = 30+N 字节
-  典型: 44-46 字节
+  总帧长: 14 + (12+N) + 8 = 34+N 字节
+  典型: 48-50 字节
 
-  HMAC: SHA-256(session_key, frame) 的前 4 字节
+  HMAC: HMAC-SHA256(session_key, frame) 的前 8 字节 (§8.3)
   物理安全场景可省略 HMAC
 
 平台要求:
@@ -624,26 +682,80 @@ HID 帧中修饰键使用 **位掩码** 编码：
   Windows: Npcap/WinPcap (用户态)
 ```
 
-### 7.3 帧分片
+### 7.3 帧分片（v1.1 起废除，由 §5.3 载荷内分段取代）
 
-当 HID 帧超过 MTU (NearLink: 1400B, DirectLink TCP: 不分片) 时：
+v1.0 曾定义"在标准 HID 帧前添加 4 字节分片头 (Frag Seq/Idx/Tot)"的机制。
+该机制与 §5.1 的 UInt8 载荷上限矛盾：合法帧最大 267 字节，在任何现实 MTU
+（NearLink 安全值 1400）下都不会超限，该机制从未有合法触发路径；而真正需要
+分段的 64KB 剪贴板，正确做法是对 CLIPBOARD 载荷本身分段（见 §5.3）。
+
+v1.1 起不再使用本机制。若未来版本提升载荷上限导致单帧可能超过 MTU，须重新
+设计分片并将其纳入本节，且帧头必须携带可辨识标志。
+
+实现层说明：`protocol/fragment.go` 保留了一套已加固的帧分片实现（FragTot
+一致性校验、并发组配额），仅作为未来帧格式扩展的储备，当前任何路径都不使用；
+对应 cgo 导出一并保留以稳定 C ABI。
+
+---
+
+### 7.4 文件传输协议 (v1.1 新增)
+
+方向与能力：发送方必须置 CapabilityFlags.Bit5 (0x20, 文件传输)。每个方向
+同一时刻只有一个传输；发现/配对层保证 1:1 配对。
+
+目标场景：文档与截图等小文件 (≤ 16 MiB)。UInt8 载荷上限决定单帧数据块
+≤ 249 字节，16 MiB 约需 6.7 万帧——更大媒体需要未来加宽长度字段的帧格式。
+
+#### 帧与载荷
 
 ```
-分片帧 (仅在载荷 > MTU - 12 时使用, 如剪贴板同步):
-  在标准 HID 帧前添加分片头:
+FILE_OFFER (0x21) — Sender → Receiver, 发起传输:
+ 0    2    TransferID  UInt16 BE (发送方生成, 方向内唯一, 非 0)
+ 2    8    Size        UInt64 BE (1 .. 16 MiB)
+10    32   SHA-256     整个文件的哈希
+42    1    NameLen M   文件名长度 (UTF-8, 仅文件名, 禁止路径分隔符)
+43    M    Name
 
-  ┌──────────┬──────────┬──────────┬──────────┐
-  │ Frag Seq │ Frag Idx │ Frag Tot │ Standard │
-  │ (UInt16) │ (UInt8)  │ (UInt8)  │ HID Frame│
-  └──────────┴──────────┴──────────┴──────────┘
+FILE_ACK (0x22) — Receiver → Sender:
+ 0    2    TransferID
+ 2    1    Status:  0x00 接受, 0x01 拒绝(忙), 0x02 拒绝(用户拒绝),
+                   0x03 拒绝(超限), 0x04 完成但 SHA-256 不符, 0x05 完成(校验通过)
 
-  Frag Seq:  分片组序号 (递增)
-  Frag Idx:  当前分片索引 (0-based)
-  Frag Tot:  总分片数
+FILE_CHUNK (0x23) — Sender → Receiver:
+ 0    2    TransferID
+ 2    4    ChunkIdx    UInt32 BE (0-based)
+ 6    N    Data        N ≤ 249 (= 255 - 6)
 
-  接收方缓冲所有分片直到 Frag Tot 个全部到达，然后重组。
-  超时: 5 秒未收齐则丢弃整组。
+FILE_ABORT (0x24) — 双向, 任意时刻取消:
+ 0    2    TransferID
+ 2    1    Reason:     0x00 用户取消, 0x01 错误, 0xFF 未知
 ```
+
+#### 状态机
+
+```
+Sender:   OFFER(发) → [等 ACK ≤ 30s, 超时作废]
+            ├─ ACK accepted → CHUNK 流式发送 (Pump) → [等 ACK complete,
+            │    接收方 10s 无进展 → ABORT]
+            ├─ ACK rejected → 结束(带原因)
+            └─ ABORT → 结束
+Receiver: OFFER(收) → 提示用户 (30s 未应答作废)
+            ├─ Accept → ACK accepted → 缓存 CHUNK (10s 无进展失败)
+            │    → 收齐后校验 SHA-256 → ACK complete (不符则 0x04)
+            ├─ Reject → ACK rejected*
+            └─ ABORT(收) → 结束
+```
+
+规则：
+- TransferID 不匹配的帧一律丢弃（普通网络噪声，静默）；重复 CHUNK 按 ChunkIdx 去重，静默忽略。
+- 数据在接收端校验通过前不得落盘到目标位置（先内存/临时文件）。
+- HASH 不符不是传输层错误：以 FILE_ACK 0x04 上报，由用户决定重试。
+- 流控由传输层承担（DTLS/TLS 可靠有序）；NearLink UDP 上建议 Pump 节奏
+  ≤ 5000 帧/秒, 避免突发挤占 HID 帧。
+- **丢段恢复**：发送方 Pump 在一轮发完后自动从头重发，默认额外重发 2 轮
+  （可配置，实现侧 SetResendPasses）；接收方按 ChunkIdx 去重，重发幂等。
+  重发预算耗尽仍未完成 → 由 10s 无进展超时收敛为 transferTimeout。
+- **迟到/未知 CHUNK**（传输已完成或超时后到达）：静默丢弃，不算错误。
 
 ---
 
@@ -694,18 +806,21 @@ Client (Host)                           Server (Target)
 ### 8.3 帧完整性验证
 
 ```
-每帧可选 4 字节 HMAC:
-  hmac = HMAC-SHA256(session_key, 完整帧字节)[0:4]
-       = HMAC-SHA256(session_key, frame_type || seq || timestamp || payload_len || payload)[0:4]
+每帧可选 8 字节 HMAC:
+  hmac = HMAC-SHA256(session_key, 完整帧字节)[0:8]
+       = HMAC-SHA256(session_key, frame_type || seq || timestamp || payload_len || payload)[0:8]
 
   即: 使用标准 HMAC-SHA256 构造 (非 plain SHA-256)，
       输入为完整的 12+N 字节帧 (header + payload)。
+      截断 8 字节 = 64-bit MAC: 在线伪造需 ~2^64 次, 不可行。
+      (v1.0 的 4 字节截断在 1M pps 下约 1 小时可伪造一帧, 已废弃。)
 
 验证流程:
   1. 接收帧后计算 HMAC
-  2. 比较帧尾 4 字节
+  2. 比较帧尾 8 字节
   3. 不匹配或缺失 → 丢弃帧 + 发送 ERROR (0xFF, code=0x10)
   4. 已启用 HMAC 的连接上，缺失 HMAC 尾的帧视为验证失败，不得静默放行
+  5. HMAC 连续验证失败 ≥ 3 次 → 立即断开连接 (防暴破)
 
 何时启用:
   - NearLink (WiFi): 必须启用
@@ -811,12 +926,22 @@ reconnecting ──(超过最大次数)──→ idle
 规则:
   - 序列号从 IDENTIFY.seq_init 开始递增
   - UInt16 范围: 0-65535，到达 65535 后回到 0
-  - 接收方检测丢包: (expected_seq - received_seq) mod 65536 > 1
-  - 丢包时发送 ERROR (code=0x20, message="seq_gap")
+  - 接收方按 UInt16 回绕差值 diff = (received - expected) mod 65536 判定:
+      diff == 0            → 符合预期, expected++
+      0 < diff < 0x8000    → 超前 gap (丢包): 报 ERROR (code=0x20, "seq_gap"),
+                             expected 推进到 received+1
+      diff >= 0x8000       → 重复/过期帧 (含重放): 必须静默丢弃, 不得注入,
+                             也不回 ERROR (防止错误风暴被利用为放大攻击)
+  - 首帧必须等于 seq_init, 不符按 gap 处理并重新同步
 
 重连:
   - 重连后重新交换 seq_init
   - 不沿用旧连接的序列号空间
+
+防重放说明:
+  本机制用于丢包检测与重放丢弃, 不替代传输层安全。NearLink 的 DTLS 1.3
+  自带记录层重放窗口; 未启用 DTLS 的链路 (Raw Ethernet) 上, 本机制 + 帧
+  HMAC 是唯一的重放防线, 二者都必须启用。
 ```
 
 ---
@@ -835,8 +960,8 @@ rules:
   # 基本键映射
   - fromOS: macOS
     toOS: windows
-    fromKey: 0x08    # C
-    toKey: 0x08      # C
+    fromKey: 0x06    # C (HID Usage ID, 见 §6.1)
+    toKey: 0x06      # C
     modifiers: 8     # Cmd → Ctrl (0x08 → 0x01 在运行时转换)
     context: global
 
@@ -913,7 +1038,8 @@ Context 值:
  0x12   invalidPayload          载荷格式错误
  0x13   versionMismatch         协议版本不兼容
  0x14   identifyRejected        身份验证被拒绝
- 0x15   fragmentationTimeout    分片重组超时
+ 0x15   transferTimeout         剪贴板/文件传输超时 (v1.1 由 fragmentationTimeout 更名)
+ 0x16   transferRejected        传输被拒绝或中止 (v1.1 新增；本端错误值，不上线)
  0x20   sequenceGap             序列号间隙 (丢包)
 ──────────────────────────────────────────────────
 ```
@@ -1044,7 +1170,7 @@ Context 值:
 接收方验证失败 → 丢弃帧 + ERROR (0xFF, code=0x10)
 
 Raw Ethernet 帧中 CRC 与 HMAC 共存时的布局:
-  ... │ HID Frame (12+N) │ CRC (4B) │ HMAC (4B) │
+  ... │ HID Frame (12+N) │ CRC (4B) │ HMAC (8B) │
   两者均只覆盖 12+N 帧字节，互不嵌套。
 ```
 

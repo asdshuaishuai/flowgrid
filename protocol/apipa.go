@@ -31,17 +31,19 @@ type APIPASubnet struct {
 }
 
 // GenerateAPIPASubnet picks a random R and returns the matching /30 subnet.
-// Caller must still ARP-probe for conflicts (§3.2.2) and retry on collision.
+// R is drawn with rejection sampling so every value in [1, 254] is equally
+// likely. Caller must still ARP-probe for conflicts (§3.2.2) and retry on
+// collision.
 func GenerateAPIPASubnet() (*APIPASubnet, error) {
 	var b [1]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return nil, fmt.Errorf("read randomness: %w", err)
+	for {
+		if _, err := rand.Read(b[:]); err != nil {
+			return nil, fmt.Errorf("read randomness: %w", err)
+		}
+		if b[0] >= 1 && b[0] <= 254 {
+			return APIPASubnetFromR(b[0]), nil
+		}
 	}
-	r := b[0]
-	if r == 0 || r == 255 {
-		r = 1
-	}
-	return APIPASubnetFromR(r), nil
 }
 
 // APIPASubnetFromR rebuilds the subnet from a persisted R value, enabling the
