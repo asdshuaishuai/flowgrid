@@ -133,7 +133,7 @@ FlowGrid 是一套键鼠共享软件（类 Synergy/Logitech Flow）。**当前�
 ### 目录地图
 ```
 design/PROTOCOL.md        — 协议规范 v1.1（唯一权威，见原则 26）
-design/*.html             — 各平台 UI 高保真原型（未来客户端重写的参考）
+design/unified/           — 统一设计系统（tokens.css/ui.css/app.js + screens/*.html，未来客户端 GUI 的唯一设计来源）
 protocol/                 — Go 协议库（github.com/flowgrid/protocol），一个文件对应规范一节
 protocol/session.go       — FrameStream：会话层发送接缝（seq/时钟/transport sink）
 protocol/clipboard.go     — ClipboardSession：剪贴板收发会话（§5.3 分段/重组/超时）

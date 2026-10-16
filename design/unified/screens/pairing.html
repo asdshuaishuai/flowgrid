@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-plat="macos" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — 添加设备</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../ui.css">
+</head>
+<body>
+
+<div class="devbar" data-devbar></div>
+<div class="dock" data-dock></div>
+
+<div class="panel">
+  <div class="titlebar" data-titlebar="添加设备"></div>
+
+  <div class="content">
+    <!-- 步骤条 -->
+    <div class="steps">
+      <span class="step step--done"><span class="step__num"><span data-icon="check"></span></span>发现</span>
+      <span class="step__line"></span>
+      <span class="step step--on"><span class="step__num">2</span>配对</span>
+      <span class="step__line"></span>
+      <span class="step"><span class="step__num">3</span>完成</span>
+    </div>
+
+    <div class="banner"><span data-icon="info"></span>
+      <span>在新设备上打开 FlowGrid → 添加设备，输入下面的一次性配对码。</span>
+    </div>
+
+    <!-- 配对码 -->
+    <div class="col-3">
+      <span class="t-11 c-3 w-semi" style="text-transform:uppercase;letter-spacing:.3px">一次性配对码</span>
+      <div class="paircode">
+        <span>8</span><span>4</span><span>2</span><span>1</span>
+      </div>
+      <div class="row between">
+        <span class="t-11 c-3">5 分钟后失效</span>
+        <button class="btn btn--sm btn--secondary" data-action="toast" data-msg="配对码已刷新"><span data-icon="refresh"></span>刷新</button>
+      </div>
+    </div>
+
+    <!-- 候选设备 -->
+    <div class="list">
+      <div class="list__group-title">网络中的设备</div>
+      <div class="list__row">
+        <span class="list__label">
+          <span class="row"><span data-icon="laptop"></span>deepin-laptop</span>
+          <span class="list__hint">192.168.x.x · 信号强 · 已发现 8s</span>
+        </span>
+        <button class="btn btn--sm" data-action="pair">发起配对</button>
+      </div>
+      <div class="list__row">
+        <span class="list__label">
+          <span class="row"><span data-icon="monitor"></span>office-pc</span>
+          <span class="list__hint">192.168.x.x · 信号中 · 已发现 24s</span>
+        </span>
+        <button class="btn btn--sm btn--secondary" data-action="pair">发起配对</button>
+      </div>
+      <div class="list__row">
+        <span class="list__label">
+          <span class="row"><span data-icon="tablet"></span>tablet-7f</span>
+          <span class="list__hint">未运行 FlowGrid</span>
+        </span>
+        <span class="badge badge--idle">离线</span>
+      </div>
+    </div>
+
+    <!-- 折叠：手动添加 -->
+    <div class="section">
+      <div class="section__head" data-collapse="manualBody" data-collapsed>
+        <span class="row-3"><span data-icon="lan"></span>手动添加<span class="badge badge--neutral">高级</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="manualBody">
+        <div class="col-3" style="padding:var(--s-3)">
+          <label class="field">
+            <span class="field__label">设备地址</span>
+            <input class="input" placeholder="192.168.1.50:7788">
+          </label>
+          <label class="field">
+            <span class="field__label">备注名</span>
+            <input class="input" placeholder="例如：书房主机">
+          </label>
+          <button class="btn btn--sm btn--secondary" data-action="toast" data-msg="正在连接 192.168.1.50:7788">连接</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel__foot">
+    <button class="btn btn--sm btn--ghost" data-action="close">取消</button>
+    <span class="row-3">
+      <span class="t-11 c-3">第 2 步 / 共 3 步</span>
+      <a class="btn btn--sm" href="connections.html">完成</a>
+    </span>
+  </div>
+</div>
+
+<div class="pager">
+  <a href="clipboard.html"><span data-icon="clipboard"></span>剪贴板</a>
+  <a href="files.html"><span data-icon="file"></span>文件传输</a>
+  <a href="tray.html"><span data-icon="link"></span>托盘浮层</a>
+  <a href="connections.html"><span data-icon="devices"></span>设备与连接</a>
+  <a href="settings.html"><span data-icon="settings"></span>设置</a>
+  <a href="../index.html"><span data-icon="grid"></span>总览</a>
+</div>
+
+<script src="../app.js"></script>
+</body>
+</html>

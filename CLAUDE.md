@@ -15,12 +15,8 @@ protocol/                 — Go protocol library (github.com/flowgrid/protocol)
                             incl. session layer: session.go / clipboard.go / filetransfer.go
 design/
 ├── PROTOCOL.md              — Canonical protocol specification (v1.1), the source of truth for all wire formats
-├── D2link.html              — Product design bluebook: architecture, competitive analysis, 5-layer model
-├── index.html               — Design system landing page (colors, typography, spacing tokens)
-├── mac/DEVELOPMENT.md       — macOS implementation spec (Swift 6 + SwiftUI)
-├── win/DEVELOPMENT.md       — Windows implementation spec (C# / .NET 8 + WinUI 3)
-├── kde/DEVELOPMENT.md       — Linux/KDE implementation spec (C++17 + Qt 6 / Kirigami)
-├── mac/*.html, win/*.html, kde/*.html — UI mockups per platform
+└── unified/                 — Unified UI design system (tokens.css / ui.css / app.js + screens/*.html),
+                               the single design source for the upcoming client rewrite
 ```
 
 ## Dual Protocol Architecture

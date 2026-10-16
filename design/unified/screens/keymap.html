@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-plat="macos" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — 键位映射</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../ui.css">
+</head>
+<body>
+
+<div class="devbar" data-devbar></div>
+<div class="dock" data-dock></div>
+
+<div class="panel">
+  <div class="titlebar" data-titlebar="键位映射"></div>
+
+  <div class="content">
+    <div class="row between">
+      <span class="row-3">
+        <span class="badge">3 条生效</span>
+        <span class="t-11 c-3">按应用自动切换</span>
+      </span>
+      <button class="btn" data-action="toast" data-msg="已新增映射规则"><span data-icon="plus"></span>新增规则</button>
+    </div>
+
+    <!-- 全局映射 -->
+    <div class="section">
+      <div class="section__head" data-collapse="globalBody">
+        <span class="row-3"><span data-icon="keyboard"></span>全局<span class="badge">3 条</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="globalBody">
+        <div class="mapping">
+          <div class="keypair">
+            <span class="keys"><span class="key">Ctrl</span><span class="arrow"><span data-icon="arrowRight"></span></span><span class="key">⌘</span></span>
+            <span class="t-11 c-3">复制 / 粘贴</span>
+          </div>
+          <div class="keypair">
+            <span class="keys"><span class="key">Win</span><span class="arrow"><span data-icon="arrowRight"></span></span><span class="key">⌥</span></span>
+            <span class="t-11 c-3">系统快捷键</span>
+          </div>
+          <div class="keypair">
+            <span class="keys"><span class="key">Alt</span><span class="arrow"><span data-icon="arrowRight"></span></span><span class="key">Ctrl</span></span>
+            <span class="t-11 c-3">终端应用</span>
+          </div>
+          <div class="keypair">
+            <span class="keys"><span class="key">Ctrl</span><span class="arrow"><span data-icon="arrowRight"></span></span><span class="key">Ctrl</span></span>
+            <span class="t-11 c-3">直通（不转换）</span>
+          </div>
+          <div class="keypair">
+            <span class="keys"><span class="key">⌘</span><span class="arrow"><span data-icon="arrowRight"></span></span><span class="key">Ctrl</span></span>
+            <span class="t-11 c-3">反向（回切 Windows）</span>
+          </div>
+          <div class="keypair">
+            <span class="keys"><span class="key key--ghost">未设置</span><span class="arrow"><span data-icon="arrowRight"></span></span><span class="key key--ghost">未设置</span></span>
+            <span class="t-11 c-3">点击添加</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 应用级覆盖 -->
+    <div class="section">
+      <div class="section__head" data-collapse="appBody">
+        <span class="row-3"><span data-icon="monitor"></span>应用覆盖<span class="badge badge--neutral">2 条</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="appBody">
+        <div class="list" style="border:0;border-radius:0">
+          <div class="list__row">
+            <span class="list__label">
+              <span class="row"><span data-icon="code"></span>Visual Studio Code</span>
+              <span class="list__hint">Ctrl 直通，禁用 ⌘ 转换</span>
+            </span>
+            <span class="row-3">
+              <span class="switch" aria-checked="true" data-label="VS Code 覆盖"></span>
+              <button class="icon-btn" data-action="toast" data-msg="已进入编辑态"><span data-icon="edit"></span></button>
+            </span>
+          </div>
+          <div class="list__row">
+            <span class="list__label">
+              <span class="row"><span data-icon="play"></span>游戏（全屏时）</span>
+              <span class="list__hint">停用全部映射，避免误触</span>
+            </span>
+            <span class="row-3">
+              <span class="switch" aria-checked="true" data-label="游戏模式"></span>
+              <button class="icon-btn" data-action="toast" data-msg="已进入编辑态"><span data-icon="edit"></span></button>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 冲突检测 -->
+    <div class="banner banner--warn"><span data-icon="warn"></span>
+      <span>「Win → ⌥」与系统聚焦快捷键冲突，仅在非全屏窗口下生效。</span>
+    </div>
+
+    <!-- 高级 -->
+    <div class="section">
+      <div class="section__head" data-collapse="advBody" data-collapsed>
+        <span class="row-3"><span data-icon="settings"></span>高级<span class="badge badge--neutral">2 项</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="advBody">
+        <div class="list" style="border:0;border-radius:0">
+          <div class="list__row">
+            <span class="list__label">
+              <span>按键重复率跟随目标端</span>
+              <span class="list__hint">使用被控设备的系统重复设置</span>
+            </span>
+            <span class="switch" aria-checked="false" data-label="重复率跟随"></span>
+          </div>
+          <div class="list__row">
+            <span class="list__label">
+              <span>发送原始扫描码</span>
+              <span class="list__hint">游戏与远程桌面场景更精确</span>
+            </span>
+            <span class="switch" aria-checked="false" data-label="原始扫描码"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel__foot">
+    <span class="row-3 t-11 c-3"><span data-icon="info"></span>规则按从上到下顺序匹配</span>
+    <span class="row-3">
+      <button class="btn btn--sm btn--secondary" data-action="toast" data-msg="已恢复默认映射">恢复默认</button>
+      <button class="btn btn--sm" data-action="toast" data-msg="映射已保存">保存</button>
+    </span>
+  </div>
+</div>
+
+<div class="pager">
+  <a href="clipboard.html"><span data-icon="clipboard"></span>剪贴板</a>
+  <a href="files.html"><span data-icon="file"></span>文件传输</a>
+  <a href="tray.html"><span data-icon="link"></span>托盘浮层</a>
+  <a href="connections.html"><span data-icon="devices"></span>设备与连接</a>
+  <a href="settings.html"><span data-icon="settings"></span>设置</a>
+  <a href="../index.html"><span data-icon="grid"></span>总览</a>
+</div>
+
+<script src="../app.js"></script>
+</body>
+</html>

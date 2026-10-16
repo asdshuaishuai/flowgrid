@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-plat="macos" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — 剪贴板</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../ui.css">
+</head>
+<body>
+
+<div class="devbar" data-devbar></div>
+<div class="dock" data-dock></div>
+
+<!-- 520px 浮板：宽度、阴影、层级沿用上一版 -->
+<div class="panel">
+  <div class="titlebar" data-titlebar="剪贴板" data-right="<span class='status-pill'><span class='dot dot--pulse'></span>同步中</span>"></div>
+
+  <div class="content">
+
+    <!-- 当前剪贴板内容 -->
+    <div class="preview">
+      <div class="preview__head">
+        <span class="row-3">
+          <span class="clip__type"><span data-icon="type"></span></span>
+          <span class="t-12 w-semi">当前剪贴板</span>
+          <span class="badge badge--neutral mono">text/plain</span>
+        </span>
+        <span class="row-2 t-11 c-3"><span data-icon="laptop"></span>来自 MacBook Pro</span>
+      </div>
+      <div class="preview__body">cargo build --release --target x86_64-unknown-linux-gnu</div>
+      <div class="preview__foot">
+        <span class="row-3"><span data-icon="info"></span>62 B · 单帧发送 · 未分段</span>
+        <span class="row-2">
+          <button class="btn btn--sm btn--ghost" data-action="toast" data-msg="已写入本地剪贴板"><span data-icon="copy"></span>写入本地</button>
+          <button class="btn btn--sm btn--secondary" data-action="toast" data-msg="已推送到 Windows 11 Desktop"><span data-icon="arrowRight"></span>推送</button>
+        </span>
+      </div>
+    </div>
+
+    <!-- 过滤 + 搜索 -->
+    <div class="row between">
+      <span class="seg" data-filter>
+        <button aria-pressed="true" data-kind="all">全部</button>
+        <button data-kind="text">文本</button>
+        <button data-kind="code">代码</button>
+        <button data-kind="link">链接</button>
+        <button data-kind="image">图片</button>
+      </span>
+      <input class="input" id="clipSearch" placeholder="搜索历史" style="width:150px">
+    </div>
+
+    <!-- 历史记录 -->
+    <div class="list">
+      <div class="list__group-title">同步历史 · 保留最近 50 条</div>
+
+      <div class="list__row" data-kind="text" data-text="cargo build --release --target x86_64-unknown-linux-gnu">
+        <span class="row-3 grow">
+          <span class="clip__type"><span data-icon="type"></span></span>
+          <span class="list__label">
+            <span class="ellipsis">cargo build --release --target x86_64-unknown-linux-gnu</span>
+            <span class="list__hint">MacBook Pro → 本机 · 62 B · text/plain</span>
+          </span>
+        </span>
+        <span class="row-2">
+          <span class="t-11 c-3">12s</span>
+          <button class="icon-btn" data-action="toast" data-msg="已写入本地剪贴板" title="写入本地"><span data-icon="copy"></span></button>
+        </span>
+      </div>
+
+      <div class="list__row" data-kind="code" data-text="fn handle_frame">
+        <span class="row-3 grow">
+          <span class="clip__type"><span data-icon="code"></span></span>
+          <span class="list__label">
+            <span class="ellipsis">fn handle_frame(buf: &amp;[u8]) -&gt; Result&lt;()&gt;</span>
+            <span class="list__hint">Windows 11 Desktop → 本机 · 44 B · text/plain</span>
+          </span>
+        </span>
+        <span class="row-2">
+          <span class="t-11 c-3">1m</span>
+          <button class="icon-btn" data-action="toast" data-msg="已写入本地剪贴板" title="写入本地"><span data-icon="copy"></span></button>
+        </span>
+      </div>
+
+      <div class="list__row" data-kind="link" data-text="https://example.internal">
+        <span class="row-3 grow">
+          <span class="clip__type"><span data-icon="link"></span></span>
+          <span class="list__label">
+            <span class="ellipsis">https://example.internal/review/4821</span>
+            <span class="list__hint">Linux Workstation → 本机 · 38 B · text/uri-list</span>
+          </span>
+        </span>
+        <span class="row-2">
+          <span class="t-11 c-3">4m</span>
+          <button class="icon-btn" data-action="toast" data-msg="已写入本地剪贴板" title="写入本地"><span data-icon="copy"></span></button>
+        </span>
+      </div>
+
+      <div class="list__row" data-kind="image" data-text="screenshot">
+        <span class="row-3 grow">
+          <span class="clip__type"><span data-icon="image"></span></span>
+          <span class="list__label">
+            <span class="ellipsis">screenshot-2026-10-16.png</span>
+            <span class="list__hint">Windows 11 Desktop → 本机 · 41 KB · image/png · 38 段</span>
+          </span>
+        </span>
+        <span class="row-2">
+          <span class="t-11 c-3">9m</span>
+          <button class="icon-btn" data-action="toast" data-msg="图片已写入本地剪贴板" title="写入本地"><span data-icon="copy"></span></button>
+        </span>
+      </div>
+
+      <div class="list__row" data-kind="image" data-text="oversize">
+        <span class="row-3 grow">
+          <span class="clip__type"><span data-icon="warn"></span></span>
+          <span class="list__label">
+            <span class="ellipsis">录屏-preview.mov</span>
+            <span class="list__hint">1.4 MB · 超出单条上限，未同步</span>
+          </span>
+        </span>
+        <span class="row-2">
+          <span class="badge badge--warn">超限</span>
+          <span class="t-11 c-3">14m</span>
+        </span>
+      </div>
+    </div>
+
+    <!-- 同步设置 -->
+    <div class="section">
+      <div class="section__head" data-collapse="clipSetBody">
+        <span class="row-3"><span data-icon="settings"></span>同步设置<span class="badge badge--neutral">4 项</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="clipSetBody">
+        <div class="col-3" style="padding:var(--s-3)">
+          <div class="row between">
+            <span class="t-12">跨端同步</span>
+            <span class="switch" aria-checked="true" data-label="跨端同步"></span>
+          </div>
+          <div class="row between">
+            <span class="t-12">同步图片</span>
+            <span class="switch" aria-checked="true" data-label="同步图片"></span>
+          </div>
+          <div class="row between">
+            <span class="t-12">忽略密码管理器内容</span>
+            <span class="switch" aria-checked="true" data-label="忽略密码管理器内容"></span>
+          </div>
+          <div class="row between">
+            <span class="t-12">接收后自动写入本地</span>
+            <span class="switch" aria-checked="false" data-label="接收后自动写入本地"></span>
+          </div>
+          <div class="banner banner--neutral">
+            <span data-icon="info"></span>
+            <span>单条上限 <b>63,240 B</b>（协议 §5.3 分段上限），超出不同步；5 秒内未收齐则整份丢弃；同一时刻仅允许一路传输。</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel__foot">
+    <span class="row-3 t-11 c-3"><span data-icon="shield"></span>端到端加密 · 不落盘</span>
+    <span class="row-3">
+      <button class="btn btn--sm btn--secondary" data-action="toast" data-msg="已清空同步历史"><span data-icon="trash"></span>清空历史</button>
+      <button class="btn btn--sm btn--ghost" data-action="close">关闭</button>
+    </span>
+  </div>
+</div>
+
+<div class="pager">
+  <a href="tray.html"><span data-icon="link"></span>托盘浮层</a>
+  <a href="connections.html"><span data-icon="devices"></span>设备与连接</a>
+  <a href="files.html"><span data-icon="file"></span>文件传输</a>
+  <a href="settings.html"><span data-icon="settings"></span>设置</a>
+  <a href="../index.html"><span data-icon="grid"></span>总览</a>
+</div>
+
+<script src="../app.js"></script>
+<script>
+  // 类型过滤 + 关键字搜索：沿用上一版 150ms 微交互节奏，不做动画
+  (function () {
+    var seg = document.querySelector('[data-filter]');
+    var input = document.getElementById('clipSearch');
+    var rows = [].slice.call(document.querySelectorAll('.list__row[data-kind]'));
+    var kind = 'all';
+
+    function apply() {
+      var q = (input.value || '').trim().toLowerCase();
+      rows.forEach(function (r) {
+        var okKind = kind === 'all' || r.dataset.kind === kind;
+        var okText = !q || (r.dataset.text || '').toLowerCase().indexOf(q) >= 0
+          || r.textContent.toLowerCase().indexOf(q) >= 0;
+        r.hidden = !(okKind && okText);
+      });
+    }
+
+    if (seg) {
+      seg.addEventListener('click', function (e) {
+        var b = e.target.closest('button');
+        if (!b) return;
+        seg.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-pressed', 'false'); });
+        b.setAttribute('aria-pressed', 'true');
+        kind = b.dataset.kind;
+        apply();
+      });
+    }
+    if (input) input.addEventListener('input', apply);
+  })();
+</script>
+</body>
+</html>

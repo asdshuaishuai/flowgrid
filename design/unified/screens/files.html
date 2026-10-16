@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-plat="macos" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — 文件传输</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../ui.css">
+</head>
+<body>
+
+<div class="devbar" data-devbar></div>
+<div class="dock" data-dock></div>
+
+<!-- 520px 浮板：宽度、阴影、层级沿用上一版 -->
+<div class="panel">
+  <div class="titlebar" data-titlebar="文件传输" data-right="<span class='status-pill'><span class='dot dot--pulse'></span>1 项进行中</span>"></div>
+
+  <div class="content">
+
+    <!-- 进行中 -->
+    <div class="list">
+      <div class="list__group-title">进行中</div>
+      <div class="xfer">
+        <span class="xfer__icon"><span data-icon="upload"></span></span>
+        <span class="xfer__body">
+          <span class="xfer__top">
+            <span class="xfer__name">flowgrid-0.9.2-x86_64.AppImage</span>
+            <span class="xfer__pct" data-pct>68%</span>
+          </span>
+          <span class="bar"><span class="bar__fill" data-fill style="width:68%"></span></span>
+          <span class="xfer__meta">
+            <span>12.4 MB</span>
+            <span>·</span>
+            <span class="row-2"><span data-icon="arrowRight"></span>Windows 11 Desktop</span>
+            <span>·</span>
+            <span data-speed>1.8 MB/s</span>
+            <span>·</span>
+            <span data-eta>剩余 4s</span>
+          </span>
+        </span>
+        <span class="xfer__side">
+          <button class="icon-btn" data-action="toast" data-msg="已取消该传输" title="取消"><span data-icon="close"></span></button>
+        </span>
+      </div>
+      <div class="xfer">
+        <span class="xfer__icon"><span data-icon="download"></span></span>
+        <span class="xfer__body">
+          <span class="xfer__top">
+            <span class="xfer__name">keymap-tables.rs</span>
+            <span class="xfer__pct" data-pct>24%</span>
+          </span>
+          <span class="bar"><span class="bar__fill" data-fill style="width:24%"></span></span>
+          <span class="xfer__meta">
+            <span>18 KB</span>
+            <span>·</span>
+            <span class="row-2"><span data-icon="arrowRight"></span>来自 Linux Workstation</span>
+            <span>·</span>
+            <span data-speed>146 KB/s</span>
+            <span>·</span>
+            <span data-eta>剩余 1s</span>
+          </span>
+        </span>
+        <span class="xfer__side">
+          <button class="icon-btn" data-action="toast" data-msg="已取消该传输" title="取消"><span data-icon="close"></span></button>
+        </span>
+      </div>
+    </div>
+
+    <!-- 发送入口 -->
+    <div class="drop" data-action="toast" data-msg="已打开文件选择器">
+      <span data-icon="upload"></span>
+      <span class="t-12 w-semi">拖入文件，或点击选择</span>
+      <span class="drop__hint">单文件 1 B – 16 MiB · 文件名不含路径分隔符</span>
+    </div>
+
+    <!-- 历史记录 -->
+    <div class="list">
+      <div class="list__group-title">传输记录</div>
+
+      <div class="list__row">
+        <span class="row-3 grow">
+          <span class="xfer__icon xfer__icon--ok"><span data-icon="check"></span></span>
+          <span class="list__label">
+            <span class="ellipsis">design-spec-v3.pdf</span>
+            <span class="list__hint">收到 · Linux Workstation · 2.1 MB · SHA-256 已校验</span>
+          </span>
+        </span>
+        <span class="row-2">
+          <span class="badge badge--ok">完成</span>
+          <span class="t-11 c-3">3m</span>
+        </span>
+      </div>
+
+      <div class="list__row">
+        <span class="row-3 grow">
+          <span class="xfer__icon xfer__icon--ok"><span data-icon="check"></span></span>
+          <span class="list__label">
+            <span class="ellipsis">protocol-notes.md</span>
+            <span class="list__hint">已发送 · Windows 11 Desktop · 24 KB</span>
+          </span>
+        </span>
+        <span class="row-2">
+          <span class="badge badge--ok">完成</span>
+          <span class="t-11 c-3">12m</span>
+        </span>
+      </div>
+
+      <div class="list__row">
+        <span class="row-3 grow">
+          <span class="xfer__icon xfer__icon--warn"><span data-icon="close"></span></span>
+          <span class="list__label">
+            <span class="ellipsis">salary-2026.xlsx</span>
+            <span class="list__hint">来自 Windows 11 Desktop · 640 KB · 对端已拒绝</span>
+          </span>
+        </span>
+        <span class="row-2">
+          <span class="badge badge--warn">已拒绝</span>
+          <span class="t-11 c-3">28m</span>
+        </span>
+      </div>
+
+      <div class="list__row">
+        <span class="row-3 grow">
+          <span class="xfer__icon xfer__icon--danger"><span data-icon="warn"></span></span>
+          <span class="list__label">
+            <span class="ellipsis">build-artifact.tar.zst</span>
+            <span class="list__hint">来自 Linux Workstation · 3.1 MB · SHA-256 不符，未交付</span>
+          </span>
+        </span>
+        <span class="row-2">
+          <span class="badge badge--danger">校验失败</span>
+          <span class="t-11 c-3">41m</span>
+        </span>
+      </div>
+
+      <div class="list__row">
+        <span class="row-3 grow">
+          <span class="xfer__icon xfer__icon--danger"><span data-icon="warn"></span></span>
+          <span class="list__label">
+            <span class="ellipsis">ubuntu-24.04-desktop.iso</span>
+            <span class="list__hint">4.2 GB · 超出 16 MiB 上限，未在链路上传输</span>
+          </span>
+        </span>
+        <span class="row-2">
+          <span class="badge badge--danger">超限</span>
+          <span class="t-11 c-3">32m</span>
+        </span>
+      </div>
+
+      <div class="list__row">
+        <span class="row-3 grow">
+          <span class="xfer__icon xfer__icon--warn"><span data-icon="info"></span></span>
+          <span class="list__label">
+            <span class="ellipsis">patch.diff</span>
+            <span class="list__hint">已发送 · Windows 11 Desktop · 92 KB · 10s 无进展</span>
+          </span>
+        </span>
+        <span class="row-2">
+          <span class="badge badge--warn">超时</span>
+          <span class="t-11 c-3">1h</span>
+        </span>
+      </div>
+    </div>
+
+    <!-- 接收设置 -->
+    <div class="section">
+      <div class="section__head" data-collapse="fileSetBody">
+        <span class="row-3"><span data-icon="settings"></span>接收设置<span class="badge badge--neutral">自动接收已开</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="fileSetBody">
+        <div class="col-3" style="padding:var(--s-3)">
+          <div class="row between">
+            <span class="t-12">自动接收来自已配对设备的文件</span>
+            <span class="switch" aria-checked="true" data-label="自动接收"></span>
+          </div>
+          <div class="row between">
+            <span class="t-12">收到前先询问</span>
+            <span class="switch" aria-checked="false" data-label="收到前先询问"></span>
+          </div>
+          <div class="row between">
+            <span class="t-12">接收目录</span>
+            <span class="row-2">
+              <input class="input" style="width:190px" value="~/Downloads/FlowGrid">
+              <button class="btn btn--sm btn--secondary" data-action="toast" data-msg="已更改接收目录"><span data-icon="folder"></span>更改</button>
+            </span>
+          </div>
+          <div class="row between">
+            <span class="t-12">清空传输记录</span>
+            <span class="switch" aria-checked="false" data-label="退出时清空记录"></span>
+          </div>
+          <div class="banner banner--neutral">
+            <span data-icon="info"></span>
+            <span>单文件 1 B – <b>16 MiB</b>，分块 249 B；提议 30 秒内未确认即失效，传输中 10 秒无进展判失败；校验通过前不写入目标路径；同一方向同时仅允许一路。</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel__foot">
+    <span class="row-3 t-11 c-3"><span data-icon="shield"></span>SHA-256 校验后交付</span>
+    <span class="row-3">
+      <button class="btn btn--sm btn--secondary" data-action="toast" data-msg="已打开接收目录"><span data-icon="folder"></span>接收目录</button>
+      <button class="btn btn--sm btn--ghost" data-action="close">关闭</button>
+    </span>
+  </div>
+</div>
+
+<div class="pager">
+  <a href="tray.html"><span data-icon="link"></span>托盘浮层</a>
+  <a href="connections.html"><span data-icon="devices"></span>设备与连接</a>
+  <a href="clipboard.html"><span data-icon="clipboard"></span>剪贴板</a>
+  <a href="settings.html"><span data-icon="settings"></span>设置</a>
+  <a href="../index.html"><span data-icon="grid"></span>总览</a>
+</div>
+
+<script src="../app.js"></script>
+<script>
+  // 进行中传输推进：仅演示进度手感，节奏沿用上一版微交互量级
+  (function () {
+    var fills = [].slice.call(document.querySelectorAll('[data-fill]'));
+    if (!fills.length) return;
+    var timer = setInterval(function () {
+      var alive = false;
+      fills.forEach(function (f, i) {
+        var pctEl = f.closest('.xfer').querySelector('[data-pct]');
+        var cur = parseFloat(f.style.width) || 0;
+        if (cur >= 100) return;
+        alive = true;
+        var next = Math.min(100, cur + (i === 0 ? 1.4 : 3.2));
+        f.style.width = next.toFixed(1) + '%';
+        if (pctEl) pctEl.textContent = Math.round(next) + '%';
+        var eta = f.closest('.xfer').querySelector('[data-eta]');
+        if (eta && next < 100) eta.textContent = '剩余 ' + Math.max(1, Math.round((100 - next) / 8)) + 's';
+        if (next >= 100) {
+          f.classList.add('bar__fill--ok');
+          if (eta) eta.textContent = '校验中';
+        }
+      });
+      if (!alive) clearInterval(timer);
+    }, 700);
+  })();
+</script>
+</body>
+</html>

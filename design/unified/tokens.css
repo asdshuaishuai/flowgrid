@@ -1,0 +1,245 @@
+/* ==========================================================================
+   FlowGrid Design Tokens v2
+   --------------------------------------------------------------------------
+   三层结构：
+     L1 Primitive 纯色阶，无语义，任何组件都不得直接引用
+     L2 Semantic   全局唯一语义令牌，light/dark 双值 —— 只有组件层消费
+     L3 Platform   四平台各自映射主色与字体族 —— 只覆盖 L2 的少数值
+
+   窗口几何（第 0 节）是从上一版逐像素搬过来的常量，属于「形态」，不可改动。
+   ========================================================================== */
+
+/* ── 0. 窗口几何：沿用上一版，不得改动 ───────────────────────────────── */
+:root {
+  /* 上一版三平台浮板宽度完全一致 = 520px */
+  --w-panel:      520px;
+  /* 上一版托盘宽度 280(win/kde) ~ 320(mac)，取中值统一 */
+  --w-tray:       300px;
+  /* 上一版 mac/win 标题栏 34px，kde 30px */
+  --h-titlebar:   34px;
+  /* 上一版内容边距 14px */
+  --pad-content:  14px;
+  /* 上一版 max-height: calc(100vh - 48px) */
+  --panel-max-h:  calc(100vh - 48px);
+  /* 上一版按钮高度 28px、图标按钮 26px */
+  --h-control:    28px;
+  --h-iconbtn:    26px;
+  /* 上一版开关 34×18 ~ 36×20 */
+  --w-switch:     36px;
+  --h-switch:     20px;
+  --d-switch:     16px;   /* 滑块直径 */
+
+  /* 阴影：上一版原值，逐字保留 */
+  --shadow-panel: 0 18px 42px rgba(24, 30, 44, 0.14);
+  --shadow-tray:  0 16px 32px rgba(15, 23, 42, 0.16);
+  --shadow-pop:   0 10px 26px rgba(15, 23, 42, 0.22);
+  --shadow-bar:   0 1px 3px  rgba(15, 23, 42, 0.18);
+  /* 卡片浮起：hover 时用，比 panel 阴影轻一档 */
+  --shadow-lift:  0 2px 10px rgba(16, 24, 40, .08);
+
+  /* 动效：上一版节奏 (.15s 微交互 / .2~.25s 入场 / .3s Toast) */
+  --ease-enter: cubic-bezier(.16, 1, .3, 1);   /* 上一版 macOS 入场曲线 */
+  --ease-state: cubic-bezier(.4, 0, .2, 1);    /* 上一版 transition:all .15s */
+  --dur-micro:  150ms;
+  --dur-enter:  220ms;
+  --dur-toast:  300ms;
+  --dur-pulse:  2s;
+}
+
+/* ── 1. Primitive ───────────────────────────────────────────────────── */
+/* 略带冷调的石墨灰阶，比纯中性灰更耐看；层级间距按感知均匀切分 */
+:root {
+  --gray-25:  #fcfcfd;  --gray-50:  #f7f8fa;  --gray-100: #f0f2f5;
+  --gray-200: #e6e9ee;  --gray-300: #d5d9e0;  --gray-400: #b1b8c4;
+  --gray-500: #8b93a0;  --gray-600: #626b79;  --gray-700: #454e5c;
+  --gray-800: #2c343f;  --gray-900: #171b21;  --gray-950: #10131a;
+}
+
+/* ── 2. Semantic — Light ────────────────────────────────────────────── */
+:root,
+[data-theme="light"] {
+  --fg-canvas:  #eaedf2;
+
+  --fg-surface:      #ffffff;
+  --fg-surface-2:    var(--gray-50);
+  --fg-surface-3:    var(--gray-100);
+  --fg-surface-hi:   rgba(16, 24, 40, .038);
+  --fg-surface-press: rgba(16, 24, 40, .075);
+
+  /* 边框比上一版更克制：线越淡，界面越显精致，同时保证 1px 仍可辨 */
+  --fg-line-1: rgba(16, 24, 40, .07);
+  --fg-line-2: rgba(16, 24, 40, .12);
+  --fg-line-3: rgba(16, 24, 40, .22);
+  --fg-hairline: rgba(16, 24, 40, .055);
+
+  /* 浮板顶部内高光：原生窗口都有的 1px 亮边，让浮板真正「浮」起来 */
+  --fg-edge-hi: rgba(255, 255, 255, .75);
+
+  /* 文字三层拉开对比：主文更深、次级更柔，层级靠明度而非字号 */
+  --fg-text-1: #171b21;
+  --fg-text-2: #5f6875;
+  --fg-text-3: #8b93a0;
+
+  /* 语义色：每色 4 个层级 + 三元组便于推导 alpha */
+  --c-ok-rgb:     16 163 111;   --c-ok-solid: #10a36f;   --c-ok-text: #0a7d55;
+  --c-warn-rgb:   217 119 6;    --c-warn-solid: #d97706; --c-warn-text: #a35a04;
+  --c-danger-rgb: 220 38 38;    --c-danger-solid: #dc2626; --c-danger-text: #b91c1c;
+  --c-idle-rgb:   138 147 161;  --c-idle-solid: #8a93a1; --c-idle-text: #6b7480;
+
+  --fg-ok-soft:     rgb(var(--c-ok-rgb) / .12);
+  --fg-ok-line:     rgb(var(--c-ok-rgb) / .28);
+  --fg-warn-soft:   rgb(var(--c-warn-rgb) / .12);
+  --fg-warn-line:   rgb(var(--c-warn-rgb) / .30);
+  --fg-danger-soft: rgb(var(--c-danger-rgb) / .11);
+  --fg-danger-line: rgb(var(--c-danger-rgb) / .28);
+  --fg-idle-soft:   rgb(var(--c-idle-rgb) / .13);
+  --fg-idle-line:   rgb(var(--c-idle-rgb) / .26);
+
+  /* 上一版切换设备遮罩原值 */
+  --fg-overlay: rgba(0, 0, 0, .15);
+  --fg-toast-bg: rgba(28, 34, 44, .94);
+  --fg-toast-fg: #ffffff;
+
+  /* 实色按钮的 hover / press：比 filter:brightness() 更可控，深浅主题各自取方向 */
+  --fg-accent-hover: color-mix(in srgb, var(--fg-accent) 91%, #000);
+  --fg-accent-press: color-mix(in srgb, var(--fg-accent) 84%, #000);
+}
+
+/* ── 2b. Semantic — Dark ────────────────────────────────────────────── */
+[data-theme="dark"] {
+  /* 衬底压得更深，浮板与桌面拉开距离 */
+  --fg-canvas:  #101215;
+
+  --fg-surface:      #1e2127;
+  --fg-surface-2:    #252932;
+  --fg-surface-3:    #2d323c;
+  --fg-surface-hi:   rgba(255, 255, 255, .055);
+  --fg-surface-press: rgba(255, 255, 255, .095);
+
+  --fg-line-1: rgba(255, 255, 255, .07);
+  --fg-line-2: rgba(255, 255, 255, .13);
+  --fg-line-3: rgba(255, 255, 255, .22);
+  --fg-hairline: rgba(255, 255, 255, .05);
+
+  --fg-edge-hi: rgba(255, 255, 255, .07);
+
+  --fg-text-1: #e9edf2;
+  --fg-text-2: #a2aab6;
+  --fg-text-3: #6e7783;
+
+  --c-ok-solid: #2cc487;     --c-ok-text: #5fd7a5;
+  --c-warn-solid: #f0a63c;   --c-warn-text: #f5c078;
+  --c-danger-solid: #f2555a; --c-danger-text: #ff8b8f;
+  --c-idle-solid: #7b8492;   --c-idle-text: #9aa3b0;
+
+  --fg-ok-soft:     rgb(var(--c-ok-rgb) / .17);
+  --fg-ok-line:     rgb(var(--c-ok-rgb) / .34);
+  --fg-warn-soft:   rgb(var(--c-warn-rgb) / .17);
+  --fg-warn-line:   rgb(var(--c-warn-rgb) / .34);
+  --fg-danger-soft: rgb(var(--c-danger-rgb) / .16);
+  --fg-danger-line: rgb(var(--c-danger-rgb) / .34);
+  --fg-idle-soft:   rgb(var(--c-idle-rgb) / .18);
+  --fg-idle-line:   rgb(var(--c-idle-rgb) / .32);
+
+  --fg-overlay: rgba(0, 0, 0, .42);
+  --fg-toast-bg: rgba(46, 51, 60, .96);
+  --fg-toast-fg: #f2f5f8;
+
+  /* 深色主题下 hover 向亮走，避免越点越闷 */
+  --fg-accent-hover: color-mix(in srgb, var(--fg-accent) 88%, #fff);
+  --fg-accent-press: color-mix(in srgb, var(--fg-accent) 76%, #fff);
+
+  --shadow-panel: 0 18px 42px rgba(0, 0, 0, .48);
+  --shadow-tray:  0 16px 32px rgba(0, 0, 0, .44);
+  --shadow-pop:   0 10px 26px rgba(0, 0, 0, .52);
+  --shadow-bar:   0 1px 3px  rgba(0, 0, 0, .40);
+  --shadow-lift:  0 2px 10px rgba(0, 0, 0, .30);
+}
+
+/* accent 由平台层提供三元组，语义层统一推导四个层级 */
+:root {
+  --fg-accent:      rgb(var(--c-accent-rgb));
+  --fg-accent-text: rgb(var(--c-accent-rgb));
+  --fg-accent-soft: rgb(var(--c-accent-rgb) / .12);
+  --fg-accent-line: rgb(var(--c-accent-rgb) / .30);
+  --fg-accent-hi:   rgb(var(--c-accent-rgb) / .18);
+  --fg-on-accent:   #ffffff;
+}
+
+/* ── 3. Platform：只映射主色与字体族，其余一律继承 ──────────────────── */
+
+/* macOS */
+[data-plat="macos"] {
+  --font-ui: -apple-system, "SF Pro Text", "SF Pro Display", "PingFang SC", "Noto Sans SC", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
+  --c-accent-rgb: 0 122 255;      /* 上一版 #007aff */
+}
+[data-plat="macos"][data-theme="dark"] { --c-accent-rgb: 10 132 255; }
+
+/* Windows */
+[data-plat="windows"] {
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Noto Sans SC", sans-serif;
+  --font-mono: "Cascadia Mono", ui-monospace, Consolas, monospace;
+  --c-accent-rgb: 8 120 216;      /* 上一版 #0878d8 */
+}
+[data-plat="windows"][data-theme="dark"] { --c-accent-rgb: 74 158 255; }
+
+/* KDE Plasma */
+[data-plat="kde"] {
+  --font-ui: "Noto Sans", "Noto Sans SC", "Segoe UI", sans-serif;
+  --font-mono: "Noto Sans Mono", ui-monospace, monospace;
+  --c-accent-rgb: 61 174 233;     /* 上一版 #3daee9 */
+  --c-accent-ink: #1a1a1a;        /* Breeze 浅蓝底上需用深色字 */
+}
+[data-plat="kde"][data-theme="dark"] { --c-accent-rgb: 61 174 233; }
+
+/* deepin（DTK 语义蓝，见 AGENTS.md） */
+[data-plat="deepin"] {
+  --font-ui: "Source Han Sans SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
+  --font-mono: "Noto Sans Mono", ui-monospace, monospace;
+  --c-accent-rgb: 0 129 255;      /* DTK 蓝 */
+}
+[data-plat="deepin"][data-theme="dark"] { --c-accent-rgb: 0 148 255; }
+
+/* KDE 主色明度高，实心底上的文字需反色 */
+[data-plat="kde"] { --fg-on-accent: #10202a; }
+[data-plat="kde"][data-theme="dark"] { --fg-on-accent: #10202a; }
+
+/* ── 4. 排版与间距：四平台完全一致 ───────────────────────────────────── */
+:root {
+  /* 字号：沿用上一版尺度（11/12/13/15/20），不再出现 8/9/10px 的极小字 */
+  --t-11: 11px;  --lh-11: 16px;
+  --t-12: 12px;  --lh-12: 18px;
+  --t-13: 13px;  --lh-13: 20px;
+  --t-15: 15px;  --lh-15: 22px;
+  --t-20: 20px;  --lh-20: 26px;
+  --t-28: 28px;  --lh-28: 34px;
+
+  /* 字重：上一版出现 650/800 等非标准值，收敛为 4 档 */
+  --w-regular: 400;
+  --w-medium:  500;
+  --w-semi:    600;
+  --w-bold:    700;
+
+  /* 字距：大字收紧显紧凑有力，小字放开显通透 —— 排版精致度的关键 */
+  --ls-tight: -0.022em;   /* 20px 及以上 */
+  --ls-snug:  -0.012em;   /* 13~15px */
+  --ls-normal: 0;         /* 12px 正文 */
+  --ls-wide:  0.012em;    /* 11px 辅助文字 */
+  --ls-caps:  0.04em;     /* 全大写小标题 */
+
+  /* 间距：4 的倍数 */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px;
+  --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-8: 32px;
+
+  /* 圆角：上一版出现 2~14 共 10 种，收敛为 3 级 + pill */
+  --r-ctl:     6px;
+  --r-card:    10px;
+  --r-surface: 12px;   /* 上一版 6(kde)/8(win)/12(mac)，统一取最精致一档 */
+  --r-pill:    999px;
+
+  /* 层级 */
+  --z-panel: 1;
+  --z-overlay: 200;
+  --z-toast: 300;
+}

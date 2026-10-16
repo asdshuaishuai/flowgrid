@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-plat="macos" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — 设备与连接</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../ui.css">
+</head>
+<body>
+
+<div class="devbar" data-devbar></div>
+<div class="dock" data-dock></div>
+
+<!-- 520px 浮板：宽度、阴影、层级沿用上一版 -->
+<div class="panel">
+  <div class="titlebar" data-titlebar="设备与连接"></div>
+
+  <div class="content">
+    <div class="row between">
+      <span class="row-3">
+        <span class="status-pill"><span class="dot dot--pulse"></span>已连接 MacBook Pro</span>
+      </span>
+      <a class="btn" href="pairing.html"><span data-icon="plus"></span>添加设备</a>
+    </div>
+
+    <!-- 设备列表：沿用上一版 42px 1fr auto 栅格 -->
+    <div class="col-3">
+      <div class="device device--active">
+        <span class="device__icon">MB</span>
+        <span class="grow col" style="gap:2px">
+          <span class="device__name">MacBook Pro</span>
+          <span class="device__meta">macOS 15 · 当前控制端 · <span data-kbd="2"></span></span>
+        </span>
+        <span class="device__side">
+          <span class="lat lat--good" data-lat>2.4ms</span>
+          <button class="icon-btn" data-action="toast" data-msg="已复制连接信息" title="更多信息"><span data-icon="more"></span></button>
+        </span>
+      </div>
+
+      <div class="device">
+        <span class="device__icon">PC</span>
+        <span class="grow col" style="gap:2px">
+          <span class="device__name">Windows 11 Desktop</span>
+          <span class="device__meta">Windows 11 · IntelligentLink · <span data-kbd="1"></span></span>
+        </span>
+        <span class="device__side">
+          <span class="lat lat--good">3.1ms</span>
+          <button class="icon-btn" data-action="switch" data-dev="Windows 11 Desktop" title="切换到此设备"><span data-icon="arrowRight"></span></button>
+        </span>
+      </div>
+
+      <div class="device">
+        <span class="device__icon">LX</span>
+        <span class="grow col" style="gap:2px">
+          <span class="device__name">Linux Workstation</span>
+          <span class="device__meta">KDE Plasma 6 · DirectLink · <span data-kbd="3"></span></span>
+        </span>
+        <span class="device__side">
+          <span class="lat lat--warn">11.6ms</span>
+          <button class="icon-btn" data-action="switch" data-dev="Linux Workstation" title="切换到此设备"><span data-icon="arrowRight"></span></button>
+        </span>
+      </div>
+
+      <div class="device device--off">
+        <span class="device__icon" style="background:var(--fg-surface-3);color:var(--fg-text-3)">TP</span>
+        <span class="grow col" style="gap:2px">
+          <span class="device__name">deepin Tablet</span>
+          <span class="device__meta">离线 · 上次连接 12 分钟前</span>
+        </span>
+        <span class="device__side">
+          <span class="lat lat--idle">—</span>
+          <button class="icon-btn" data-action="toast" data-msg="正在重连 deepin Tablet" title="重连"><span data-icon="refresh"></span></button>
+        </span>
+      </div>
+    </div>
+
+    <!-- 键位映射折叠区：沿用上一版 chevron 折叠 -->
+    <div class="section">
+      <div class="section__head" data-collapse="kmBody">
+        <span class="row-3"><span data-icon="keyboard"></span>键位映射<span class="badge">3 条生效</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="kmBody">
+        <div class="mapping">
+          <div class="keypair">
+            <span class="keys"><span class="key">Ctrl</span><span class="arrow"><span data-icon="arrowRight"></span></span><span class="key">⌘</span></span>
+            <span class="t-11 c-3">复制 / 粘贴</span>
+          </div>
+          <div class="keypair">
+            <span class="keys"><span class="key">Win</span><span class="arrow"><span data-icon="arrowRight"></span></span><span class="key">⌥</span></span>
+            <span class="t-11 c-3">系统快捷键</span>
+          </div>
+          <div class="keypair">
+            <span class="keys"><span class="key">Alt</span><span class="arrow"><span data-icon="arrowRight"></span></span><span class="key">Ctrl</span></span>
+            <span class="t-11 c-3">终端应用</span>
+          </div>
+        </div>
+        <div class="row between" style="padding:0 var(--s-3) var(--s-3)">
+          <span class="t-11 c-3">按应用切换映射，游戏内自动停用</span>
+          <a class="btn btn--sm btn--secondary" href="keymap.html">编辑</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- 网络延迟折叠区：沿用上一版 70px 柱状图 -->
+    <div class="section">
+      <div class="section__head" data-collapse="latBody">
+        <span class="row-3"><span data-icon="activity"></span>网络延迟<span class="badge badge--ok">均值 2.3ms</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="latBody">
+        <div class="chart" id="chart">
+          <span class="chart__bar" style="height:28px"></span>
+          <span class="chart__bar" style="height:36px"></span>
+          <span class="chart__bar" style="height:23px"></span>
+          <span class="chart__bar" style="height:42px"></span>
+          <span class="chart__bar" style="height:31px"></span>
+          <span class="chart__bar" style="height:26px"></span>
+          <span class="chart__bar" style="height:38px"></span>
+          <span class="chart__bar" style="height:22px"></span>
+          <span class="chart__bar" style="height:34px"></span>
+          <span class="chart__bar" style="height:29px"></span>
+          <span class="chart__bar" style="height:44px"></span>
+          <span class="chart__bar chart__bar--recent" style="height:30px"></span>
+        </div>
+        <div class="chart__axis"><span>-24s</span><span>现在</span></div>
+        <div class="row between" style="padding:0 var(--s-3) var(--s-3)">
+          <span class="t-11 c-3">每 2 秒采样一次</span>
+          <a class="btn btn--sm btn--secondary" href="latency.html">详情</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- 剪贴板折叠区 -->
+    <div class="section">
+      <div class="section__head" data-collapse="clipBody">
+        <span class="row-3"><span data-icon="clipboard"></span>剪贴板同步<span class="badge badge--neutral">4 项</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="clipBody">
+        <div class="col" style="padding:var(--s-2)">
+          <div class="clip" data-action="toast" data-msg="已写入本地剪贴板">
+            <span class="clip__type"><span data-icon="type"></span></span>
+            <span class="clip__text">cargo build --release --target x86_64-unknown-linux-gnu</span>
+            <span class="clip__time">12s</span>
+          </div>
+          <div class="clip" data-action="toast" data-msg="已写入本地剪贴板">
+            <span class="clip__type"><span data-icon="code"></span></span>
+            <span class="clip__text">fn handle_frame(buf: &amp;[u8]) -&gt; Result&lt;()&gt;</span>
+            <span class="clip__time">1m</span>
+          </div>
+          <div class="clip" data-action="toast" data-msg="已写入本地剪贴板">
+            <span class="clip__type"><span data-icon="link"></span></span>
+            <span class="clip__text">https://example.internal/review/4821</span>
+            <span class="clip__time">4m</span>
+          </div>
+          <div class="clip" data-action="toast" data-msg="图片已写入本地剪贴板">
+            <span class="clip__type"><span data-icon="image"></span></span>
+            <span class="clip__text">screenshot-2026-10-16.png</span>
+            <span class="clip__time">9m</span>
+          </div>
+        </div>
+        <div class="row between" style="padding:0 var(--s-3) var(--s-3)">
+          <span class="t-11 c-3">跨端同步已加密，历史保留 50 条</span>
+          <span class="row-2">
+            <a class="btn btn--sm btn--secondary" href="clipboard.html">详情</a>
+            <button class="btn btn--sm btn--ghost" data-action="toast" data-msg="已清空同步历史">清空</button>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 文件传输折叠区 -->
+    <div class="section">
+      <div class="section__head" data-collapse="fileBody">
+        <span class="row-3"><span data-icon="file"></span>文件传输<span class="badge badge--ok">1 项进行中</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="fileBody">
+        <div class="xfer">
+          <span class="xfer__icon"><span data-icon="upload"></span></span>
+          <span class="xfer__body">
+            <span class="xfer__top">
+              <span class="xfer__name">flowgrid-0.9.2-x86_64.AppImage</span>
+              <span class="xfer__pct">68%</span>
+            </span>
+            <span class="bar"><span class="bar__fill" style="width:68%"></span></span>
+            <span class="xfer__meta"><span>12.4 MB</span><span>·</span><span class="row-2"><span data-icon="arrowRight"></span>Windows 11 Desktop</span></span>
+          </span>
+        </div>
+        <div class="xfer">
+          <span class="xfer__icon xfer__icon--ok"><span data-icon="check"></span></span>
+          <span class="xfer__body">
+            <span class="xfer__top">
+              <span class="xfer__name">design-spec-v3.pdf</span>
+              <span class="xfer__pct">完成</span>
+            </span>
+            <span class="xfer__meta"><span>2.1 MB</span><span>·</span><span>收到 · Linux Workstation</span><span>·</span><span>3m</span></span>
+          </span>
+        </div>
+        <div class="row between" style="padding:0 var(--s-3) var(--s-3)">
+          <span class="t-11 c-3">单文件上限 16 MiB · SHA-256 校验后交付</span>
+          <a class="btn btn--sm btn--secondary" href="files.html">详情</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- 布局折叠区：沿用上一版拖拽手感和 hover scale -->
+    <div class="section">
+      <div class="section__head" data-collapse="layoutBody">
+        <span class="row-3"><span data-icon="grid"></span>设备布局<span class="badge badge--neutral">拖动排布</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="layoutBody">
+        <div class="col-3" style="padding:var(--s-3)">
+          <div class="layout" data-layout>
+            <div class="cell" draggable="true" data-slot data-dev="pc">
+              <span class="cell__icon" style="background:var(--fg-accent)">PC</span>
+              <span class="cell__label">Windows</span>
+            </div>
+            <div class="cell" draggable="true" data-slot data-dev="mb">
+              <span class="cell__icon" style="background:var(--c-ok-solid)">MB</span>
+              <span class="cell__label">MacBook</span>
+              <span class="cell__hint">当前</span>
+            </div>
+            <div class="cell" draggable="true" data-slot data-dev="lx">
+              <span class="cell__icon" style="background:var(--c-warn-solid)">LX</span>
+              <span class="cell__label">Linux</span>
+            </div>
+            <div class="cell" data-slot><span class="cell__empty">+</span></div>
+            <div class="cell" data-slot><span class="cell__empty">+</span></div>
+            <div class="cell" data-slot><span class="cell__empty">+</span></div>
+            <div class="cell" data-slot><span class="cell__empty">+</span></div>
+            <div class="cell" data-slot><span class="cell__empty">+</span></div>
+            <div class="cell" data-slot><span class="cell__empty">+</span></div>
+          </div>
+          <div class="legend">
+            <span><span data-icon="grip"></span>拖动调整屏幕相对位置</span>
+            <span><span class="dot"></span>当前控制端</span>
+            <span><span data-icon="info"></span>边缘触发切换</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel__foot">
+    <span class="row-3 t-11 c-3"><span data-icon="shield"></span>端到端加密 · IntelligentLink 优先</span>
+    <span class="row-3">
+      <a class="btn btn--sm btn--secondary" href="settings.html"><span data-icon="settings"></span>设置</a>
+      <button class="btn btn--sm btn--ghost" data-action="close">关闭</button>
+    </span>
+  </div>
+</div>
+
+<div class="pager">
+  <a href="tray.html"><span data-icon="link"></span>托盘浮层</a>
+  <a href="clipboard.html"><span data-icon="clipboard"></span>剪贴板</a>
+  <a href="files.html"><span data-icon="file"></span>文件传输</a>
+  <a href="settings.html"><span data-icon="settings"></span>设置</a>
+  <a href="pairing.html"><span data-icon="plus"></span>添加设备</a>
+  <a href="latency.html"><span data-icon="activity"></span>延迟</a>
+  <a href="keymap.html"><span data-icon="keyboard"></span>键位映射</a>
+  <a href="../index.html"><span data-icon="grid"></span>总览</a>
+</div>
+
+<script src="../app.js"></script>
+<script>
+  // 柱状图滚动：沿用上一版 2 秒采样节奏
+  (function () {
+    var chart = document.getElementById('chart');
+    if (!chart) return;
+    setInterval(function () {
+      var bars = chart.querySelectorAll('.chart__bar');
+      var h = 20 + Math.round(Math.random() * 26);
+      bars.forEach(function (b) { b.classList.remove('chart__bar--recent'); });
+      var last = bars[bars.length - 1];
+      last.style.height = h + 'px';
+      last.classList.add('chart__bar--recent');
+      chart.insertBefore(last, bars[0]);
+    }, 2000);
+  })();
+</script>
+</body>
+</html>

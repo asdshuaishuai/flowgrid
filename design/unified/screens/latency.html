@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-plat="macos" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — 网络延迟</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../ui.css">
+</head>
+<body>
+
+<div class="devbar" data-devbar></div>
+<div class="dock" data-dock></div>
+
+<div class="panel">
+  <div class="titlebar" data-titlebar="网络延迟" data-right="<span class='status-pill'><span class='dot dot--pulse'></span><span data-lat>2.4ms</span></span>"></div>
+
+  <div class="content">
+    <!-- 大数字读数 -->
+    <div class="row between" style="align-items:flex-end">
+      <span class="col">
+        <span class="t-11 c-3 w-semi" style="text-transform:uppercase;letter-spacing:.3px">当前延迟</span>
+        <span class="t-28 w-bold mono" style="color:var(--c-ok-text)" data-lat>2.4ms</span>
+      </span>
+      <span class="col" style="align-items:flex-end;gap:2px">
+        <span class="t-11 c-3">链路</span>
+        <span class="row-2 t-12 w-semi"><span data-icon="wifi"></span>IntelligentLink</span>
+      </span>
+    </div>
+
+    <!-- 柱状图 -->
+    <div class="section">
+      <div class="section__head" data-collapse="chartBody">
+        <span class="row-3"><span data-icon="activity"></span>近 60 秒采样<span class="badge badge--ok">均值 2.3ms</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="chartBody">
+        <div class="chart" id="chart">
+          <span class="chart__bar" style="height:24px"></span>
+          <span class="chart__bar" style="height:31px"></span>
+          <span class="chart__bar" style="height:27px"></span>
+          <span class="chart__bar" style="height:44px"></span>
+          <span class="chart__bar" style="height:29px"></span>
+          <span class="chart__bar" style="height:22px"></span>
+          <span class="chart__bar" style="height:35px"></span>
+          <span class="chart__bar" style="height:26px"></span>
+          <span class="chart__bar" style="height:38px"></span>
+          <span class="chart__bar" style="height:23px"></span>
+          <span class="chart__bar" style="height:30px"></span>
+          <span class="chart__bar chart__bar--recent" style="height:28px"></span>
+        </div>
+        <div class="chart__axis"><span>-60s</span><span>现在</span></div>
+      </div>
+    </div>
+
+    <!-- 分设备延迟 -->
+    <div class="list">
+      <div class="list__group-title">分设备</div>
+      <div class="list__row">
+        <span class="list__label">
+          <span class="row"><span data-icon="laptop"></span>MacBook Pro</span>
+          <span class="list__hint">本机 · IntelligentLink</span>
+        </span>
+        <span class="lat lat--good" data-lat>2.4ms</span>
+      </div>
+      <div class="list__row">
+        <span class="list__label">
+          <span class="row"><span data-icon="monitor"></span>Windows 11 Desktop</span>
+          <span class="list__hint">IntelligentLink · 丢包 0.0%</span>
+        </span>
+        <span class="lat lat--good">3.1ms</span>
+      </div>
+      <div class="list__row">
+        <span class="list__label">
+          <span class="row"><span data-icon="monitor"></span>Linux Workstation</span>
+          <span class="list__hint">DirectLink · 丢包 0.4%</span>
+        </span>
+        <span class="lat lat--warn">11.6ms</span>
+      </div>
+      <div class="list__row">
+        <span class="list__label">
+          <span class="row"><span data-icon="tablet"></span>deepin Tablet</span>
+          <span class="list__hint">离线</span>
+        </span>
+        <span class="lat lat--idle">—</span>
+      </div>
+    </div>
+
+    <!-- 阈值折叠区 -->
+    <div class="section">
+      <div class="section__head" data-collapse="thBody" data-collapsed>
+        <span class="row-3"><span data-icon="settings"></span>告警阈值<span class="badge badge--neutral">20ms</span></span>
+        <span class="chev"><span data-icon="chevronDown"></span></span>
+      </div>
+      <div class="section__body" id="thBody">
+        <div class="col-3" style="padding:var(--s-3)">
+          <div class="row between">
+            <span class="t-12">告警阈值</span>
+            <span class="row-3">
+              <input class="input" style="width:64px" value="20" inputmode="numeric">
+              <span class="t-11 c-3">ms</span>
+            </span>
+          </div>
+          <div class="row between">
+            <span class="t-12">连续超阈值次数</span>
+            <span class="row-3">
+              <input class="input" style="width:64px" value="3" inputmode="numeric">
+              <span class="t-11 c-3">次</span>
+            </span>
+          </div>
+          <div class="row between">
+            <span class="t-12">超阈值时自动切换链路</span>
+            <span class="switch" aria-checked="true" data-label="自动切换链路"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel__foot">
+    <span class="row-3 t-11 c-3"><span data-icon="info"></span>每 2 秒采样一次</span>
+    <span class="row-3">
+      <button class="btn btn--sm btn--secondary" data-action="toast" data-msg="诊断报告已导出"><span data-icon="copy"></span>导出诊断</button>
+      <button class="btn btn--sm btn--ghost" data-action="close">关闭</button>
+    </span>
+  </div>
+</div>
+
+<div class="pager">
+  <a href="clipboard.html"><span data-icon="clipboard"></span>剪贴板</a>
+  <a href="files.html"><span data-icon="file"></span>文件传输</a>
+  <a href="tray.html"><span data-icon="link"></span>托盘浮层</a>
+  <a href="connections.html"><span data-icon="devices"></span>设备与连接</a>
+  <a href="settings.html"><span data-icon="settings"></span>设置</a>
+  <a href="../index.html"><span data-icon="grid"></span>总览</a>
+</div>
+
+<script src="../app.js"></script>
+<script>
+  (function () {
+    var chart = document.getElementById('chart');
+    if (!chart) return;
+    setInterval(function () {
+      var bars = chart.querySelectorAll('.chart__bar');
+      var h = 20 + Math.round(Math.random() * 26);
+      bars.forEach(function (b) { b.classList.remove('chart__bar--recent'); });
+      var last = bars[bars.length - 1];
+      last.style.height = h + 'px';
+      last.classList.add('chart__bar--recent');
+      chart.insertBefore(last, bars[0]);
+    }, 2000);
+  })();
+</script>
+</body>
+</html>

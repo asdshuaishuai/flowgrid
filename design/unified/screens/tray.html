@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-plat="macos" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid — 托盘浮层（主入口）</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../ui.css">
+</head>
+<body>
+
+<div class="devbar" data-devbar></div>
+
+<!-- 桌面衬底：任务栏 / 菜单栏 / 面板，由 app.js 按平台绘制 -->
+<div class="dock" data-dock></div>
+
+<!-- 托盘浮层：300px，唤出动画沿用上一版 -->
+<div class="tray" id="tray">
+  <div class="tray__head">
+    <span class="tray__title"><span data-icon="link"></span>FlowGrid</span>
+    <span class="status-pill"><span class="dot dot--pulse"></span><span data-lat>2.4ms</span></span>
+  </div>
+
+  <div class="tray__group">
+    <div class="tray__label">当前设备</div>
+    <div class="tray__active">
+      <span class="device__icon">MB</span>
+      <span class="grow">
+        <span class="device__name">MacBook Pro</span>
+        <span class="device__meta"><span data-kbd="2"></span> 切换回来</span>
+      </span>
+      <span class="badge">本机</span>
+    </div>
+  </div>
+
+  <div class="tray__group">
+    <div class="tray__label">快速切换</div>
+    <div class="switch-row">
+      <button class="switch-btn" data-action="switch" data-dev="Windows 11 Desktop">
+        <span class="switch-btn__icon" style="background:var(--fg-accent)">PC</span>
+        <span class="switch-btn__key" data-kbd="1"></span>
+      </button>
+      <button class="switch-btn" aria-pressed="true">
+        <span class="switch-btn__icon" style="background:var(--c-ok-solid)">MB</span>
+        <span class="switch-btn__key" data-kbd="2"></span>
+      </button>
+      <button class="switch-btn" data-action="switch" data-dev="Linux Workstation">
+        <span class="switch-btn__icon" style="background:var(--c-warn-solid)">LX</span>
+        <span class="switch-btn__key" data-kbd="3"></span>
+      </button>
+    </div>
+  </div>
+
+  <div class="tray__sep"></div>
+
+  <div class="tray__group">
+    <div class="tray__label">连接</div>
+    <a class="tray__item" href="connections.html">
+      <span class="row"><span data-icon="devices"></span>设备与连接</span>
+      <span class="tray__kbd">3 台</span>
+    </a>
+    <a class="tray__item" href="latency.html">
+      <span class="row"><span data-icon="activity"></span>网络延迟</span>
+      <span class="lat lat--good" data-lat>2.4ms</span>
+    </a>
+    <a class="tray__item" href="pairing.html">
+      <span class="row"><span data-icon="plus"></span>添加设备</span>
+      <span class="badge badge--neutral">向导</span>
+    </a>
+  </div>
+
+  <div class="tray__sep"></div>
+
+  <div class="tray__group">
+    <div class="tray__label">数据与同步</div>
+    <a class="tray__item" href="clipboard.html">
+      <span class="row"><span data-icon="clipboard"></span>剪贴板</span>
+      <span class="badge badge--neutral">4 项</span>
+    </a>
+    <a class="tray__item" href="files.html">
+      <span class="row"><span data-icon="file"></span>文件传输</span>
+      <span class="badge badge--neutral">1 项</span>
+    </a>
+  </div>
+
+  <div class="tray__sep"></div>
+
+  <div class="tray__group">
+    <div class="tray__label">快捷开关</div>
+    <div class="tray__toggle">键位映射<span class="switch" aria-checked="true" data-label="键位映射"></span></div>
+    <div class="tray__toggle">剪贴板同步<span class="switch" aria-checked="true" data-label="剪贴板同步"></span></div>
+    <div class="tray__toggle">鼠标平滑<span class="switch" aria-checked="false" data-label="鼠标平滑"></span></div>
+    <div class="tray__toggle">自动路由<span class="switch" aria-checked="true" data-label="自动路由"></span></div>
+  </div>
+
+  <div class="tray__sep"></div>
+
+  <div class="tray__group">
+    <a class="tray__item" href="keymap.html">
+      <span class="row"><span data-icon="keyboard"></span>键位映射</span>
+      <span class="tray__kbd"><span data-mod></span><span>K</span></span>
+    </a>
+    <a class="tray__item" href="settings.html">
+      <span class="row"><span data-icon="settings"></span>设置</span>
+      <span class="tray__kbd"><span data-mod></span>,</span>
+    </a>
+  </div>
+
+  <div class="tray__sep"></div>
+
+  <div class="tray__group">
+    <button class="tray__item tray__item--danger" data-action="quit">
+      <span class="row"><span data-icon="power"></span>退出 FlowGrid</span>
+      <span class="tray__kbd" data-quit></span>
+    </button>
+  </div>
+</div>
+
+<div class="pager">
+  <a href="connections.html"><span data-icon="devices"></span>设备与连接</a>
+  <a href="clipboard.html"><span data-icon="clipboard"></span>剪贴板</a>
+  <a href="files.html"><span data-icon="file"></span>文件传输</a>
+  <a href="settings.html"><span data-icon="settings"></span>设置</a>
+  <a href="pairing.html"><span data-icon="plus"></span>添加设备</a>
+  <a href="latency.html"><span data-icon="activity"></span>延迟</a>
+  <a href="keymap.html"><span data-icon="keyboard"></span>键位映射</a>
+  <a href="../index.html"><span data-icon="grid"></span>总览</a>
+</div>
+
+<script src="../app.js"></script>
+<script>
+  // 托盘唤出/关闭：点击桌面衬底上的 FlowGrid 图标重放入场动画（沿用上一版节奏）
+  document.addEventListener('click', function (e) {
+    var brand = e.target.closest('.dock__brand');
+    if (!brand) return;
+    var tray = document.getElementById('tray');
+    tray.style.animation = 'none';
+    void tray.offsetWidth;
+    tray.style.animation = '';
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-plat="macos" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowGrid 设计系统 v2 — 沿用上一版交互，仅重做视觉</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="ui.css">
+</head>
+<body>
+
+<div class="devbar" data-devbar></div>
+
+<div class="board">
+  <div class="board__head">
+    <h1>FlowGrid 设计系统 v2</h1>
+    <p style="margin:0">托盘常驻 · 无主窗口。交互范式与窗口形态沿用上一版，本版只做视觉层重做与跨平台统一。</p>
+  </div>
+
+  <div class="board__body">
+
+    <!-- 形态 -->
+    <section>
+      <h2><span data-icon="link"></span>应用形态</h2>
+      <p>应用没有常驻主窗口。唯一常驻的是托盘／菜单栏图标，所有界面都是<strong>按需唤出的浮板</strong>：唤出即来、失焦即走。浮板之间平级，不存在「窗口里套窗口」的层级。</p>
+      <div class="row-3 wrap" style="margin-top:var(--s-3)">
+        <a class="btn" href="screens/tray.html"><span data-icon="link"></span>托盘浮层（主入口）</a>
+        <a class="btn btn--secondary" href="screens/connections.html"><span data-icon="devices"></span>设备与连接</a>
+        <a class="btn btn--secondary" href="screens/settings.html"><span data-icon="settings"></span>设置</a>
+        <a class="btn btn--secondary" href="screens/pairing.html"><span data-icon="plus"></span>添加设备</a>
+        <a class="btn btn--secondary" href="screens/latency.html"><span data-icon="activity"></span>网络延迟</a>
+        <a class="btn btn--secondary" href="screens/keymap.html"><span data-icon="keyboard"></span>键位映射</a>
+        <a class="btn btn--secondary" href="screens/clipboard.html"><span data-icon="clipboard"></span>剪贴板</a>
+        <a class="btn btn--secondary" href="screens/files.html"><span data-icon="file"></span>文件传输</a>
+      </div>
+    </section>
+
+    <!-- 保留清单 -->
+    <section>
+      <h2><span data-icon="shield"></span>完整保留：上一版的窗口几何</h2>
+      <div class="banner banner--ok" style="margin-bottom:var(--s-3)"><span data-icon="check"></span>
+        <span>精致度打磨没有触碰任何窗口几何与动效参数：浮板仍是 <code>520px</code>、阴影第一层仍是 <code>0 18px 42px rgba(24,30,44,.14)</code>、入场仍是 <code>220ms</code>。新增的顶部内高光是叠加层，不是替换。</span>
+      </div>
+      <p>以下数值从上一版逐像素搬过来，未做任何改动。</p>
+      <table class="tbl">
+        <thead><tr><th>项目</th><th>值</th><th>上一版来源</th></tr></thead>
+        <tbody>
+          <tr><td>浮板宽度</td><td><code>520px</code></td><td>三平台原本就完全一致</td></tr>
+          <tr><td>浮板最大高度</td><td><code>calc(100vh - 48px)</code></td><td>三平台一致</td></tr>
+          <tr><td>浮板阴影</td><td><code>0 18px 42px rgba(24,30,44,.14)</code></td><td>三平台一致</td></tr>
+          <tr><td>托盘浮层阴影</td><td><code>0 16px 32px rgba(15,23,42,.16)</code></td><td>win / kde 原值</td></tr>
+          <tr><td>标题栏高度</td><td><code>34px</code></td><td>mac / win 原值（kde 为 30px）</td></tr>
+          <tr><td>内容边距</td><td><code>14px</code></td><td>三平台一致</td></tr>
+          <tr><td>控件高度</td><td><code>28px</code> ／ 图标按钮 <code>26px</code></td><td>三平台一致</td></tr>
+          <tr><td>开关尺寸</td><td><code>36×20</code>，滑块 <code>16</code></td><td>mac 原值，win/kde 为 34×18</td></tr>
+          <tr><td>窗口控件位置</td><td>mac 靠左，win / kde / deepin 靠右</td><td>平台原生约定</td></tr>
+        </tbody>
+      </table>
+      <div class="banner banner--neutral" style="margin-top:var(--s-3)"><span data-icon="info"></span>
+        <span>唯一被收敛的窗口参数是<strong>圆角</strong>：上一版为 6(KDE) / 8(Win) / 12(mac) 三种，为达成跨平台统一取 <code>12px</code>。这是同一尺度族内的取值，层级风格未变。</span>
+      </div>
+    </section>
+
+    <!-- 保留清单：交互 -->
+    <section>
+      <h2><span data-icon="mouse"></span>完整保留：上一版的交互与动效节奏</h2>
+      <table class="tbl">
+        <thead><tr><th>交互</th><th>节奏 / 手感</th><th>状态</th></tr></thead>
+        <tbody>
+          <tr><td>托盘浮层唤出</td><td><code>opacity + translateY(-8px) + scale(.96)</code>，<code>220ms</code> <code>cubic-bezier(.16,1,.3,1)</code></td><td>沿用（上一版 .2~.25s）</td></tr>
+          <tr><td>浮板唤出</td><td><code>translateY(-8px) + scale(.97)</code>，<code>220ms</code> 同曲线</td><td>沿用</td></tr>
+          <tr><td>关闭 / 失焦</td><td>反向淡出，不引入新退出范式</td><td>沿用</td></tr>
+          <tr><td>折叠区展开收起</td><td>chevron <code>rotate(-90deg)</code>，<code>200ms</code></td><td>沿用</td></tr>
+          <tr><td>布局网格拖拽</td><td><code>cursor:grab</code>／<code>grabbing</code>，hover <code>scale(1.05)</code>，<code>150ms</code></td><td>沿用</td></tr>
+          <tr><td>切换设备</td><td>全屏遮罩 <code>rgba(0,0,0,.15)</code> + 居中提示 <code>scale(.8→1)</code>，<code>300ms</code></td><td>沿用</td></tr>
+          <tr><td>Toast</td><td>底部居中 <code>translateY(80px)→0</code>，<code>300ms</code>，停留 <code>1800ms</code></td><td>沿用</td></tr>
+          <tr><td>状态点呼吸</td><td><code>pulse 2s infinite</code></td><td>沿用</td></tr>
+          <tr><td>延迟采样</td><td>每 <code>2000ms</code> 刷新，区间 <code>1.5~3.0ms</code></td><td>沿用</td></tr>
+          <tr><td>微交互（hover / active）</td><td><code>150ms</code> <code>cubic-bezier(.4,0,.2,1)</code>；按下 <code>translateY(1px)</code></td><td>沿用</td></tr>
+          <tr><td>快捷键符号</td><td>mac 显示 <code>⌘</code>，其余显示 <code>Ctrl</code></td><td>沿用（平台原生差异）</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 视觉优化 -->
+    <section>
+      <h2><span data-icon="image"></span>本版视觉优化</h2>
+      <table class="tbl">
+        <thead><tr><th>维度</th><th>上一版</th><th>本版</th></tr></thead>
+        <tbody>
+          <tr><td>图标</td><td>emoji（🔊 📶 ⌚）与字符（_ □ × ▼）混用，视觉重量不一致</td><td>统一 SVG 图标集：24 网格、1.75 描边、圆头圆角，同一套在所有平台出现</td></tr>
+          <tr><td>圆角</td><td>2 / 3 / 4 / 5 / 6 / 7 / 8 / 10 / 12 / 14 共 10 种</td><td>收敛为 3 级：<code>6</code> 控件 / <code>10</code> 卡片 / <code>12</code> 浮板，外加 pill</td></tr>
+          <tr><td>字重</td><td>出现 <code>650</code> <code>800</code> 等非标准值</td><td>收敛为 4 档：<code>400 / 500 / 600 / 700</code></td></tr>
+          <tr><td>字号</td><td>8px、9px、10px 极小字混排</td><td>取消 10px 以下字号，阶梯为 <code>11 / 12 / 13 / 15 / 20 / 28</code></td></tr>
+          <tr><td>间距</td><td>3 / 5 / 6 / 7 / 9 / 11px 等零散值</td><td>统一 4 的倍数：<code>4 / 8 / 12 / 16 / 20 / 24 / 32</code></td></tr>
+          <tr><td>配色</td><td>散落硬编码色值，语义与装饰混用</td><td>三层令牌：色阶 → 语义令牌 → 平台映射。语义色各 4 个层级（实色 / 浅底 / 描边 / 文字）</td></tr>
+          <tr><td>深色主题</td><td>仅 KDE 标题栏有深色，其余全浅色</td><td>全量 light / dark 双主题，四平台一致</td></tr>
+          <tr><td>留白</td><td>分区之间靠 1px 分隔线硬切</td><td>分隔线 + 上标分组 + 一致的分区内边距，层级靠留白而非仅靠线</td></tr>
+          <tr><td>焦点</td><td>无键盘焦点样式</td><td>统一 <code>:focus-visible</code> 焦点环 + <code>prefers-reduced-motion</code> 降级</td></tr>
+        </tbody>
+      </table>
+
+      <h3 style="margin-top:var(--s-4)">第二轮：精致度打磨</h3>
+      <table class="tbl">
+        <thead><tr><th>维度</th><th>做法</th></tr></thead>
+        <tbody>
+          <tr><td>浮板质感</td><td>在原阴影之后叠加 <code>inset 0 1px 0</code> 顶部内高光——原生窗口都有的那道亮边，浮板因此真正「浮」起来。原阴影值未被替换</td></tr>
+          <tr><td>边框克制</td><td><code>line-1</code> <code>.08→.07</code>、<code>line-2</code> <code>.14→.12</code>，新增 <code>hairline .055</code>。线越淡越精致，1px 仍清晰可辨</td></tr>
+          <tr><td>文字层次</td><td>主文更深、次级更柔，层级靠明度差而非只靠字号；新增 <code>hairline</code> 级分隔线区分「结构线」与「装饰线」</td></tr>
+          <tr><td>字距</td><td>新增 5 档字距令牌。20px 以上收紧 <code>-0.022em</code>、13~15px <code>-0.012em</code>、11px 放开 <code>+0.012em</code>、全大写小标题 <code>0.04em</code></td></tr>
+          <tr><td>按钮反馈</td><td><code>filter: brightness()</code> 换成明确的明度令牌，深浅主题各自取方向（浅色 hover 压暗、深色 hover 提亮），不再越点越闷</td></tr>
+          <tr><td>衬底</td><td>纯色底改为顶部极淡光晕渐变，呼应上一版 <code>linear-gradient(#fbfcfd → #eff2f6)</code> 的通透感</td></tr>
+          <tr><td>深色主题</td><td>衬底压深至 <code>#101215</code>，浮板与桌面拉开距离；Toast 改用中性石墨而非蓝调深灰</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 命名 -->
+    <section>
+      <h2><span data-icon="link"></span>链路命名</h2>
+      <p>近距离高速链路统一改用自有命名 <code>IntelligentLink</code>，不再沿用旧稿里来自第三方的链路叫法；局域网直连沿用英文原名，与协议层保持一致。</p>
+      <table class="tbl">
+        <thead><tr><th>链路</th><th>名称</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>近距离高速直连</td><td><code>IntelligentLink</code></td><td>首选链路，不可用时回落</td></tr>
+          <tr><td>局域网直连</td><td><code>DirectLink</code></td><td>沿用英文原名，与 <code>PROTOCOL.md</code> 一致</td></tr>
+        </tbody>
+      </table>
+      <div class="banner banner--warn" style="margin-top:var(--s-3)"><span data-icon="warn"></span>
+        <span>旧稿（<code>design/win|mac|kde/</code> 与根目录散稿）中仍有 120 处 <code>NearLink</code> 及其中文别称。这些是历史归档，本轮未改动；后续若复用旧稿文案，需一并替换为 <code>IntelligentLink</code>。</span>
+      </div>
+    </section>
+
+    <!-- 令牌 -->
+    <section>
+      <h2><span data-icon="grid"></span>语义令牌</h2>
+      <h3>中性面</h3>
+      <div class="swatches">
+        <div class="sw"><div class="sw__chip" style="background:var(--fg-surface)"></div><div class="sw__meta"><b>surface</b>浮板底</div></div>
+        <div class="sw"><div class="sw__chip" style="background:var(--fg-surface-2)"></div><div class="sw__meta"><b>surface-2</b>分组／页脚</div></div>
+        <div class="sw"><div class="sw__chip" style="background:var(--fg-surface-3)"></div><div class="sw__meta"><b>surface-3</b>轨道／凹陷</div></div>
+        <div class="sw"><div class="sw__chip" style="background:var(--fg-canvas)"></div><div class="sw__meta"><b>canvas</b>桌面衬底</div></div>
+      </div>
+      <h3 style="margin-top:var(--s-4)">语义色（各 4 个层级）</h3>
+      <div class="swatches">
+        <div class="sw"><div class="sw__chip" style="background:var(--fg-accent)"></div><div class="sw__meta"><b>accent</b>实色</div></div>
+        <div class="sw"><div class="sw__chip" style="background:var(--fg-accent-soft)"></div><div class="sw__meta"><b>accent-soft</b>浅底</div></div>
+        <div class="sw"><div class="sw__chip" style="background:var(--fg-ok-soft);border-bottom:2px solid var(--fg-ok-line)"></div><div class="sw__meta"><b>ok</b>正常</div></div>
+        <div class="sw"><div class="sw__chip" style="background:var(--fg-warn-soft);border-bottom:2px solid var(--fg-warn-line)"></div><div class="sw__meta"><b>warn</b>告警</div></div>
+        <div class="sw"><div class="sw__chip" style="background:var(--fg-danger-soft);border-bottom:2px solid var(--fg-danger-line)"></div><div class="sw__meta"><b>danger</b>危险</div></div>
+        <div class="sw"><div class="sw__chip" style="background:var(--fg-idle-soft);border-bottom:2px solid var(--fg-idle-line)"></div><div class="sw__meta"><b>idle</b>离线</div></div>
+      </div>
+      <h3 style="margin-top:var(--s-4)">几何与动效</h3>
+      <div class="tokgrid">
+        <div class="tok"><span class="tok__dot" style="background:var(--fg-surface-3)"></span><span class="tok__name">--w-panel: 520px</span></div>
+        <div class="tok"><span class="tok__dot" style="background:var(--fg-surface-3)"></span><span class="tok__name">--w-tray: 300px</span></div>
+        <div class="tok"><span class="tok__dot" style="background:var(--fg-surface-3)"></span><span class="tok__name">--r-surface: 12px</span></div>
+        <div class="tok"><span class="tok__dot" style="background:var(--fg-surface-3)"></span><span class="tok__name">--r-card: 10px</span></div>
+        <div class="tok"><span class="tok__dot" style="background:var(--fg-surface-3)"></span><span class="tok__name">--r-ctl: 6px</span></div>
+        <div class="tok"><span class="tok__dot" style="background:var(--fg-surface-3)"></span><span class="tok__name">--dur-enter: 220ms</span></div>
+        <div class="tok"><span class="tok__dot" style="background:var(--fg-surface-3)"></span><span class="tok__name">--dur-micro: 150ms</span></div>
+        <div class="tok"><span class="tok__dot" style="background:var(--fg-surface-3)"></span><span class="tok__name">--dur-toast: 300ms</span></div>
+      </div>
+    </section>
+
+    <!-- 排版 -->
+    <section>
+      <h2><span data-icon="type"></span>排版阶梯</h2>
+      <div class="col">
+        <div class="type-row"><span class="type-row__tag">28 / 34 · 700</span><span class="t-28 w-bold">2.4ms</span></div>
+        <div class="type-row"><span class="type-row__tag">20 / 26 · 700</span><span class="t-20 w-bold">网络延迟</span></div>
+        <div class="type-row"><span class="type-row__tag">15 / 22 · 600</span><span class="t-15 w-semi">设备与连接</span></div>
+        <div class="type-row"><span class="type-row__tag">13 / 20 · 600</span><span class="t-13 w-semi">Windows 11 Desktop</span></div>
+        <div class="type-row"><span class="type-row__tag">12 / 18 · 400</span><span class="t-12">IntelligentLink · 丢包 0.0%</span></div>
+        <div class="type-row"><span class="type-row__tag">11 / 16 · 500</span><span class="t-11 w-medium">每 2 秒采样一次</span></div>
+      </div>
+    </section>
+
+    <!-- 组件 -->
+    <section>
+      <h2><span data-icon="keyboard"></span>组件陈列</h2>
+      <div class="specimen">
+        <button class="btn"><span data-icon="plus"></span>主按钮</button>
+        <button class="btn btn--secondary">次要</button>
+        <button class="btn btn--ghost">幽灵</button>
+        <button class="btn btn--danger">危险</button>
+        <button class="icon-btn"><span data-icon="settings"></span></button>
+        <span class="badge">默认</span>
+        <span class="badge badge--ok">正常</span>
+        <span class="badge badge--warn">告警</span>
+        <span class="badge badge--danger">危险</span>
+        <span class="badge badge--idle">离线</span>
+        <span class="lat lat--good">2.4ms</span>
+        <span class="lat lat--warn">11.6ms</span>
+        <span class="lat lat--bad">42ms</span>
+        <span class="status-pill"><span class="dot dot--pulse"></span>已连接</span>
+        <span class="switch" aria-checked="true"></span>
+        <span class="switch" aria-checked="false"></span>
+        <span class="key">Ctrl</span>
+        <span class="key key--ghost">未设置</span>
+      </div>
+      <div class="row-3 wrap" style="margin-top:var(--s-4)">
+        <div class="banner"><span data-icon="info"></span><span>信息提示</span></div>
+        <div class="banner banner--warn"><span data-icon="warn"></span><span>告警提示</span></div>
+        <div class="banner banner--danger"><span data-icon="warn"></span><span>危险提示</span></div>
+      </div>
+    </section>
+
+    <!-- 平台 -->
+    <section>
+      <h2><span data-icon="devices"></span>四平台统一策略</h2>
+      <p>结构、间距、字号、圆角、动效、交互、文案<strong>四平台逐像素一致</strong>。只有两类值保留平台映射，其余一律继承全局语义令牌。</p>
+      <table class="tbl">
+        <thead><tr><th>平台</th><th>主色映射</th><th>字体族</th><th>窗口控件</th></tr></thead>
+        <tbody>
+          <tr><td>macOS</td><td><code>--c-accent-rgb: 0 122 255</code></td><td>SF Pro Text / PingFang SC</td><td>红黄绿三点，靠左</td></tr>
+          <tr><td>Windows</td><td><code>--c-accent-rgb: 8 120 216</code></td><td>Segoe UI Variable / 微软雅黑</td><td>扁平三键，靠右</td></tr>
+          <tr><td>KDE Plasma</td><td><code>--c-accent-rgb: 61 174 233</code></td><td>Noto Sans / Noto Sans SC</td><td>扁平三键，靠右，深色标题栏</td></tr>
+          <tr><td>deepin</td><td><code>--c-accent-rgb: 0 129 255</code></td><td>Source Han Sans SC</td><td>扁平三键，靠右</td></tr>
+        </tbody>
+      </table>
+      <div class="banner banner--neutral" style="margin-top:var(--s-3)"><span data-icon="info"></span>
+        <span>主色跟随平台原生色，是「平台视觉规范」的一部分，也是上一版就有的特征。强行统一会让 deepin 违反 <code>AGENTS.md</code> 的 DTK 语义色硬约束、让 KDE 脱离 Breeze、让 macOS 端看起来像 Windows 应用。用右上角开关可在四个平台间实时对照。</span>
+      </div>
+    </section>
+
+    <!-- 文件 -->
+    <section>
+      <h2><span data-icon="code"></span>文件构成</h2>
+      <table class="tbl">
+        <thead><tr><th>文件</th><th>职责</th></tr></thead>
+        <tbody>
+          <tr><td><code>tokens.css</code></td><td>三层令牌。第 0 节是窗口几何常量，直接固化上一版数值</td></tr>
+          <tr><td><code>ui.css</code></td><td>组件层。禁止出现十六进制色值与具体字体名</td></tr>
+          <tr><td><code>app.js</code></td><td>交互层。图标集、Toast、切换遮罩、折叠、拖拽、延迟采样、平台／主题切换</td></tr>
+          <tr><td><code>screens/*.html</code></td><td>八个界面，全部为按需唤出的浮层／浮板</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 数据同步 -->
+    <section>
+      <h2><span data-icon="clipboard"></span>剪贴板与文件传输</h2>
+      <p>两屏均为托盘唤出的 520px 浮板，窗口几何与其他六屏完全一致。界面上的每个边界值都取自协议层实现，不是示意数字。</p>
+      <table class="tbl">
+        <thead><tr><th>约束</th><th>取值</th><th>界面体现</th></tr></thead>
+        <tbody>
+          <tr><td>剪贴板单条上限</td><td><code>63,240 B</code>（分段上限）</td><td>历史里的超限条目标「超限」并不入库</td></tr>
+          <tr><td>剪贴板重组超时</td><td><code>5s</code> 未收齐整份丢弃</td><td>同步设置折叠区说明</td></tr>
+          <tr><td>剪贴板并发</td><td>同刻仅一路传输</td><td>同步设置折叠区说明</td></tr>
+          <tr><td>单文件大小</td><td><code>1 B – 16 MiB</code></td><td>拖放区提示；超限条目标「超限」</td></tr>
+          <tr><td>分块大小</td><td><code>249 B</code></td><td>接收设置折叠区说明</td></tr>
+          <tr><td>提议未确认</td><td><code>30s</code> 失效</td><td>接收设置折叠区说明</td></tr>
+          <tr><td>传输无进展</td><td><code>10s</code> 判失败</td><td>历史里的「超时」条目</td></tr>
+          <tr><td>完整性</td><td>SHA-256 校验后交付</td><td>完成条目标「SHA-256 已校验」；不符标「校验失败」</td></tr>
+          <tr><td>并发</td><td>同一方向同时仅一路</td><td>接收设置折叠区说明</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
