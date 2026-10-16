@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/binary"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -14,7 +15,7 @@ const (
 	CharHIDWrite   uint16 = 0x1851 // TX: write HID frame
 	CharHIDNotify  uint16 = 0x1852 // RX: notify HID frame
 	CharWiFiDirect uint16 = 0x1853 // WiFi Direct params
-	CharDeviceInfo  uint16 = 0x1854 // device name/platform
+	CharDeviceInfo uint16 = 0x1854 // device name/platform
 )
 
 // BLEAdvertisingData represents the 7-byte BLE advertising packet (§3.1.2).
@@ -89,6 +90,26 @@ func (r *MdnsTXTRecord) MarshalTXT() []string {
 	}
 }
 
+// Validate 校验 mDNS TXT 记录（PROTOCOL.md §3.2.1）必填项齐全。
+// 通告前必须过这一关：TXT 缺字段时对端解析出来的设备名会是空的，
+// 那种设备应该宁可不被发现，也不该以半残状态出现在设备列表里。
+func (r *MdnsTXTRecord) Validate() error {
+	switch {
+	case r.Version == "":
+		return NewError(ErrMdnsError, "mDNS TXT: version 为空")
+	case r.Platform == "":
+		return NewError(ErrMdnsError, "mDNS TXT: platform 为空")
+	case r.Name == "":
+		return NewError(ErrMdnsError, "mDNS TXT: name 为空")
+	case r.Port == "":
+		return NewError(ErrMdnsError, "mDNS TXT: port 为空")
+	}
+	if _, err := strconv.Atoi(r.Port); err != nil {
+		return NewError(ErrMdnsError, "mDNS TXT: port 非数字 "+r.Port)
+	}
+	return nil
+}
+
 // UnmarshalTXT parses key=value TXT record lines.
 func UnmarshalTXT(lines []string) *MdnsTXTRecord {
 	r := &MdnsTXTRecord{}
@@ -121,10 +142,10 @@ func UnmarshalTXT(lines []string) *MdnsTXTRecord {
 type SignalQuality int
 
 const (
-	SignalWeak       SignalQuality = 1 // RSSI <= -80 dBm
-	SignalFair       SignalQuality = 2 // RSSI > -80 dBm
-	SignalGood       SignalQuality = 3 // RSSI > -65 dBm
-	SignalExcellent  SignalQuality = 4 // RSSI > -50 dBm
+	SignalWeak      SignalQuality = 1 // RSSI <= -80 dBm
+	SignalFair      SignalQuality = 2 // RSSI > -80 dBm
+	SignalGood      SignalQuality = 3 // RSSI > -65 dBm
+	SignalExcellent SignalQuality = 4 // RSSI > -50 dBm
 )
 
 // ClassifyRSSI returns the signal quality for an RSSI value in dBm.

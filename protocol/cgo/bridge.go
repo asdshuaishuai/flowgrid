@@ -8,6 +8,7 @@ package main
 import "C"
 
 import (
+	"errors"
 	"sync"
 	"unsafe"
 
@@ -79,12 +80,12 @@ func cBuffer(src []byte) *C.uint8_t {
 }
 
 var (
-	latencyMonitors     registry[*protocol.LatencyMonitor]
-	heartbeatTrackers   registry[*protocol.HeartbeatTracker]
-	reconnectStates     registry[*protocol.ReconnectState]
-	sequenceTrackers    registry[*protocol.SequenceTracker]
+	latencyMonitors      registry[*protocol.LatencyMonitor]
+	heartbeatTrackers    registry[*protocol.HeartbeatTracker]
+	reconnectStates      registry[*protocol.ReconnectState]
+	sequenceTrackers     registry[*protocol.SequenceTracker]
 	fragmentReassemblers registry[*protocol.FragmentReassembler]
-	keymapTables        registry[*protocol.KeyMapTable]
+	keymapTables         registry[*protocol.KeyMapTable]
 )
 
 // --- Frame ---
@@ -436,7 +437,6 @@ func fg_payload_unmarshal_disconnect(data *C.uint8_t, len C.size_t, outReason *C
 	return 0
 }
 
-
 //export fg_payload_clipboard
 func fg_payload_clipboard(mime *C.char, data *C.uint8_t, dataLen C.size_t, outLen *C.size_t) *C.uint8_t {
 	p := &protocol.ClipboardPayload{
@@ -597,10 +597,11 @@ func fg_classify_rssi(rssi C.int) C.int {
 
 // --- WiFi Direct ---
 
-//export fg_wifidirect_request_encode
 // pskHash is ignored: v1.1 removed the PSK hash from the wire format (§3.1.3 —
 // broadcasting it enabled offline PSK guessing). The parameter is kept so the
 // C ABI in cgo.h stays stable until clients are rebuilt.
+//
+//export fg_wifidirect_request_encode
 func fg_wifidirect_request_encode(version C.uint8_t, port C.uint16_t, ipAddr *C.uint8_t, subnet *C.uint8_t, channel C.uint8_t, band C.uint8_t, security C.uint8_t, pskHash *C.uint8_t, outLen *C.size_t) *C.uint8_t {
 	_ = pskHash
 	r := &protocol.WiFiDirectRequest{
@@ -923,6 +924,388 @@ func fg_identify_response_encode(status C.uint8_t, platform C.uint8_t, caps C.ui
 	}
 	*outLen = C.size_t(len(data))
 	return out
+}
+
+// --- 会话层：ClipboardSession / FileSender / FileReceiver (v1.1 §5.3 / §7.4) ---
+//
+// 会话模块的回调是 Go 函数，无法直接跨 C ABI 传递。这里一律改成「Go 侧缓存
+// 结果、C 侧轮询读取」的形态：投递方调 HandleFrame/Handle(pump)，读取方在
+// 自己的定时器里取。这既省掉了函数指针编组这层脆弱机制，也和客户端本来就要
+// 跑的采样定时器对齐。
+
+// clipSession 包装 ClipboardSession，并暂存一次重组完成的剪贴板，
+// 供 fg_clipboard_take_pending 取走。
+type clipSession struct {
+	sess *protocol.ClipboardSession
+
+	mu      sync.Mutex
+	pending *protocol.Clipboard
+}
+
+// send seam：会话层把「帧类型 + 载荷」交给这里；客户端用自己的 FrameSink。
+// v1.1 的客户端目前只做单连接演示，故 sink 是全局的；真正的多连接版本需要
+// 把 sink 随句柄一起存（见 docs/PROTOCOL-INTEGRATION.md 的后续项）。
+var sessionSinkMu sync.RWMutex
+var sessionSink func(frameType uint8, payload []byte) error
+
+// errCode 把任意 error 归一成协议错误码：*ProtocolError 直接取 Code，
+// 其它 error 一律归到 ErrSendFailed。C 侧只认数字错误码，不认 Go 的 error 树。
+func errCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var pe *protocol.ProtocolError
+	if errors.As(err, &pe) {
+		return int(pe.Code)
+	}
+	return int(protocol.ErrSendFailed)
+}
+
+//export fg_session_set_sink
+func fg_session_set_sink(userdata uintptr) {
+	sessionSinkMu.Lock()
+	defer sessionSinkMu.Unlock()
+	if userdata == 0 {
+		sessionSink = nil
+		return
+	}
+	// 这里的 userdata 是客户端注册的 sink 标识；当前实现只支持全局唯一 sink，
+	// 多连接场景需扩展为按句柄查找。
+	sessionSink = func(frameType uint8, payload []byte) error { return nil }
+	_ = userdata
+}
+
+func emitFrame(frameType uint8, payload []byte) error {
+	sessionSinkMu.RLock()
+	sink := sessionSink
+	sessionSinkMu.RUnlock()
+	if sink == nil {
+		return protocol.NewError(protocol.ErrNotConnected, "no session sink registered")
+	}
+	return sink(frameType, payload)
+}
+
+//export fg_clipboard_session_new
+func fg_clipboard_session_new() uintptr {
+	cs := &clipSession{sess: protocol.NewClipboardSession(emitFrame)}
+	cs.sess.OnClipboard = func(c protocol.Clipboard) {
+		cs.mu.Lock()
+		cs.pending = &c
+		cs.mu.Unlock()
+	}
+	return clipSessions.put(cs)
+}
+
+//export fg_clipboard_session_free
+func fg_clipboard_session_free(handle uintptr) {
+	clipSessions.remove(handle)
+}
+
+// passes<1 视作 1；返回 0 表示成功，否则是 protocol 错误码。
+//
+//export fg_clipboard_send
+func fg_clipboard_send(handle uintptr, mime *C.char, data *C.uint8_t, dataLen C.size_t, passes C.int) C.int {
+	cs, ok := clipSessions.get(handle)
+	if !ok {
+		return C.int(int(protocol.ErrInvalidPayload))
+	}
+	var buf []byte
+	if dataLen > 0 && data != nil {
+		buf = unsafe.Slice((*byte)(unsafe.Pointer(data)), int(dataLen))
+	}
+	if err := cs.sess.SendClipboardPasses(goString(mime), buf, int(passes)); err != nil {
+		return C.int(errCode(err))
+	}
+	return 0
+}
+
+//export fg_clipboard_handle_frame
+func fg_clipboard_handle_frame(handle uintptr, payload *C.uint8_t, n C.size_t) C.int {
+	cs, ok := clipSessions.get(handle)
+	if !ok {
+		return C.int(int(protocol.ErrInvalidPayload))
+	}
+	if n > 0 && payload != nil {
+		if _, err := cs.sess.HandleFrame(unsafe.Slice((*byte)(unsafe.Pointer(payload)), int(n))); err != nil {
+			return C.int(errCode(err))
+		}
+	}
+	return 0
+}
+
+// 返回 1 表示取到一份重组完成的剪贴板，MIME 与数据交给调用方用 fg_free_buffer 释放。
+//
+//export fg_clipboard_take_pending
+func fg_clipboard_take_pending(handle uintptr, outMime **C.uint8_t, outMimeLen *C.size_t, outData **C.uint8_t, outDataLen *C.size_t) C.int {
+	cs, ok := clipSessions.get(handle)
+	if !ok {
+		return 0
+	}
+	cs.mu.Lock()
+	c := cs.pending
+	cs.pending = nil
+	cs.mu.Unlock()
+	if c == nil {
+		return 0
+	}
+	*outMimeLen = 0
+	*outDataLen = 0
+	*outMime = cBuffer([]byte(c.MIMEType))
+	*outData = cBuffer(c.Data)
+	return 1
+}
+
+var (
+	clipSessions  registry[*clipSession]
+	fileSenders   registry[*fileSender]
+	fileReceivers registry[*fileReceiver]
+)
+
+// fileSender 包装 FileSender 并把回调结果缓存下来供轮询。
+type fileSender struct {
+	sess *protocol.FileSender
+
+	mu      sync.Mutex
+	sent    int
+	total   int
+	state   int // 0=空闲 1=传输中 2=完成 3=失败
+	errCode int
+}
+
+//export fg_file_sender_new
+func fg_file_sender_new() uintptr {
+	fs := &fileSender{sess: protocol.NewFileSender(emitFrame)}
+	fs.sess.OnProgress = func(_ uint16, sent, total int) {
+		fs.mu.Lock()
+		fs.sent, fs.total, fs.state = sent, total, 1
+		fs.mu.Unlock()
+	}
+	fs.sess.OnDone = func(_ uint16, err error) {
+		fs.mu.Lock()
+		fs.state = 2
+		fs.errCode = 0
+		if err != nil {
+			fs.state = 3
+			fs.errCode = errCode(err)
+		}
+		fs.mu.Unlock()
+	}
+	return fileSenders.put(fs)
+}
+
+//export fg_file_sender_free
+func fg_file_sender_free(handle uintptr) { fileSenders.remove(handle) }
+
+//export fg_file_sender_offer
+func fg_file_sender_offer(handle uintptr, name *C.char, data *C.uint8_t, dataLen C.size_t, outID *C.uint16_t) C.int {
+	fs, ok := fileSenders.get(handle)
+	if !ok {
+		return C.int(int(protocol.ErrInvalidPayload))
+	}
+	var buf []byte
+	if dataLen > 0 && data != nil {
+		buf = unsafe.Slice((*byte)(unsafe.Pointer(data)), int(dataLen))
+	}
+	id, err := fs.sess.OfferFile(goString(name), buf)
+	if err != nil {
+		return C.int(errCode(err))
+	}
+	*outID = C.uint16_t(id)
+	return 0
+}
+
+// 返回实际发出的分块数；outPumped=0 且返回码非 0 表示出错。
+//
+//export fg_file_sender_pump
+func fg_file_sender_pump(handle uintptr, maxChunks C.int, outPumped *C.int) C.int {
+	fs, ok := fileSenders.get(handle)
+	if !ok {
+		return C.int(int(protocol.ErrInvalidPayload))
+	}
+	n, err := fs.sess.Pump(int(maxChunks))
+	*outPumped = C.int(n)
+	if err != nil {
+		return C.int(errCode(err))
+	}
+	return 0
+}
+
+//export fg_file_sender_handle_frame
+func fg_file_sender_handle_frame(handle uintptr, frameType C.uint8_t, payload *C.uint8_t, n C.size_t) C.int {
+	fs, ok := fileSenders.get(handle)
+	if !ok {
+		return C.int(int(protocol.ErrInvalidPayload))
+	}
+	if n > 0 && payload != nil {
+		if err := fs.sess.HandleFrame(uint8(frameType), unsafe.Slice((*byte)(unsafe.Pointer(payload)), int(n))); err != nil {
+			return C.int(errCode(err))
+		}
+	}
+	return 0
+}
+
+// state: 0 空闲 / 1 传输中 / 2 完成 / 3 失败。读取本身会清掉 2、3 两个终态，
+// 让 UI 只弹一次「完成 / 失败」。
+//
+//export fg_file_sender_poll
+func fg_file_sender_poll(handle uintptr, outState *C.int, outSent *C.int, outTotal *C.int, outErr *C.int) C.int {
+	fs, ok := fileSenders.get(handle)
+	if !ok {
+		return -1
+	}
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	*outState = C.int(fs.state)
+	*outSent = C.int(fs.sent)
+	*outTotal = C.int(fs.total)
+	*outErr = C.int(fs.errCode)
+	if fs.state == 2 || fs.state == 3 {
+		fs.state = 0
+		fs.errCode = 0
+	}
+	return 0
+}
+
+// fileReceiver 包装 FileReceiver，并暂存「收到 offer」与「完成/失败」两类结果。
+type fileReceiver struct {
+	sess *protocol.FileReceiver
+
+	mu       sync.Mutex
+	offer    *protocol.FileOffer
+	complete *protocol.FileOffer
+	data     []byte
+	errCode  int
+	hasDone  bool
+}
+
+func (fr *fileReceiver) takeOffer() *protocol.FileOffer {
+	fr.mu.Lock()
+	defer fr.mu.Unlock()
+	o := fr.offer
+	fr.offer = nil
+	return o
+}
+
+//export fg_file_receiver_new
+func fg_file_receiver_new() uintptr {
+	fr := &fileReceiver{sess: protocol.NewFileReceiver(emitFrame)}
+	fr.sess.OnOffer = func(offer protocol.FileOffer) {
+		cpy := offer
+		fr.mu.Lock()
+		fr.offer = &cpy
+		fr.mu.Unlock()
+	}
+	fr.sess.OnComplete = func(offer protocol.FileOffer, data []byte, err error) {
+		cpy := offer
+		fr.mu.Lock()
+		fr.complete = &cpy
+		fr.data = data
+		fr.hasDone = true
+		fr.errCode = 0
+		if err != nil {
+			fr.errCode = errCode(err)
+		}
+		fr.mu.Unlock()
+	}
+	return fileReceivers.put(fr)
+}
+
+//export fg_file_receiver_free
+func fg_file_receiver_free(handle uintptr) { fileReceivers.remove(handle) }
+
+// outHandled=1 表示该帧属于文件传输协议，分发器可以据此决定不再往下传。
+//
+//export fg_file_receiver_handle_frame
+func fg_file_receiver_handle_frame(handle uintptr, frameType C.uint8_t, payload *C.uint8_t, n C.size_t, outHandled *C.int) C.int {
+	fr, ok := fileReceivers.get(handle)
+	if !ok {
+		return C.int(int(protocol.ErrInvalidPayload))
+	}
+	var buf []byte
+	if n > 0 && payload != nil {
+		buf = unsafe.Slice((*byte)(unsafe.Pointer(payload)), int(n))
+	}
+	handled, err := fr.sess.HandleFrame(uint8(frameType), buf)
+	if handled {
+		*outHandled = 1
+	} else {
+		*outHandled = 0
+	}
+	if err != nil {
+		return C.int(errCode(err))
+	}
+	return 0
+}
+
+// 返回 1 表示有一个待用户确认的 offer；name 需用 fg_free_buffer 释放。
+//
+//export fg_file_receiver_take_offer
+func fg_file_receiver_take_offer(handle uintptr, outID *C.uint16_t, outName **C.uint8_t, outNameLen *C.size_t, outSize *C.uint64_t) C.int {
+	fr, ok := fileReceivers.get(handle)
+	if !ok {
+		return 0
+	}
+	o := fr.takeOffer()
+	if o == nil {
+		return 0
+	}
+	*outID = C.uint16_t(o.TransferID)
+	*outSize = C.uint64_t(o.Size)
+	nb := []byte(o.Name)
+	*outNameLen = C.size_t(len(nb))
+	*outName = cBuffer(nb)
+	return 1
+}
+
+//export fg_file_receiver_accept
+func fg_file_receiver_accept(handle uintptr, id C.uint16_t) C.int {
+	fr, ok := fileReceivers.get(handle)
+	if !ok {
+		return C.int(int(protocol.ErrInvalidPayload))
+	}
+	if err := fr.sess.Accept(uint16(id)); err != nil {
+		return C.int(errCode(err))
+	}
+	return 0
+}
+
+//export fg_file_receiver_reject
+func fg_file_receiver_reject(handle uintptr, id C.uint16_t, status C.uint8_t) C.int {
+	fr, ok := fileReceivers.get(handle)
+	if !ok {
+		return C.int(int(protocol.ErrInvalidPayload))
+	}
+	if err := fr.sess.Reject(uint16(id), protocol.FileAckStatus(status)); err != nil {
+		return C.int(errCode(err))
+	}
+	return 0
+}
+
+// 返回 1 表示有一次终态结果；name 与 data 需用 fg_free_buffer 释放。
+// outErr 非 0 表示校验失败或传输失败，data 为空。
+//
+//export fg_file_receiver_take_complete
+func fg_file_receiver_take_complete(handle uintptr, outName **C.uint8_t, outNameLen *C.size_t, outData **C.uint8_t, outDataLen *C.size_t, outErr *C.int) C.int {
+	fr, ok := fileReceivers.get(handle)
+	if !ok {
+		return 0
+	}
+	fr.mu.Lock()
+	o := fr.complete
+	data := fr.data
+	code := fr.errCode
+	fr.complete, fr.data, fr.hasDone, fr.errCode = nil, nil, false, 0
+	fr.mu.Unlock()
+	if o == nil {
+		return 0
+	}
+	*outErr = C.int(code)
+	nb := []byte(o.Name)
+	*outNameLen = C.size_t(len(nb))
+	*outName = cBuffer(nb)
+	*outDataLen = C.size_t(len(data))
+	*outData = cBuffer(data)
+	return 1
 }
 
 // --- Main (required for c-archive) ---
