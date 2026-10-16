@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=FlowGrid
+GenericName=键鼠共享
+Comment=在多台电脑之间共享一套键盘与鼠标
+Exec=flowgrid-deepin
+Icon=flowgrid
+Terminal=false
+Categories=Utility;RemoteAccess;Network;
+Keywords=键鼠共享;共享键鼠;Synergy;Flow;
+StartupNotify=false
+X-GNOME-UsesNotifications=false

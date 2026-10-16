@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file alias="flowgrid.svg">icons/flowgrid.svg</file>
+    </qresource>
+</RCC>

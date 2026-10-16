@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=FlowGrid
+Comment=登录后自动启动 FlowGrid 键鼠共享
+Exec=flowgrid-deepin
+Icon=flowgrid
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

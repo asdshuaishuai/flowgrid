@@ -1,0 +1,298 @@
+// FlowGrid deepin (DDE 25) 客户端入口。
+//
+// 形态：托盘常驻，无主窗口。所有界面都是按需唤出的浮板（设计稿第一原则）。
+// 因此本文件只做四件事：应用身份与单实例、宿主主题同步、托盘图标、浮板调度。
+//
+// deepin 专属要点（来自旧客户端 git d1e71e4 的实战结论，务必保留）：
+//   1. 深色主题必须问 org.deepin.dde.Appearance1 的 GlobalTheme，
+//      DGuiApplicationHelper::themeType() 在 DDE 25 上读不到它；
+//   2. dde-dock 通过 StatusNotifierItem 提供托盘，点击图标要触发 Activate
+//      才会走 QSystemTrayIcon::activated，所以不能设 ItemIsMenu（设了就只有菜单）。
+#include "core/designtokens.h"
+#include "core/devicemanager.h"
+#include "core/hosttheme.h"
+#include "core/theme.h"
+#include "ui/clipboardpanel.h"
+#include "ui/connectionspanel.h"
+#include "ui/filespanel.h"
+#include "ui/keymappanel.h"
+#include "ui/latencypanel.h"
+#include "ui/pairingpanel.h"
+#include "ui/settingspanel.h"
+#include "ui/traypopup.h"
+
+#include <DApplication>
+#include <DGuiApplicationHelper>
+#include <DPlatformTheme>
+
+#include <QCommandLineOption>
+#include <QCommandLineParser>
+#include <QDir>
+#include <QFileDialog>
+#include <QLoggingCategory>
+#include <QPixmap>
+#include <QScreen>
+#include <QSystemTrayIcon>
+#include <QTimer>
+
+#include <cstdlib>
+
+Q_LOGGING_CATEGORY(lcApp, "flowgrid.app")
+
+DWIDGET_USE_NAMESPACE
+DGUI_USE_NAMESPACE
+
+using namespace fg;
+
+namespace {
+
+// 三块浮板常驻复用：反复 show/hide 比每次 new 少一次布局抖动，
+// 也让折叠区里已采到的柱状图在关闭再打开后仍然保留。
+TrayPopup *g_trayPopup = nullptr;
+ConnectionsPanel *g_connections = nullptr;
+LatencyPanel *g_latency = nullptr;
+SettingsPanel *g_settings = nullptr;
+KeymapPanel *g_keymap = nullptr;
+PairingPanel *g_pairing = nullptr;
+ClipboardPanel *g_clipboard = nullptr;
+FilesPanel *g_files = nullptr;
+QSystemTrayIcon *g_trayIcon = nullptr;
+
+// 托盘图标几何：托盘面板以图标为中心、上方留 8px。拿不到图标几何时
+// 退化到主屏右上角，保证功能不丢。
+QPoint anchorPoint()
+{
+    if (g_trayIcon != nullptr && QSystemTrayIcon::isSystemTrayAvailable()) {
+        const QRect geo = g_trayIcon->geometry();
+        if (geo.isValid() && !geo.isEmpty()) {
+            return QPoint(geo.center().x(), geo.top() - 8);
+        }
+    }
+    QScreen *screen = QGuiApplication::primaryScreen();
+    if (screen == nullptr) {
+        return QPoint(400, 200);
+    }
+    const QRect avail = screen->availableGeometry();
+    return QPoint(avail.right() - 32, avail.top() + 64);
+}
+
+void showPanel(QWidget *panel)
+{
+    if (panel == nullptr) {
+        return;
+    }
+    // 同一时刻只留一块浮板：设计稿里浮板是平级、按需唤出的，不是叠加的。
+    if (g_trayPopup != nullptr && g_trayPopup != panel) {
+        g_trayPopup->hide();
+    }
+    if (g_connections != nullptr && g_connections != panel) {
+        g_connections->hide();
+    }
+    if (g_latency != nullptr && g_latency != panel) {
+        g_latency->hide();
+    }
+    for (QWidget *other : {static_cast<QWidget *>(g_settings), static_cast<QWidget *>(g_keymap),
+                           static_cast<QWidget *>(g_pairing), static_cast<QWidget *>(g_clipboard),
+                           static_cast<QWidget *>(g_files)}) {
+        if (other != nullptr && other != panel) {
+            other->hide();
+        }
+    }
+    if (auto *p = qobject_cast<Panel *>(panel)) {
+        p->popupAt(anchorPoint());
+    } else if (auto *t = qobject_cast<TrayPopup *>(panel)) {
+        t->popupAt(anchorPoint());
+    } else {
+        placePopup(panel, anchorPoint());
+        animatePopupIn(panel);
+    }
+}
+
+// 尚未接通的入口统一提示，而不是静默无反应。
+void notYetWired(const QString &what)
+{
+    qCInfo(lcApp) << "尚未接通:" << what;
+}
+
+QIcon appIcon()
+{
+    QIcon i = QIcon::fromTheme(QStringLiteral("flowgrid"));
+    if (i.isNull()) {
+        i = QIcon(QStringLiteral(":/icons/flowgrid.svg"));
+    }
+    return i;
+}
+
+} // namespace
+
+int main(int argc, char *argv[])
+{
+    DApplication app(argc, argv);
+    app.setOrganizationName(QStringLiteral("flowgrid"));
+    app.setApplicationName(QStringLiteral("FlowGrid"));
+    app.setApplicationDisplayName(QStringLiteral("FlowGrid"));
+    app.setApplicationVersion(QStringLiteral(FLOWGRID_VERSION));
+    app.setProductIcon(appIcon());
+    // 托盘常驻：关掉最后一个窗口不等于退出进程。
+    app.setQuitOnLastWindowClosed(false);
+
+    QCommandLineParser parser;
+    parser.setApplicationDescription(
+        QStringLiteral("FlowGrid — 跨平台键鼠共享（deepin / DDE 25 客户端）"));
+    parser.addHelpOption();
+    parser.addVersionOption();
+    // 截图钩子：无头环境下无法靠肉眼验收，--snapshot 直接落 PNG。
+    QCommandLineOption snapshotOpt(QStringLiteral("snapshot"),
+                                   QStringLiteral("把当前浮板渲染到 <path>.png 后退出"),
+                                   QStringLiteral("path"));
+    parser.addOption(snapshotOpt);
+    // 明暗强制开关：无头环境没有 DTK 平台主题插件，无法靠改设置中心验证两套配色，
+    // 截图对比与 QA 都需要它。
+    QCommandLineOption themeOpt(
+        QStringLiteral("theme"),
+        QStringLiteral("强制主题：auto（问 Appearance1）/ light / dark"),
+        QStringLiteral("mode"), QStringLiteral("auto"));
+    parser.addOption(themeOpt);
+    parser.process(app);
+
+    // 单实例：DTK6 的 setSingleInstance 返回 false 表示已有一份在跑。
+    // 必须在创建任何长驻对象之前调用，否则会多起一套采样定时器。
+    if (!app.setSingleInstance(QStringLiteral("flowgrid-deepin"))) {
+        return 0;
+    }
+
+    // 主题：先定明暗，再让 Theme 解析具体颜色。顺序不能反——Theme 以
+    // HostTheme 的判定为准（见 theme.cpp），HostTheme 晚于 Theme 初始化就会
+    // 拿到一个错的 isDark。
+    const QString forcedTheme = parser.value(themeOpt);
+    if (forcedTheme == QLatin1String("light") || forcedTheme == QLatin1String("dark")) {
+        HostTheme::instance().setForced(forcedTheme == QLatin1String("dark"), true);
+    }
+    HostTheme::instance().probe();   // 内部已订阅 Appearance1 的 PropertiesChanged
+    Theme::instance().refresh();
+
+    auto &manager = DeviceManager::instance();
+    manager.setSource(makeLocalSampleSource(&app));
+
+    g_trayPopup = new TrayPopup;
+    g_connections = new ConnectionsPanel;
+    g_latency = new LatencyPanel;
+    g_settings = new SettingsPanel;
+    g_keymap = new KeymapPanel;
+    g_pairing = new PairingPanel;
+    g_clipboard = new ClipboardPanel;
+    g_files = new FilesPanel;
+
+    // context 用 sender 自己而非 &app：本 TU 里 DApplication 到 const QObject*
+    // 的隐式转换不成立，而连接本来也该随浮板一起消失。
+    QObject::connect(g_trayPopup, &TrayPopup::openConnections, g_trayPopup,
+                     [] { showPanel(g_connections); });
+    QObject::connect(g_trayPopup, &TrayPopup::openLatency, g_trayPopup, [] { showPanel(g_latency); });
+    QObject::connect(g_trayPopup, &TrayPopup::openPairing, g_trayPopup,
+                     [] { showPanel(g_pairing); });
+    QObject::connect(g_trayPopup, &TrayPopup::openKeymap, g_trayPopup,
+                     [] { showPanel(g_keymap); });
+    QObject::connect(g_trayPopup, &TrayPopup::openSettings, g_trayPopup,
+                     [] { showPanel(g_settings); });
+    QObject::connect(g_trayPopup, &TrayPopup::openClipboard, g_trayPopup,
+                     [] { g_clipboard->reloadHistory(); showPanel(g_clipboard); });
+    QObject::connect(g_trayPopup, &TrayPopup::openFiles, g_trayPopup,
+                     [] { showPanel(g_files); });
+    QObject::connect(g_trayPopup, &TrayPopup::quitRequested, g_trayPopup, [] { std::exit(0); });
+
+    // 拖放区的「点击选择」：这半条链路是完整的（QFileDialog → FilesPanel::offerFile
+    // → Go 的 FileSender），不需要等传输层。
+    QObject::connect(g_files, &FilesPanel::fileChosen, g_files, [] {
+        const QString path = QFileDialog::getOpenFileName(
+            g_files, QObject::tr("选择要发送的文件"), QDir::homePath());
+        if (!path.isEmpty()) {
+            g_files->offerFile(path);
+        }
+    });
+    // 跨屏跳转一律交给 main：浮板互斥逻辑只有一处，避免各处各 hide 一遍。
+    QObject::connect(g_connections, &ConnectionsPanel::settingsRequested, g_connections,
+                     [] { showPanel(g_settings); });
+    QObject::connect(g_pairing, &PairingPanel::doneRequested, g_pairing,
+                     [] { showPanel(g_connections); });
+    QObject::connect(g_clipboard, &ClipboardPanel::clearHistoryRequested, g_clipboard, [] {
+        // 历史目前只活在 ClipboardPanel 进程内，清完就真没了；等接上持久化后
+        // 这里要改成删盘上的那份，这里先明确记一笔而不是悄悄无事发生。
+        qCInfo(lcApp) << "已清空剪贴板同步历史（当前仅内存副本）";
+    });
+    // 下面两处要等传输层 / 键位映射编辑器落地，先明确告诉用户而不是点了没反应。
+    QObject::connect(g_pairing, &PairingPanel::pairRequested, g_pairing,
+                     [](const QString &name) { notYetWired(QObject::tr("向 %1 发起配对").arg(name)); });
+    QObject::connect(g_keymap, &KeymapPanel::editRequested, g_keymap,
+                     [] { notYetWired(QObject::tr("键位映射规则编辑")); });
+
+    // 浮板内容随采样实时刷新
+    QObject::connect(&manager, &DeviceManager::devicesChanged, g_trayPopup, &TrayPopup::refresh);
+    QObject::connect(&manager, &DeviceManager::sampled, g_trayPopup, &TrayPopup::refresh);
+
+    g_trayIcon = new QSystemTrayIcon(appIcon(), &app);
+    g_trayIcon->setToolTip(QStringLiteral("FlowGrid"));
+    // 不设 ItemIsMenu：dde-dock 对菜单型条目只会弹菜单，而设计稿要的是
+    // 自绘的 300px 浮层，必须走 Activate 路径。
+    g_trayIcon->setProperty("Title", QStringLiteral("FlowGrid"));
+    g_trayIcon->setProperty("Id", QStringLiteral("flowgrid-deepin"));
+    QObject::connect(g_trayIcon, &QSystemTrayIcon::activated, g_trayIcon,
+            [](QSystemTrayIcon::ActivationReason reason) {
+                if (reason == QSystemTrayIcon::Trigger) {
+                    if (g_trayPopup != nullptr && g_trayPopup->isVisible()) {
+                        g_trayPopup->hide();
+                    } else {
+                        showPanel(g_trayPopup);
+                    }
+                }
+            });
+
+    const bool trayAvailable = QSystemTrayIcon::isSystemTrayAvailable();
+    if (trayAvailable) {
+        g_trayIcon->show();
+    } else {
+        qCWarning(lcApp) << "系统托盘不可用，托盘浮层无法唤出";
+    }
+
+    // 截图模式：依次渲染八块界面并退出，供无头环境验收。
+    if (parser.isSet(snapshotOpt)) {
+        const QString base = parser.value(snapshotOpt);
+        QTimer::singleShot(600, &app, [&app, base] {
+            // 走真实的 pop-up 定位（showPanel 内部会算 anchorPoint），而不是手调
+            // 几何：截图与实际唤出同一条路径，否则「截图好看、实际错位」这类问题
+            // 在无头环境里根本查不出来。
+            const auto shot = [&base](QWidget *w, const QString &suffix) {
+                if (w == nullptr) {
+                    return;
+                }
+                w->setAttribute(Qt::WA_DontShowOnScreen, true);
+                showPanel(w);
+                w->ensurePolished();
+                const QString path =
+                    suffix.isEmpty() ? base : QStringLiteral("%1-%2.png").arg(base, suffix);
+                w->grab().save(path);
+                qCInfo(lcApp) << "snapshot ->" << path
+                              << w->width() << "x" << w->height();
+                w->hide();
+            };
+            shot(g_trayPopup, QStringLiteral("tray"));
+            shot(g_connections, QStringLiteral("connections"));
+            shot(g_latency, QStringLiteral("latency"));
+            shot(g_settings, QStringLiteral("settings"));
+            shot(g_keymap, QStringLiteral("keymap"));
+            shot(g_pairing, QStringLiteral("pairing"));
+            shot(g_clipboard, QStringLiteral("clipboard"));
+            shot(g_files, QStringLiteral("files"));
+            app.quit();
+        });
+    } else {
+        // 托盘常驻但首屏不主动弹浮层：设计稿的入口只有托盘图标。
+        QTimer::singleShot(0, &app, [&] {
+            if (!trayAvailable) {
+                // 没有托盘就无处唤起，直接把主入口摆出来，总比打不开强。
+                showPanel(g_trayPopup);
+            }
+        });
+    }
+
+    return app.exec();
+}
