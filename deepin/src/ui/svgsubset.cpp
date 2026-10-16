@@ -135,22 +135,34 @@ void appendArc(QPainterPath &path, const QPointF &from, double rx, double ry, do
     const QPointF center(cosPhi * cxp - sinPhi * cyp + (from.x() + to.x()) / 2.0,
                          sinPhi * cxp + cosPhi * cyp + (from.y() + to.y()) / 2.0);
 
+    // 坐标系约定：这里的 atan2 在 y 向下的坐标系里给出的是 **SVG 空间**的角 φ，
+    // 而 QPainterPath::arcTo 的角 θ 是 y 向上的（θ = -φ）。起点角和跨度都必须取负，
+    // 否则整条弧会镜像到另一侧——早期版本正是栽在这里：wifi 的两条弧被画到了
+    // 画布下方（y≈29 > viewBox 24），屏幕上只剩两段竖线。
     const auto angleOf = [&](const QPointF &p) {
         return qRadiansToDegrees(qAtan2((p.y() - center.y()) / ry, (p.x() - center.x()) / rx));
     };
-    const double theta1 = angleOf(from);
-    const double delta = angleOf(to) - theta1;
 
-    // sweep 只决定方向；顺时针扫描时 delta 取模到 (-180, 180]。
-    double sweepAngle = sweep ? delta : -delta;
-    while (sweepAngle <= -180.0) {
-        sweepAngle += 360.0;
+    // SVG 的 sweep 只决定方向：1 = φ 增大。先把 delta 落到该方向的那个模上。
+    double delta = angleOf(to) - angleOf(from);
+    if (sweep && delta < 0.0) {
+        delta += 360.0;
+    } else if (!sweep && delta > 0.0) {
+        delta -= 360.0;
     }
-    while (sweepAngle > 180.0) {
-        sweepAngle -= 360.0;
+    // 再按 largeArc 在长弧/短弧之间切换（同一个端点对有两个合法弧）。
+    if (largeArc && qAbs(delta) < 180.0) {
+        delta += delta >= 0.0 ? 360.0 : -360.0;
+    } else if (!largeArc && qAbs(delta) > 180.0) {
+        delta -= delta >= 0.0 ? 360.0 : -360.0;
+    }
+    if (qFuzzyIsNull(delta)) {
+        // 起终点重合 = 整圆，取正向一整圈。
+        delta = sweep ? 360.0 : -360.0;
     }
 
-    path.arcTo(QRectF(center.x() - rx, center.y() - ry, rx * 2.0, ry * 2.0), theta1, sweepAngle);
+    path.arcTo(QRectF(center.x() - rx, center.y() - ry, rx * 2.0, ry * 2.0),
+               -angleOf(from), -delta);
     // arcMoveTo/arcTo 之后 Qt 把当前点留在弧终点，但为了后续相对指令不出错，
     // 显式回到目标点。
     const auto last = path.currentPosition();
