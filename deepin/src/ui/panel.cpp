@@ -87,9 +87,12 @@ void animatePopupIn(QWidget *w)
     move->setDuration(tokens::kDurEnter);
     move->setEasingCurve(QEasingCurve(QEasingCurve::InOutQuint));
     const QRect target = w->geometry();
-    // 设计稿：translateY(-8px) + scale(.97) → 归位
-    move->setStartValue(QRect(target.x(), target.y() - 8, target.width(),
-                              qMax(1, int(target.height() * 0.97))));
+    // 设计稿写的是 translateY(-8px) + scale(.97)。早先把 scale 也做进了 geometry
+    // 动画里（起始高度取 0.97 倍），结果每帧都在改窗口高度——Qt 随之重排整个
+    // 内容树，文字反复折行、滚动条反复闪，一句话的浮板打开过程看着像在抽搐。
+    // scale 是纯视觉变换，Qt 的 Widget 没有 transform 属性可用；这里只保留位移，
+    // 位移只动位置不动尺寸，不会触发任何重排。
+    move->setStartValue(QRect(target.x(), target.y() - 8, target.width(), target.height()));
     move->setEndValue(target);
     move->start(QAbstractAnimation::DeleteWhenStopped);
 }
@@ -103,11 +106,11 @@ Panel::Panel(const QString &title, QWidget *parent) : QWidget(parent)
     setFixedWidth(tokens::kPanelWidth);
 
     // 设计稿：0 18px 42px rgba(24,30,44,.14)
-    auto *shadow = new QGraphicsDropShadowEffect(this);
-    shadow->setBlurRadius(tokens::kShadowPanelR);
-    shadow->setOffset(0, tokens::kShadowPanelY);
-    shadow->setColor(Theme::instance().palette().shadowPanel);
-    setGraphicsEffect(shadow);
+    shadow_ = new QGraphicsDropShadowEffect(this);
+    shadow_->setBlurRadius(tokens::kShadowPanelR);
+    shadow_->setOffset(0, tokens::kShadowPanelY);
+    shadow_->setColor(Theme::instance().palette().shadowPanel);
+    setGraphicsEffect(shadow_);
 
     root_ = new QVBoxLayout(this);
     root_->setContentsMargins(0, 0, 0, 0);
@@ -132,12 +135,11 @@ Panel::Panel(const QString &title, QWidget *parent) : QWidget(parent)
     }
 
     auto *scroll = new QScrollArea(this);
+    scroll_ = scroll;
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    // 设计稿的滚动条是 10px、pill 形、line-3 色；交给 DTK 主题滚动条会与
-    // 设计稿差一档，这里保持系统滚动条但去掉默认边框。
-    scroll->setStyleSheet(QStringLiteral("QScrollArea { background: transparent; }"));
+    // 滚动条样式与内容区底色一起在 restyle() 里设（含系统主题变更时的重刷）。
     // 关键：viewport 默认 autoFillBackground=true，会拿 QPalette::Window 自己填一层，
     // 于是 Panel 画好的深色底被白色盖住——浅色主题下看不出来（都是白的），
     // 深色主题下内容区就是一整块白板。必须显关掉。
@@ -149,17 +151,10 @@ Panel::Panel(const QString &title, QWidget *parent) : QWidget(parent)
     // 「透」上来的，实际测下来这块一直是全透明的（截图 alpha=0）：深色主题下
     // 透明和 surface-2 差不了多少，肉眼看不出来；一换浅色主题整块浮板直接
     // 没有底。子控件不透传、滚动区也不画底，能兜住底色的就只剩内容区自己。
-    //
-    // 左右各留 1px 描边：内容铺满整宽，不自己描边会把面板那圈 1px 边框盖掉
-    // （CSS 里子元素是裁在 padding box 内的，Qt 没有这个盒模型）。
     content_->setObjectName(QStringLiteral("panelContent"));
     content_->setAttribute(Qt::WA_StyledBackground, true);
-    content_->setStyleSheet(
-        QStringLiteral("#panelContent{border-left:1px solid %1;border-right:1px solid %1;"
-                       "background:%2;}")
-            .arg(colorHex(Theme::instance().palette().line2),
-                 colorHex(Theme::instance().palette().surface)));
     content_->setAutoFillBackground(false);
+    restyle();
     auto *cl = new QVBoxLayout(content_);
     cl->setContentsMargins(tokens::kContentPadding, tokens::kContentPadding,
                             tokens::kContentPadding, tokens::kContentPadding);
@@ -167,6 +162,11 @@ Panel::Panel(const QString &title, QWidget *parent) : QWidget(parent)
     scroll->setWidget(content_);
     root_->addWidget(scroll, 1);
 
+    // 系统主题在运行中被设置中心切走时，浮板自身的外框、投影、底色必须跟着换，
+    // 否则里面 Badge / 开关 / 按钮都换成深色了，浮板还顶着一圈浅色描边和白色
+    // 内容底——整块面板像坏掉一样。paintChrome 本来就是每帧现取调色板的，
+    // 真正卡住的是这里烘死进样式表和阴影里的几个颜色。
+    connect(&Theme::instance(), &Theme::changed, this, [this] { restyle(); });
 }
 
 void Panel::setTitleBarWidget(QWidget *widget)
@@ -241,6 +241,49 @@ void Panel::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     paintChrome(p);
+}
+
+void Panel::restyle()
+{
+    if (shadow_ != nullptr) {
+        shadow_->setColor(Theme::instance().palette().shadowPanel);
+    }
+    if (content_ == nullptr) {
+        return;
+    }
+    // 左右各留 1px 描边：内容铺满整宽，不自己描边会把面板那圈 1px 边框盖掉
+    // （CSS 里子元素是裁在 padding box 内的，Qt 没有这个盒模型）。
+    const Palette &p = Theme::instance().palette();
+    content_->setStyleSheet(
+        QStringLiteral("#panelContent{border-left:1px solid %1;border-right:1px solid %1;"
+                       "background:%2;}")
+            .arg(colorHex(p.line2), colorHex(p.surface)));
+    if (scroll_ != nullptr) {
+        // 设计稿 ui.css .content::-webkit-scrollbar：10px 宽、line-3 色、pill 形，
+        // 靠 3px 透明边框把滑块收成 4px 的细条。DTK 自带的是一根 8px 亮灰粗条，
+        // 深色浮板上比稿子亮一大截，浅色下又压过卡片描边，所以按稿子显式画一根；
+        // 行末的箭头按钮一并去掉——设计稿没有。
+        //
+        // 「3px 透明边框」在 Qt 里不能用 handle 的 margin 收窄：一旦给滑块加了
+        // margin，Qt 的滚动条样式引擎会把整根条判成无效直接不画（实测滑块连轨道
+        // 一起消失，右边缘只剩面板描边）。改用等价的 background-clip:content-box
+        // + 透明 border，视觉效果一致且引擎认。
+        scroll_->setStyleSheet(
+            QStringLiteral("QScrollArea{background:transparent;}"
+                           "QScrollArea QScrollBar:vertical{width:%1px;background:transparent;"
+                           "margin:0px;border:none;}"
+                           "QScrollArea QScrollBar::handle:vertical{background:%2;"
+                           "background-clip:content-box;border:3px solid transparent;"
+                           "border-radius:5px;min-height:32px;}"
+                           "QScrollArea QScrollBar::add-line:vertical,"
+                           "QScrollArea QScrollBar::sub-line:vertical{height:0px;"
+                           "border:none;background:transparent;}"
+                           "QScrollArea QScrollBar::add-page:vertical,"
+                           "QScrollArea QScrollBar::sub-page:vertical{background:transparent;}")
+                .arg(10)
+                .arg(colorHex(p.line3)));
+    }
+    update();
 }
 
 void Panel::paintChrome(QPainter &p)

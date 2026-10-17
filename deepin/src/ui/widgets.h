@@ -539,6 +539,10 @@ protected:
     void paintEvent(QPaintEvent *) override;
 
 private:
+    // ui.css .key 用 var(--font-mono)：键位串按等宽画出来宽窄才一致，
+    // 否则 "Alt" 比 "Win" 宽，同一行键帽的边缘对不齐。
+    static QFont keycapFont() { return uiMonoFont(tokens::kFont11, QFont::DemiBold); }
+
     QString text_;
     bool ghost_;
 };

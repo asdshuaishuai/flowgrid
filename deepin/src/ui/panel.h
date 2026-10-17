@@ -3,7 +3,7 @@
 // 设计稿的「应用没有常驻主窗口，所有界面都是按需唤出的浮板」在这里落地：
 // 浮板是 FramelessWindowHint + WA_TranslucentBackground，阴影由 QGraphicsDropShadowEffect
 // 承担，圆角与顶部内高光在 paintEvent 里画，唤出动画走 QPropertyAnimation 的
-// geometry + windowOpacity，节奏与设计稿一致（220ms / translateY(-8) / scale(.97)）。
+// geometry + windowOpacity，节奏与设计稿一致（220ms / translateY(-8)）。
 #ifndef FLOWGRID_PANEL_H
 #define FLOWGRID_PANEL_H
 
@@ -12,6 +12,8 @@
 class QVBoxLayout;
 class QLabel;
 class QPropertyAnimation;
+class QScrollArea;
+class QGraphicsDropShadowEffect;
 
 namespace fg {
 
@@ -20,8 +22,7 @@ namespace fg {
 // 迟早会漂移，所以抽成自由函数。返回 false 表示屏幕不可用，调用方应放弃摆位。
 bool placePopup(QWidget *w, const QPoint &anchor);
 
-// 浮板入场动画（opacity + translateY(-8) + scale(.97)，220ms）。
-// 同样被托盘浮层复用。
+// 浮板入场动画（opacity + translateY(-8)，220ms）。同样被托盘浮层复用。
 void animatePopupIn(QWidget *w);
 
 class Panel : public QWidget {
@@ -56,6 +57,7 @@ protected:
 
 private:
     void paintChrome(QPainter &p);
+    void restyle();
 
     QVBoxLayout *root_ = nullptr;
     QWidget *titleBar_ = nullptr;
@@ -63,6 +65,8 @@ private:
     QWidget *titleRight_ = nullptr;
     QWidget *content_ = nullptr;
     QWidget *footer_ = nullptr;
+    QScrollArea *scroll_ = nullptr;
+    QGraphicsDropShadowEffect *shadow_ = nullptr;
 };
 
 } // namespace fg

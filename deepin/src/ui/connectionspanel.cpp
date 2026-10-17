@@ -267,7 +267,16 @@ QWidget *ConnectionsPanel::buildClipboardSection()
     note->setWordWrap(true);
     note->setFont(uiFont(tokens::kFont11));
     note->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-    vl->addWidget(note);
+    // 设计稿 .section__body 里的内容左右各留 12px。这块的 vl 是 0 左右边距的
+    // （下面的 makeSectionFooter 自带 12px，两处一叠就成了 24px），所以正文得
+    // 自己套一层带边距的壳，否则这句话会直接贴着卡片描边，比同屏其它折叠区
+    // 的内缩明显窄一截。
+    auto *noteRow = new QWidget(body);
+    auto *noteHl = new QHBoxLayout(noteRow);
+    noteHl->setContentsMargins(tokens::kS3, 0, tokens::kS3, 0);
+    noteHl->setSpacing(0);
+    noteHl->addWidget(note);
+    vl->addWidget(noteRow);
 
     vl->addWidget(makeSectionFooter(QString(), tr("打开剪贴板"), body,
                                     [this](FgButton *) { Q_EMIT clipboardRequested(); }));
@@ -491,11 +500,14 @@ QWidget *ConnectionsPanel::buildLayoutSection()
             iconBox->setAlignment(Qt::AlignCenter);
             iconBox->setText(d.abbrev.isEmpty() ? d.name.left(2).toUpper() : d.abbrev);
             iconBox->setFont(uiFont(tokens::kFont15, QFont::Bold));
+            // 设计稿 .cell__icon 就是 color: #fff（ui.css 第 438 行），压在
+            // 实色块上；与托盘 .switch-btn__icon 同一处理，不走 onAccent——
+            // 那一档是配主色用的，状态色块套上去会串色。
             iconBox->setStyleSheet(
                 QStringLiteral("background:%1;border-radius:%2px;color:%3")
                     .arg(css(tone.solid))
                     .arg(QString::number(tokens::kRadiusCard))
-                    .arg(css(p.isDark ? QStringLiteral("#ffffff") : QStringLiteral("#ffffff"))));
+                    .arg(QStringLiteral("#ffffff")));
             cl->addWidget(iconBox);
             auto *label = new QLabel(d.name.section(QLatin1Char(' '), 0, 0), cell);
             label->setFont(uiFont(tokens::kFont11, QFont::DemiBold));

@@ -439,21 +439,30 @@ void BarChart::paintEvent(QPaintEvent *)
     for (double v : samples_) {
         peak = qMax(peak, v);
     }
+    // 设计稿 ui.css .chart：padding 12px 12px 8px，柱子在内容盒里 flex:1 排开。
+    // 这块内边距不能省——省掉之后柱子左右直接贴到卡片描边上，而下面 .chart__axis
+    // 的「-60s / 现在」是带 12px 左右的，于是柱子和轴标签两行对不齐；柱子又因为
+    // 按整高算而沉到卡片底边，比设计稿低 8px。
+    const qreal padX = tokens::kS3;
+    const qreal padTop = tokens::kS3;
+    const qreal padBottom = tokens::kS2;
+    const qreal innerW = qMax<qreal>(1.0, width() - padX * 2);
+    const qreal innerH = qMax<qreal>(1.0, height() - padTop - padBottom);
+
     const qreal gap = 4.0;
     const qreal barW =
-        qMax<qreal>(3.0, (width() - gap * (samples_.size() - 1)) / samples_.size());
-    // 设计稿 ui.css .chart：内容盒 = 70 - padding(12 上 / 8 下) = 50px，
-    // 样例数据的柱高在 22~44px 之间波动。这里照抄这个区间而不是按比例缩满，
-    // 否则矮柱会被拉成近乎正方的色块。
-    const qreal usable = height() - tokens::kS3 - tokens::kS2;
-    const qreal maxBar = qMin(44.0, usable);
+        qMax<qreal>(3.0, (innerW - gap * (samples_.size() - 1)) / samples_.size());
+    // 内容盒高 50px，样例数据的柱高在 22~44px 之间波动。这里照抄这个区间而不是
+    // 按比例缩满，否则矮柱会被拉成近乎正方的色块。
+    const qreal maxBar = qMin(44.0, innerH);
     const qreal minBar = qMin(22.0, maxBar * 0.5);
+    const qreal base = padTop + innerH;   // 柱底基线
 
     for (int i = 0; i < static_cast<int>(samples_.size()); ++i) {
         const qreal ratio = qBound(0.0, samples_[i] / peak, 1.0);
         const qreal h = minBar + (maxBar - minBar) * ratio;
-        const qreal x = i * (barW + gap);
-        const qreal y = height() - h;
+        const qreal x = padX + i * (barW + gap);
+        const qreal y = base - h;
         pt.setPen(Qt::NoPen);
         pt.setBrush(static_cast<size_t>(i) + 1 == samples_.size() ? p.accent : p.accentSoft);
 
@@ -1153,7 +1162,7 @@ FgKeycap::FgKeycap(const QString &text, bool ghost, QWidget *parent)
 QSize FgKeycap::sizeHint() const
 {
     // ui.css .key：min-width 34 + padding 5×7 + 1px 描边
-    const QFontMetrics fm(uiFont(tokens::kFont11, QFont::DemiBold));
+    const QFontMetrics fm(keycapFont());
     return QSize(qMax(34, fm.horizontalAdvance(text_) + tokens::kS2 * 2 + 2),
                  fm.height() + 5 * 2 + 2);
 }
@@ -1186,7 +1195,9 @@ void FgKeycap::paintEvent(QPaintEvent *)
     }
 
     pt.setPen(ghost_ ? p.text3 : p.text1);
-    pt.setFont(uiFont(tokens::kFont11, QFont::DemiBold));
+    // ui.css .key 是 font-family: var(--font-mono)：键位串（Ctrl / Win / ⌘）按等宽
+    // 画出来宽窄才一致，否则 "Alt" 比 "Win" 宽，同一行的键帽边缘对不齐。
+    pt.setFont(keycapFont());
     pt.drawText(rect(), Qt::AlignCenter, text_);
 }
 
@@ -1380,8 +1391,11 @@ QLabel *groupTitle(const QString &text, QWidget *parent)
     const Palette &p = Theme::instance().palette();
     auto *label = new QLabel(text, parent);
     label->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
+    // letter-spacing 是 ui.css .list__group-title 的 --ls-caps: 0.04em，
+    // 落在 11px 上约 0.44px。中文没有 uppercase 可转，caps 的实际观感全靠
+    // 这点字距撑着——少了它，分组标题就只是「小一号的灰字」，跟普通 hint 混作一堆。
     label->setStyleSheet(QStringLiteral("color:%1;background:%2;padding:8px %3px 6px %3px;"
-                                        "border-bottom:1px solid %4")
+                                        "border-bottom:1px solid %4;letter-spacing:0.4px")
                              .arg(cssColor(p.text3), cssColor(p.surface2))
                              .arg(QString::number(tokens::kS3))
                              .arg(cssColor(p.hairline)));

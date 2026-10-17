@@ -245,7 +245,8 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
         root_->addWidget(buildGroup(QString(), rows));
         root_->addWidget(buildSeparator());
 
-        auto *quit = buildNavRow(QStringLiteral("power"), tr("退出 FlowGrid"), nullptr,
+        // 设计稿这行右侧也有 .tray__kbd（Ctrl Q），早先传了 nullptr 空着。
+        auto *quit = buildNavRow(QStringLiteral("power"), tr("退出 FlowGrid"), kbdHint("Q"),
                                  QStringLiteral("quit"));
         qobject_cast<NavRow *>(quit)->setDanger(true);
         root_->addWidget(buildGroup(QString(), {quit}));
@@ -356,9 +357,22 @@ QWidget *TrayPopup::buildCurrentDevice()
     const Palette &p = Theme::instance().palette();
 
     auto *row = new QWidget(group);
+    // 设计稿 ui.css .tray__active：margin 4px 8px / padding 8px 12px /
+    // 1px accent-line 描边 + r-card 圆角 + accent-soft 底。早先这里只排了内边距，
+    // 卡片那一圈描边与底色整块没画，「当前设备」看起来跟下面几行一样是浮在
+    // 浮层底上的普通文字行，用户一眼看不出这是当前正在用的那台。
     auto *hl = new QHBoxLayout(row);
-    hl->setContentsMargins(tokens::kS3, 7, tokens::kS3, 7);
+    hl->setContentsMargins(tokens::kS3, tokens::kS2, tokens::kS3, tokens::kS2);
     hl->setSpacing(tokens::kS2);
+    row->setAttribute(Qt::WA_StyledBackground, true);
+    const auto styleActiveRow = [row] {
+        const Palette &pal = Theme::instance().palette();
+        applyBoxStyle(row,
+                      QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                          .arg(css(pal.accentLine), css(pal.accentSoft)));
+    };
+    connect(&Theme::instance(), &Theme::changed, row, styleActiveRow);
+    styleActiveRow();
 
     deviceIcon_ = new QLabel(row);
     deviceIcon_->setFixedSize(tokens::kSwitchBtnSize, tokens::kSwitchBtnSize);
@@ -385,6 +399,9 @@ QWidget *TrayPopup::buildCurrentDevice()
     hl->addStretch(1);
     hl->addWidget(new Badge(tr("本机"), Badge::Variant::Neutral, row));
 
+    // margin 4px 8px：卡片自身要内缩，托盘浮层才有一圈呼吸。
+    static_cast<QVBoxLayout *>(group->layout())->setContentsMargins(
+        tokens::kS2, tokens::kS1, tokens::kS2, tokens::kS1);
     group->layout()->addWidget(row);
     return group;
 }

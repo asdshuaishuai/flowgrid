@@ -390,12 +390,40 @@ QWidget *FilesPanel::buildSettings()
     vl->addWidget(row(tr("收到前先询问"), askToggle,
                       tr("协议暂无逐条确认口，当前一律自动接受")));
 
+    // 设计稿这一格是 190px 的 <input value="~/Downloads/FlowGrid">。早先直接填
+    // QDir::homePath() 全路径（/home/xxx/Downloads/FlowGrid），190px 装不下，
+    // QLineEdit 又会把光标停在末尾，于是界面上只剩「erShuai/Downloads/FlowGrid」
+    // 这种从中间截断的残句——用户根本看不出目录在哪。改成家目录缩写，
+    // 用户手动改完再把 ~ 展开回去。
+    const QString defaultDir = QDir::homePath() + QStringLiteral("/Downloads/FlowGrid");
+    const auto shortenDir = [](const QString &path) {
+        const QString home = QDir::homePath();
+        return path.startsWith(home) ? QStringLiteral("~") + path.mid(home.size()) : path;
+    };
+    const auto expandDir = [](QString text) {
+        text = text.trimmed();
+        if (text == QLatin1String("~")) {
+            return QDir::homePath();
+        }
+        if (text.startsWith(QLatin1String("~/"))) {
+            return QDir::homePath() + text.mid(1);
+        }
+        return text;
+    };
+
     auto *dirEdit = new QLineEdit(body);
-    dirEdit->setText(QDir::homePath() + QStringLiteral("/Downloads/FlowGrid"));
+    dirEdit->setText(shortenDir(defaultDir));
     dirEdit->setFixedWidth(190);
     dirEdit->setFixedHeight(tokens::kControlHeight);
     dirEdit->setFont(uiFont(tokens::kFont12));
     applyInputStyle(dirEdit);
+    // 失焦即规范化：留着一段没展开的 ~ 会让「当前接收目录」名不副实。
+    connect(dirEdit, &QLineEdit::editingFinished, dirEdit, [dirEdit, expandDir] {
+        const QString full = expandDir(dirEdit->text());
+        if (full != dirEdit->text()) {
+            dirEdit->setText(full);
+        }
+    });
     auto *dirBox = new QWidget(body);
     auto *dirHl = new QHBoxLayout(dirBox);
     dirHl->setContentsMargins(0, 0, 0, 0);
@@ -403,8 +431,8 @@ QWidget *FilesPanel::buildSettings()
     dirHl->addWidget(dirEdit);
     auto *changeDir = new FgButton(tr("更改"), FgButton::Variant::Secondary, true, dirBox);
     changeDir->setIcon(QStringLiteral("folder"));
-    connect(changeDir, &FgButton::clicked, this, [dirEdit] {
-        dirEdit->setText(QDir::homePath() + QStringLiteral("/Downloads/FlowGrid"));
+    connect(changeDir, &FgButton::clicked, this, [dirEdit, defaultDir] {
+        dirEdit->setText(defaultDir);
         qCInfo(lcFiles) << "接收目录已改回默认路径，协议落地前不持久化";
     });
     dirHl->addWidget(changeDir);
