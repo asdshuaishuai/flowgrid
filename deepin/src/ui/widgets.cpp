@@ -3,6 +3,8 @@
 
 #include <QAbstractAnimation>
 #include <QApplication>
+#include <QGraphicsDropShadowEffect>
+#include <QGuiApplication>
 #include <QEnterEvent>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -17,6 +19,7 @@
 #include <QRandomGenerator>
 #include <QPropertyAnimation>
 #include <QResizeEvent>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace fg {
@@ -1254,6 +1257,122 @@ QWidget *banner(const QString &text, QWidget *parent, BannerVariant variant)
                       .arg(tokens::kRadiusCard)
                       .arg(cssColor(bg)));
     return w;
+}
+
+// ── EmptyState ────────────────────────────────────────────────────────
+EmptyState::EmptyState(const QString &iconName, const QString &title, const QString &desc,
+                       QWidget *parent)
+    : QWidget(parent)
+{
+    // .empty：竖排居中 / gap 8 / padding 24×16。
+    auto *vl = new QVBoxLayout(this);
+    vl->setContentsMargins(tokens::kS4, tokens::kS6, tokens::kS4, tokens::kS6);
+    vl->setSpacing(tokens::kS2);
+
+    const Palette &p = Theme::instance().palette();
+    if (!iconName.isEmpty()) {
+        // .empty__icon：40px 圆形 / surface-3 底 / text-3 图标
+        auto *icon = new QLabel(this);
+        icon->setFixedSize(40, 40);
+        icon->setAlignment(Qt::AlignCenter);
+        icon->setPixmap(icons::icon(iconName, 18, p.text3).pixmap(18, 18));
+        applyBoxStyle(icon, QStringLiteral("border-radius:20px;background:%1")
+                                  .arg(cssColor(p.surface3)));
+        vl->addWidget(icon, 0, Qt::AlignHCenter);
+    }
+
+    if (!title.isEmpty()) {
+        auto *t = new QLabel(title, this);
+        t->setFont(uiFont(tokens::kFont13, QFont::DemiBold));
+        t->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
+        t->setAlignment(Qt::AlignCenter);
+        vl->addWidget(t);
+    }
+
+    if (!desc.isEmpty()) {
+        auto *d = new QLabel(desc, this);
+        d->setWordWrap(true);
+        d->setFont(uiFont(tokens::kFont12));
+        d->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
+        d->setAlignment(Qt::AlignCenter);
+        vl->addWidget(d);
+    }
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────
+Toast::Toast(QWidget *parent) : QWidget(parent)
+{
+    const Palette &p = Theme::instance().palette();
+
+    setWindowFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint |
+                   Qt::WindowTransparentForInput | Qt::WindowDoesNotAcceptFocus);
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    setAttribute(Qt::WA_ShowWithoutActivating, true);
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);
+
+    auto *shadow = new QGraphicsDropShadowEffect(this);
+    shadow->setBlurRadius(26);   // --shadow-pop: 0 10px 26px
+    shadow->setOffset(0, 10);
+    shadow->setColor(p.shadowPop);
+    setGraphicsEffect(shadow);
+
+    // translateY(80px) → 0，节奏取 --dur-toast
+    anim_ = new QPropertyAnimation(this, "geometry", this);
+    anim_->setDuration(tokens::kDurToast);
+    anim_->setEasingCurve(QEasingCurve::InOutQuad);
+}
+
+void Toast::showMessage(const QString &text)
+{
+    text_ = text;
+    QFontMetrics fm(uiFont(tokens::kFont12, QFont::DemiBold));
+    // padding 8×16，阴影四周各留 14px 免得描边被裁
+    const QSize box(fm.horizontalAdvance(text) + tokens::kS4 * 2,
+                    fm.height() + tokens::kS2 * 2);
+    resize(box);
+
+    QPoint anchor;
+    anchor.setX((QGuiApplication::primaryScreen()->geometry().center().x()) - width() / 2);
+    anchor.setY(QGuiApplication::primaryScreen()->geometry().bottom() - height() - 20);
+
+    // 从下方 80px 处滑入；已经在屏上就从中途接着走，不闪一下
+    const QRect target(anchor, size());
+    const QRect from = isVisible() ? geometry() : QRect(target.x(), target.y() + 80,
+                                                        target.width(), target.height());
+    move(from.topLeft());
+    show();
+    anim_->stop();
+    anim_->setStartValue(from);
+    anim_->setEndValue(target);
+    anim_->start();
+
+    connect(anim_, &QPropertyAnimation::finished, this, [this] { QTimer::singleShot(2200, this,
+                                                                                   [this] { hide(); }); },
+            Qt::UniqueConnection);
+}
+
+void Toast::paintEvent(QPaintEvent *)
+{
+    const Palette &p = Theme::instance().palette();
+    QPainter pt(this);
+    pt.setRenderHint(QPainter::Antialiasing, true);
+    // 阴影 effect 挂在自身上会连底色一起投影，所以这里只留内缩 14px 的圆角块
+    QPainterPath path;
+    path.addRoundedRect(QRectF(rect()).adjusted(14, 14, -14, -14), tokens::kRadiusCard,
+                        tokens::kRadiusCard);
+    pt.fillPath(path, p.toastBg);
+    pt.setPen(p.toastFg);
+    pt.setFont(uiFont(tokens::kFont12, QFont::DemiBold));
+    pt.drawText(rect().adjusted(0, 0, 0, -28), Qt::AlignCenter, text_);
+}
+
+void toast(const QString &text)
+{
+    static Toast *instance = nullptr;
+    if (instance == nullptr) {
+        instance = new Toast();
+    }
+    instance->showMessage(text);
 }
 
 QLabel *groupTitle(const QString &text, QWidget *parent)

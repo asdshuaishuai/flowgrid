@@ -203,6 +203,9 @@ void Theme::refresh()
         p.shadowTray = QColor(0, 0, 0, 112);
         p.shadowLift = QColor(0, 0, 0, 77);
         p.shadowBar = QColor(0, 0, 0, 102);
+        p.shadowPop = QColor(0, 0, 0, 133);
+        p.toastBg = QColor(46, 51, 60, 245);
+        p.toastFg = QColor(0xf2, 0xf5, 0xf8);
     } else {
         p.ok = {QColor(0x10, 0xa3, 0x6f), QColor(16, 163, 111, 31), QColor(0x0a, 0x7d, 0x55)};
         p.warn = {QColor(0xd9, 0x77, 0x06), QColor(217, 119, 6, 31), QColor(0xa3, 0x5a, 0x04)};
@@ -212,6 +215,9 @@ void Theme::refresh()
         p.shadowTray = QColor(15, 23, 42, 41);
         p.shadowLift = QColor(16, 24, 40, 20);
         p.shadowBar = QColor(15, 23, 42, 46);
+        p.shadowPop = QColor(15, 23, 42, 56);
+        p.toastBg = QColor(28, 34, 44, 240);
+        p.toastFg = QColor(0xff, 0xff, 0xff);
     }
 
     palette_ = p;

@@ -411,6 +411,49 @@ private:
     bool pressed_ = false;
 };
 
+// ── 空态：设计稿 ui.css .empty ─────────────────────────────────────────
+//
+// 40px 圆形图标底 + 13px 半粗标题 + 12px 说明。此前各处只摆一行居中文字，
+// 列表空的时候看上去像加载坏了，而不是「本来就没有」。
+class EmptyState : public QWidget {
+    Q_OBJECT
+public:
+    EmptyState(const QString &iconName, const QString &title, const QString &desc,
+               QWidget *parent = nullptr);
+};
+
+// ── Toast：设计稿 ui.css .toast ────────────────────────────────────────
+//
+// 按钮点了之后的反馈。设计稿八屏里到处是 data-action="toast"，而这些按钮此前
+// 点了什么都没有——没成没败都不吭声，用户只能靠猜。
+//
+// 做成无焦点、不拦鼠标的顶层窗口：浮板是 Qt::Popup，点完就消失，Toast 得
+// 挂在 QApplication 上才不会被浮板一起带走。
+class Toast : public QWidget {
+    Q_OBJECT
+public:
+    explicit Toast(QWidget *parent = nullptr);
+
+    // 显示 text 并按 --dur-toast 自动收起。同一时刻只保留一个：再来一条就接着
+    // 上一条的动画往下改文案，而不是让两层叠起来。
+    // 刻意不叫 show(QString)：QWidget::show() 无参，名字一撞就成了「重载取
+    // 零参数版本」，调用处的 Toast::show(text) 会编译不过。
+    void showMessage(const QString &text);
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+
+private:
+    QString text_;
+    QPropertyAnimation *anim_ = nullptr;
+};
+
+// 全应用共用同一个 Toast 实例。
+//
+// 必须挂在 QApplication 而不是某个浮板上：浮板是 Qt::Popup，唤出即抢走输入、
+// 关闭即销毁，提示挂在它身上会跟着一起没，用户刚点的反馈就没了。
+void toast(const QString &text);
+
 // ── 提示条：设计稿 ui.css .banner ───────────────────────────────────────
 //
 // 四屏都要用（设置 / 配对 / 键位映射 / 剪贴板），此前每屏各抄一份，三份的

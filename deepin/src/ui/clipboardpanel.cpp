@@ -248,6 +248,7 @@ QWidget *ClipboardPanel::buildCurrent()
             return;
         }
         Q_EMIT localWriteRequested(current_);
+        toast(tr("已写入本地剪贴板"));
     });
     auto *push = new FgButton(tr("推送"), FgButton::Variant::Secondary, true, foot);
     push->setIcon(QStringLiteral("arrowRight"));
@@ -259,6 +260,7 @@ QWidget *ClipboardPanel::buildCurrent()
         // 真实发送：交给 Go 的 ClipboardSession 分段，UI 不碰帧结构。
         session_.send(e.mime.toUtf8(), e.raw);
         Q_EMIT pushRequested(e);
+        toast(tr("已推送"));
     });
     fl->addWidget(write);
     fl->addWidget(push);
@@ -412,7 +414,10 @@ QWidget *ClipboardPanel::buildFooter()
 
     auto *clear = new FgButton(tr("清空历史"), FgButton::Variant::Secondary, true, foot);
     clear->setIcon(QStringLiteral("trash"));
-    connect(clear, &FgButton::clicked, this, &ClipboardPanel::clearHistory);
+    connect(clear, &FgButton::clicked, this, [this] {
+        clearHistory();
+        toast(tr("已清空同步历史"));
+    });
     hl->addWidget(clear);
 
     auto *close = new FgButton(tr("关闭"), FgButton::Variant::Ghost, true, foot);
@@ -530,13 +535,12 @@ void ClipboardPanel::rebuildHistory()
     }
 
     if (shown.isEmpty()) {
-        auto *empty = new QLabel(
-            history_.isEmpty() ? tr("暂无历史条目") : tr("没有匹配的条目"), host);
-        empty->setFont(uiFont(tokens::kFont12));
-        empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-        empty->setAlignment(Qt::AlignCenter);
-        empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
-        rowsLayout_->addWidget(empty);
+        rowsLayout_->addWidget(
+            history_.isEmpty()
+                ? new EmptyState(QStringLiteral("clipboard"), tr("还没有同步记录"),
+                                 tr("收到别的设备的剪贴板后会自动出现在这里"), host)
+                : new EmptyState(QStringLiteral("search"), tr("没有匹配的条目"),
+                                 tr("换个类型或关键字再试试"), host));
         return;
     }
 
@@ -550,7 +554,10 @@ void ClipboardPanel::rebuildHistory()
         ago->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
         tl->addWidget(ago, 0, Qt::AlignVCenter);
         auto *copy = new IconButton(QStringLiteral("copy"), tr("写入本地"), trailing);
-        connect(copy, &IconButton::clicked, this, [this, e] { Q_EMIT localWriteRequested(e); });
+        connect(copy, &IconButton::clicked, this, [this, e] {
+            Q_EMIT localWriteRequested(e);
+            toast(tr("已写入本地剪贴板"));
+        });
         tl->addWidget(copy, 0, Qt::AlignVCenter);
 
         auto *row = new ClipRow(iconOfKind(e.kind), e.text,

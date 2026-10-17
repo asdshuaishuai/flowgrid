@@ -67,6 +67,12 @@ struct Palette {
     QColor shadowTray;
     QColor shadowLift;
     QColor shadowBar;      // --shadow-bar：分段控件选中档等「压在面上」的浅浮起
+    QColor shadowPop;      // --shadow-pop：Toast
+
+    // Toast：设计稿是「近黑的实底 + 白字」，两档只差一点点深浅，所以从
+    // text1 反推而不是写死——写死会让深色模式下这块比周围都更黑。
+    QColor toastBg;
+    QColor toastFg;
 
     bool isDark = false;
 };

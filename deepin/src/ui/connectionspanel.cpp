@@ -337,12 +337,8 @@ void ConnectionsPanel::rebuildFileRows()
     }
 
     if (shown.isEmpty()) {
-        auto *empty = new QLabel(tr("暂无传输"), fileBody_);
-        empty->setFont(uiFont(tokens::kFont11));
-        empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-        empty->setAlignment(Qt::AlignCenter);
-        empty->setContentsMargins(0, tokens::kS2, 0, tokens::kS2);
-        fileRows_->addWidget(empty);
+        fileRows_->addWidget(new EmptyState(QStringLiteral("file"), tr("暂无传输"),
+                                            QString(), fileBody_));
         return;
     }
 

@@ -454,8 +454,11 @@ QWidget *FilesPanel::buildFooter()
     openDir->setIcon(QStringLiteral("folder"));
     connect(openDir, &FgButton::clicked, this, [foot] {
         const QString dir = QDir::homePath();
-        if (!QDesktopServices::openUrl(QUrl::fromLocalFile(dir))) {
+        if (QDesktopServices::openUrl(QUrl::fromLocalFile(dir))) {
+            toast(tr("已打开接收目录"));
+        } else {
             qCInfo(lcFiles) << "无法打开接收目录" << dir;
+            toast(tr("无法打开接收目录"));
         }
     });
     hl->addWidget(openDir);
@@ -609,6 +612,7 @@ int FilesPanel::offerFile(const QString &path)
     rebuildTransfers();
     refreshPill();
     Q_EMIT transfersChanged();
+    toast(tr("已开始发送 %1").arg(e.name));
     return 0;
 }
 
@@ -796,12 +800,9 @@ void FilesPanel::rebuildTransfers()
     if (active == 0) {
         // 卡片留白来自 .xfer / .list__row 自己的 padding，空列表没有行，
         // 不给的话文字会贴着卡片边框。
-        auto *empty = new QLabel(tr("暂无进行中的传输"), host);
-        empty->setFont(uiFont(tokens::kFont12));
-        empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-        empty->setAlignment(Qt::AlignCenter);
-        empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
-        transferRows_->addWidget(empty);
+        transferRows_->addWidget(new EmptyState(QStringLiteral("upload"),
+                                                tr("没有正在传的文件"),
+                                                tr("从下面的拖放区选一个文件开始"), host));
     }
 }
 
@@ -882,12 +883,8 @@ void FilesPanel::rebuildRecords()
     }
 
     if (shown == 0) {
-        auto *empty = new QLabel(tr("暂无传输记录"), host);
-        empty->setFont(uiFont(tokens::kFont11));
-        empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-        empty->setAlignment(Qt::AlignCenter);
-        empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
-        recordRows_->addWidget(empty);
+        recordRows_->addWidget(new EmptyState(QStringLiteral("file"), tr("还没有传输记录"),
+                                              tr("传完或失败的文件会留在这里"), host));
     }
 }
 
