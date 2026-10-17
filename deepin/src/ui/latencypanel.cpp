@@ -189,9 +189,7 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
     chart_->prime(manager.activeLatencyMs());
     // 徽章初值跟着 prime 的种子走：否则首屏要等第一个 2 秒采样才变，
     // 展开图表区先看到的是一个「均值 --」的空徽章。
-    if (chartBadge_ != nullptr && manager.activeLatencyMs() >= 0.0) {
-        chartBadge_->setText(tr("均值 %1ms").arg(manager.activeLatencyMs(), 0, 'f', 1));
-    }
+    refreshChartBadge();
 }
 
 QWidget *LatencyPanel::buildThresholdSection()
@@ -220,8 +218,15 @@ QWidget *LatencyPanel::buildThresholdSection()
         vl->addWidget(row);
     };
 
+    // 表头徽章在折叠状态下是这一区唯一可见的数值：输入框改成 50 而徽章停在
+    // 20ms，展开前后就自相矛盾。让它跟着输入走（本区只作展示，没有落盘）。
+    auto *badge = new Badge(QStringLiteral("20ms"), Badge::Variant::Neutral);
+
     auto *threshold = new QLineEdit(QStringLiteral("20"), body);
     threshold->setFixedWidth(64);
+    QObject::connect(threshold, &QLineEdit::textChanged, badge, [badge](const QString &t) {
+        badge->setText(t.isEmpty() ? QStringLiteral("--") : tr("%1ms").arg(t));
+    });
     auto *times = new QLineEdit(QStringLiteral("3"), body);
     times->setFixedWidth(64);
     makeRow(tr("告警阈值"), threshold, tr("ms"));
@@ -238,7 +243,6 @@ QWidget *LatencyPanel::buildThresholdSection()
     note->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
     vl->addWidget(note);
 
-    auto *badge = new Badge(QStringLiteral("20ms"), Badge::Variant::Neutral);
     auto *section = new Collapsible(tr("告警阈值"), QStringLiteral("settings"), body, badge);
     section->setCollapsed(true);   // 设计稿 data-collapsed
     return section;
@@ -372,10 +376,20 @@ void LatencyPanel::onSampled()
         return;
     }
     chart_->pushSample(ms);
-    if (chartBadge_ != nullptr) {
-        chartBadge_->setText(tr("均值 %1ms").arg(ms, 0, 'f', 1));
-    }
+    refreshChartBadge();
     refresh();
+}
+
+// 徽章是「近 60 秒均值」，不是最新一个读数：两者只在曲线平直时相等，早先
+// 拿最新样本冒充均值，2 秒跳一次的数字一抖徽章就跟着抖。均值取 Go 侧
+// LatencyMonitor.Stats()——本层不做延迟计算（见 latencypanel.h 的说明）。
+void LatencyPanel::refreshChartBadge()
+{
+    if (chartBadge_ == nullptr) {
+        return;
+    }
+    const double avg = DeviceManager::instance().activeLatencyAvgMs();
+    chartBadge_->setText(avg >= 0.0 ? tr("均值 %1ms").arg(avg, 0, 'f', 1) : tr("均值 --"));
 }
 
 } // namespace fg

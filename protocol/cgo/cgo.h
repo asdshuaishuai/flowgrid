@@ -33,6 +33,13 @@ extern const char *_GoStringPtr(_GoString_ s);
 // let an attacker run an offline dictionary attack on the PSK. Do not compute
 // one, do not send one -- bytes 15-18 of the discovery payload are zero. PSK
 // ownership is proved in the DTLS/TLS pairing handshake instead.
+//
+// fg_frame_validate returns 0 when the frame may go on the wire, otherwise a
+// PROTOCOL.md 12 error code: 0x11 unknownFrameType (drop the frame) or 0x12
+// invalidPayload (PayloadLen does not match the payload -- fix the encoder).
+// It never returns a negative value: it takes no handle, so there is no
+// "invalid handle" case to report. Error codes can be turned into text with
+// fg_error_string.
 #include <stdlib.h>
 #include <stdint.h>
 

@@ -416,14 +416,21 @@ func (s *FileSender) HandleFrame(frameType uint8, payload []byte) error {
 			return err
 		}
 		s.mu.Lock()
-		var id *uint16
+		// 提议阶段也可能被中止（§7.4 的 FILE_ABORT 是「任意时刻」）：只清 active
+		// 的话 pending 会一直挂着，新的 OfferFile 直到 FileOfferTimeout 都报
+		// 「another offer is pending」。
+		matched := false
+		if s.pending != nil && s.pending.offer.TransferID == abort.TransferID {
+			s.pending = nil
+			matched = true
+		}
 		if s.active != nil && s.active.offer.TransferID == abort.TransferID {
 			s.active = nil
-			id = &abort.TransferID
+			matched = true
 		}
 		s.mu.Unlock()
-		if id != nil {
-			s.finish(id, NewError(ErrTransferRejected, "transfer aborted by receiver"))
+		if matched {
+			s.finish(&abort.TransferID, NewError(ErrTransferRejected, "transfer aborted by receiver"))
 		}
 		return nil
 	default:
@@ -431,6 +438,11 @@ func (s *FileSender) HandleFrame(frameType uint8, payload []byte) error {
 	}
 }
 
+// handleAck 处理对端的 FILE_ACK。
+//
+// TransferID 对不上的 ACK 一律静默丢弃（§7.4：不匹配的帧是普通网络噪声）：
+// 迟到的接受（提议早已超时作废）、补发的完成确认（传输已经终态）、别人的
+// 事务，都不该变成一条错误报上去。只有状态字节本身不认识才算载荷错误。
 func (s *FileSender) handleAck(ack *FileAck) error {
 	s.mu.Lock()
 	now := s.now()
@@ -438,7 +450,7 @@ func (s *FileSender) handleAck(ack *FileAck) error {
 	case FileAccepted:
 		if s.pending == nil || s.pending.offer.TransferID != ack.TransferID {
 			s.mu.Unlock()
-			return NewError(ErrInvalidPayload, "FILE_ACK for unknown transfer")
+			return nil
 		}
 		s.active = s.pending
 		s.active.lastMove = now
@@ -448,30 +460,30 @@ func (s *FileSender) handleAck(ack *FileAck) error {
 	case FileComplete:
 		if s.active == nil || s.active.offer.TransferID != ack.TransferID {
 			s.mu.Unlock()
-			return NewError(ErrInvalidPayload, "FILE_ACK for unknown transfer")
+			return nil
 		}
 		s.active = nil
 		s.mu.Unlock()
 		s.finish(&ack.TransferID, nil)
 		return nil
 	case FileRejectedBusy, FileRejectedUser, FileTooLarge:
-		if s.pending != nil && s.pending.offer.TransferID == ack.TransferID {
-			s.pending = nil
+		if s.pending == nil || s.pending.offer.TransferID != ack.TransferID {
 			s.mu.Unlock()
-			s.finish(&ack.TransferID, NewError(ErrTransferRejected, "receiver rejected the file"))
 			return nil
 		}
+		s.pending = nil
 		s.mu.Unlock()
-		return NewError(ErrInvalidPayload, "FILE_ACK for unknown transfer")
+		s.finish(&ack.TransferID, NewError(ErrTransferRejected, "receiver rejected the file"))
+		return nil
 	case FileHashMismatch:
-		if s.active != nil && s.active.offer.TransferID == ack.TransferID {
-			s.active = nil
+		if s.active == nil || s.active.offer.TransferID != ack.TransferID {
 			s.mu.Unlock()
-			s.finish(&ack.TransferID, NewError(ErrInvalidPayload, "receiver reports hash mismatch"))
 			return nil
 		}
+		s.active = nil
 		s.mu.Unlock()
-		return NewError(ErrInvalidPayload, "FILE_ACK for unknown transfer")
+		s.finish(&ack.TransferID, NewError(ErrInvalidPayload, "receiver reports hash mismatch"))
+		return nil
 	default:
 		s.mu.Unlock()
 		return NewError(ErrInvalidPayload, fmt.Sprintf("unknown FILE_ACK status 0x%02X", uint8(ack.Status)))

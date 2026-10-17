@@ -111,11 +111,47 @@ func TestFrameEncodeWriter(t *testing.T) {
 
 func TestFramePayloadLenMismatch(t *testing.T) {
 	frame := HIDFrame{
-		Header:  FrameHeader{PayloadLen: 5},
+		Header:  FrameHeader{FrameType: FrameKeyDown, PayloadLen: 5},
 		Payload: []byte{1, 2, 3}, // len=3, header says 5
 	}
 	if err := frame.Validate(); err == nil {
 		t.Error("expected validation error for length mismatch")
+	}
+}
+
+// Validate 的错误必须带 §12 错误码：C 侧的 fg_frame_validate 就是把这个码原样
+// 交出去的，笼统的 -1 让调用方分不清「帧类型不认识」（整条丢帧即可）和「长度
+// 对不上」（发送侧编错了，要修）。
+func TestFrameValidateReportsS12Code(t *testing.T) {
+	codeOf := func(err error) ErrorCode {
+		if pe, ok := err.(*ProtocolError); ok {
+			return pe.Code
+		}
+		return 0
+	}
+
+	unknown := HIDFrame{Header: FrameHeader{FrameType: 0x42, PayloadLen: 0}}
+	if got := codeOf(unknown.Validate()); got != ErrUnknownFrameType {
+		t.Errorf("未知帧类型应报 0x11，实际 0x%02X", uint8(got))
+	}
+	// 0x06 是保留号，不算已知类型——按已知放行会让未实现的帧一路上线路。
+	reserved := HIDFrame{Header: FrameHeader{FrameType: FrameGesture, PayloadLen: 0}}
+	if got := codeOf(reserved.Validate()); got != ErrUnknownFrameType {
+		t.Errorf("保留帧类型 0x06 应报 0x11，实际 0x%02X", uint8(got))
+	}
+	mismatch := HIDFrame{
+		Header:  FrameHeader{FrameType: FrameKeyDown, PayloadLen: 5},
+		Payload: []byte{1, 2, 3},
+	}
+	if got := codeOf(mismatch.Validate()); got != ErrInvalidPayload {
+		t.Errorf("载荷长度不符应报 0x12，实际 0x%02X", uint8(got))
+	}
+	ok := HIDFrame{
+		Header:  FrameHeader{FrameType: FrameKeyDown, PayloadLen: 3},
+		Payload: []byte{0x00, 0x41, 0x00},
+	}
+	if err := ok.Validate(); err != nil {
+		t.Errorf("合法帧不该报错：%v", err)
 	}
 }
 

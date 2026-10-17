@@ -260,6 +260,83 @@ func TestFileTransferAcceptAfterOfferTimeout(t *testing.T) {
 	}
 }
 
+// 迟到/重复的 ACK 是普通网络噪声（§7.4：TransferID 不匹配的帧一律静默丢弃），
+// 不能报成错误让客户端弹「FILE_ACK for unknown transfer」：对端只是慢了一拍。
+func TestFileTransferLateAckIsDropped(t *testing.T) {
+	p := newFilePair()
+	data := bytes.Repeat([]byte{0x5A}, 300) // 2 段，确认整路真的跑完
+	id, err := p.sender.OfferFile("late.txt", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		n, err := p.sender.Pump(4)
+		if err != nil {
+			t.Fatalf("Pump: %v", err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+	select {
+	case err := <-p.senderDone:
+		if err != nil {
+			t.Fatalf("正常传输不该失败：%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("传输没跑完")
+	}
+
+	// 传输已终态：重复的完成确认、迟到的哈希不符、别人的 TransferID，全静默。
+	for _, ack := range []*FileAck{
+		{TransferID: id, Status: FileComplete},
+		{TransferID: id, Status: FileHashMismatch},
+		{TransferID: id + 3, Status: FileComplete},
+		{TransferID: id + 3, Status: FileAccepted},
+		{TransferID: id + 3, Status: FileRejectedUser},
+	} {
+		if err := p.sender.HandleFrame(FrameFileAck, ack.Marshal()); err != nil {
+			t.Errorf("status=0x%02X 的迟到 ACK 应静默丢弃，却报了 %v", uint8(ack.Status), err)
+		}
+	}
+	if n := len(p.senderDone); n != 0 {
+		t.Errorf("静默丢弃不该触发 OnDone，却触发了 %d 次", n)
+	}
+
+	// 状态字节本身不认识仍是载荷错误，不能一并吞掉。
+	bad := (&FileAck{TransferID: id, Status: FileAckStatus(0x7F)}).Marshal()
+	if err := p.sender.HandleFrame(FrameFileAck, bad); err == nil {
+		t.Error("未知的 FILE_ACK 状态应报错")
+	}
+}
+
+// §7.4 的 FILE_ABORT 是「任意时刻」：接收方还没接受提议就中止（用户等不及），
+// 发送方的 pending 也必须清掉——只清 active 的话，直到 FileOfferTimeout 之前
+// 新的 OfferFile 一律报「another offer is pending」。
+func TestFileTransferAbortWhileOffered(t *testing.T) {
+	p := newFilePair()
+	p.receiver.OnOffer = func(FileOffer) {} // 不自动接受
+
+	id, err := p.sender.OfferFile("first.bin", []byte("data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.receiver.Abort(id, FileAbortUser); err != nil {
+		t.Fatalf("提议阶段中止失败：%v", err)
+	}
+	select {
+	case err := <-p.senderDone:
+		if err == nil {
+			t.Fatal("提议阶段被中止也要报终态")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("发送方没收到中止")
+	}
+	if _, err := p.sender.OfferFile("second.bin", []byte("data2")); err != nil {
+		t.Errorf("中止后应能立刻发起下一路，却报了 %v", err)
+	}
+}
+
 func TestFileTransferSecondOfferWhilePending(t *testing.T) {
 	p := newFilePair()
 	p.receiver.OnOffer = func(FileOffer) {} // do not accept

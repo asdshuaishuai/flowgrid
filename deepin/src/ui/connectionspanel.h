@@ -10,6 +10,7 @@
 #include "ui/panel.h"
 
 class QVBoxLayout;
+class QGridLayout;
 
 namespace fg {
 
@@ -18,6 +19,7 @@ namespace fg {
 class ClipboardPanel;
 class DeviceCard;
 class FilesPanel;
+class KeymapPanel;
 class StatusDot;
 class BarChart;
 class Badge;
@@ -33,6 +35,10 @@ public:
     // 不另开会话、不另存一份计数——FileSender / FileReceiver 同时只有一个活动
     // 事务，两个面板各拿一份会互抢。
     void attachPanels(ClipboardPanel *clip, FilesPanel *files);
+
+    // 键位映射折叠区只读键位浮板的规则表：早先这里写死三条示例 + 「3 条生效」，
+    // 而键位浮板里生效的有五条，同一个应用里两块屏各说各话。
+    void attachKeymap(KeymapPanel *keymap);
 
 public Q_SLOTS:
     // 每个采样周期推一根柱、更新均值徽章；与普通刷新分开，避免重复推点。
@@ -65,10 +71,18 @@ private:
     QWidget *buildClipboardSection();
     QWidget *buildFooter();
     void rebuildDeviceCards();
+    // 3×3 屏幕布局网格：与设备卡一样跟着设备状态重建（切换控制端会挪「当前」）。
+    void rebuildLayoutGrid();
+    // 键位映射摘要：读键位浮板的表，最多列前三条生效规则。
+    void rebuildKeymapGrid();
     void updateLatencyBadge();
 
     QVBoxLayout *contentLayout_ = nullptr;
     QVBoxLayout *deviceListLayout_ = nullptr;
+    QGridLayout *layoutGrid_ = nullptr;
+    QGridLayout *keymapGrid_ = nullptr;
+    Badge *keymapBadge_ = nullptr;
+    KeymapPanel *keymap_ = nullptr;
     QWidget *deviceList_ = nullptr;
     StatusDot *statusDot_ = nullptr;
     QLabel *statusLabel_ = nullptr;

@@ -259,6 +259,8 @@ int main(int argc, char *argv[])
                      [] { showPanel(g_files); });
     // 连接屏的剪贴板 / 文件传输折叠区只读对应浮板的状态，不另开会话。
     g_connections->attachPanels(g_clipboard, g_files);
+    // 键位映射折叠区同理：只读键位浮板那张规则表。
+    g_connections->attachKeymap(g_keymap);
     // 托盘那两个徽标同样只读别人的数据：谁变了就推一次，不在托盘里另存一份。
     auto syncTrayCounts = [tray = g_trayPopup, clip = g_clipboard, files = g_files] {
         tray->setCounts(clip->historyCount(), files->activeCount());

@@ -75,6 +75,11 @@ public:
     // 当前控制端最近一次延迟；无设备或离线返回 -1。
     double activeLatencyMs() const;
 
+    // 当前控制端 60 秒窗口内的均值，取自 Go 的 LatencyMonitor.Stats()；
+    // 无设备 / 离线 / 窗口为空返回 -1。均值不在界面层算：界面显示的窗口
+    // （12 根柱子）和监控窗口（约 30 个采样）本来就不是同一个。
+    double activeLatencyAvgMs() const;
+
     // 把控制端切到指定设备；离线设备不可切。返回是否成功。
     bool setActive(const QString &id);
 

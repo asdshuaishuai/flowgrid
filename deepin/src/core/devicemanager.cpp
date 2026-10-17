@@ -68,6 +68,25 @@ double DeviceManager::activeLatencyMs() const
     return (d != nullptr && d->online) ? d->latencyMs : -1.0;
 }
 
+double DeviceManager::activeLatencyAvgMs() const
+{
+    const Device *d = activeDevice();
+    if (d == nullptr || !d->online) {
+        return -1.0;
+    }
+    const int idx = static_cast<int>(d - devices_.constData());
+    if (idx < 0 || idx >= monitors_.size() || monitors_.at(idx) == nullptr) {
+        return -1.0;
+    }
+    double minMs = 0.0;
+    double maxMs = 0.0;
+    double avgMs = 0.0;
+    if (!monitors_.at(idx)->stats(&minMs, &maxMs, &avgMs)) {
+        return -1.0;   // 窗口还没有样本
+    }
+    return avgMs;
+}
+
 bool DeviceManager::setActive(const QString &id)
 {
     Device *target = deviceById(id);

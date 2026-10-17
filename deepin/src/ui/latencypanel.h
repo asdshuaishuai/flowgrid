@@ -31,6 +31,9 @@ private:
     QWidget *buildThresholdSection();
     QWidget *buildFooter();
 
+    // 柱状图徽章：写「近 60 秒均值」，值取自 Go 的 LatencyMonitor。
+    void refreshChartBadge();
+
     QVBoxLayout *contentLayout_ = nullptr;
     QVBoxLayout *deviceListLayout_ = nullptr;
     // 外层装分组标题、内层装行：重建只清内层，标题留在原位。

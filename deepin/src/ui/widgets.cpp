@@ -21,6 +21,7 @@
 #include <QPropertyAnimation>
 #include <QResizeEvent>
 #include <QTimer>
+#include <QVariantAnimation>
 #include <QVBoxLayout>
 
 namespace fg {
@@ -53,6 +54,16 @@ QFont uiFont(int px, int weight = QFont::Normal)
 QString cssColor(const QColor &c)
 {
     return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
+}
+
+// 线性混合两个颜色（t=0 取 a，t=1 取 b）。开关的过渡要同时动轨道底色和旋钮
+// 位置，QPainter 没有现成的颜色过渡，这里手动插值。
+QColor mixColor(const QColor &a, const QColor &b, qreal t)
+{
+    return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t,
+                            a.greenF() + (b.greenF() - a.greenF()) * t,
+                            a.blueF() + (b.blueF() - a.blueF()) * t,
+                            a.alphaF() + (b.alphaF() - a.alphaF()) * t);
 }
 
 } // namespace
@@ -209,16 +220,25 @@ ToggleSwitch::ToggleSwitch(QWidget *parent) : QAbstractButton(parent)
     setCheckable(true);
     setCursor(Qt::PointingHandCursor);
     setFocusPolicy(Qt::StrongFocus);
-    connect(this, &ToggleSwitch::toggled, this, [this] { update(); });
-}
 
-void ToggleSwitch::setChecked(bool on)
-{
-    if (checked_ != on) {
-        checked_ = on;
-        knob_ = on ? 1.0 : 0.0;
+    // 过渡由 toggled 驱动：点击、setChecked、键盘触发都汇到这一个信号，旋钮与
+    // 底色共用一个进度值，不会出现「底色翻了、旋钮还在原地」。
+    transition_ = new QVariantAnimation(this);
+    transition_->setDuration(tokens::kDurSwitch);
+    transition_->setEasingCurve(QEasingCurve::OutCubic);
+    connect(transition_, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
+        progress_ = v.toReal();
         update();
-    }
+    });
+    connect(this, &QAbstractButton::toggled, this, [this](bool on) {
+        transition_->stop();
+        transition_->setStartValue(progress_);
+        transition_->setEndValue(on ? 1.0 : 0.0);
+        transition_->start();
+    });
+    progress_ = isChecked() ? 1.0 : 0.0;
+
+    connect(&Theme::instance(), &Theme::changed, this, [this] { update(); });
 }
 
 void ToggleSwitch::enterEvent(QEnterEvent *e)
@@ -241,17 +261,17 @@ void ToggleSwitch::paintEvent(QPaintEvent *)
     QPainter pt(this);
     pt.setRenderHint(QPainter::Antialiasing, true);
 
-    QColor track = checked_ ? p.ok.solid : p.surface3;
-    if (hovered_) {
-        track = checked_ ? track.lighter(110) : p.surface3.lighter(112);
-    }
+    // 轨道底色按进度在「关」「开」两色之间插值，悬停高亮各随其本色（关 112%、
+    // 开 110%，与修影子状态之前的观感一致）。
+    const QColor offColor = hovered_ ? p.surface3.lighter(112) : p.surface3;
+    const QColor onColor = hovered_ ? p.ok.solid.lighter(110) : p.ok.solid;
     pt.setPen(Qt::NoPen);
-    pt.setBrush(track);
+    pt.setBrush(mixColor(offColor, onColor, progress_));
     pt.drawRoundedRect(rect(), height() / 2.0, height() / 2.0);
 
     const qreal pad = 2.0;
     const qreal travel = width() - tokens::kSwitchKnob - pad * 2;
-    const qreal x = pad + knob_ * travel;
+    const qreal x = pad + progress_ * travel;
     const qreal d = tokens::kSwitchKnob;
     // 设计稿 .switch::after 带 box-shadow: var(--shadow-bar)（0 1px 3px）。没有
     // 这层投影，旋钮就是一块贴在轨道上的纯白圆片；轨道又和底色同族，开关看着
@@ -616,14 +636,25 @@ void ProgressTrack::setProgress(int pct)
     if (pct == progress_) {
         return;
     }
-    // 设计稿的 .bar__fill 是 width 上的 150ms 过渡；这里用属性动画对齐，
-    // 免得每次进度跳变都是硬切。
-    auto *anim = new QPropertyAnimation(this, "progress", this);
-    anim->setDuration(tokens::kDurMicro);
-    anim->setStartValue(progress_);
-    anim->setEndValue(pct);
-    anim->start(QAbstractAnimation::DeleteWhenStopped);
-    progress_ = pct;
+    // 设计稿的 .bar__fill 是 width 上的 150ms 过渡。用一个动画实例反复驱动：
+    // 早先每次调用都新建 QPropertyAnimation 去写 "progress" 属性，而该属性的
+    // WRITE 就是 setProgress 自己——动画每写一帧又起一个新动画。实测一次
+    // setProgress(90)（从 10 出发）会叠出 4 个以上同写一个属性的动画，260ms
+    // 后填充停在 73 而不是 90：进度条报出一个比实际传输更低的数。
+    if (transition_ == nullptr) {
+        transition_ = new QVariantAnimation(this);
+        transition_->setDuration(tokens::kDurMicro);
+        transition_->setEasingCurve(QEasingCurve::InOutQuad);
+        connect(transition_, &QVariantAnimation::valueChanged, this,
+                [this](const QVariant &v) {
+                    progress_ = v.toInt();
+                    update();
+                });
+    }
+    transition_->stop();
+    transition_->setStartValue(progress_);
+    transition_->setEndValue(pct);
+    transition_->start();
 }
 
 void ProgressTrack::paintEvent(QPaintEvent *)
@@ -973,10 +1004,6 @@ void DeviceCard::paintEvent(QPaintEvent *)
     pt.setBrush(Qt::NoBrush);
     pt.drawRoundedRect(body.adjusted(0.5, 0.5, -0.5, -0.5), tokens::kRadiusCard,
                        tokens::kRadiusCard);
-
-    if (!online_) {
-        pt.setPen(QColor(0, 0, 0, 90));   // .device--off opacity: .6 的近似
-    }
 }
 
 // ── NavRow ────────────────────────────────────────────────────────────
@@ -1545,9 +1572,11 @@ Toast::Toast(QWidget *parent) : QWidget(parent)
     // 早先这条连接写在 showMessage() 里还带着 Qt::UniqueConnection——但 UniqueConnection
     // 只认成员函数指针，配 lambda 会被 Qt 拒掉（qt.core.qobject.connect 告警），
     // 于是每唤一次 Toast 就多挂一条连接，第 N 次提示会触发 N 个收起定时器。
-    connect(anim_, &QPropertyAnimation::finished, this, [this] {
-        QTimer::singleShot(2200, this, [this] { hide(); });
-    });
+    hideTimer_ = new QTimer(this);
+    hideTimer_->setSingleShot(true);
+    hideTimer_->setInterval(2200);
+    connect(hideTimer_, &QTimer::timeout, this, [this] { hide(); });
+    connect(anim_, &QPropertyAnimation::finished, hideTimer_, qOverload<>(&QTimer::start));
 }
 
 void Toast::showMessage(const QString &text, ToastKind kind)
@@ -1573,6 +1602,8 @@ void Toast::showMessage(const QString &text, ToastKind kind)
     move(from.topLeft());
     show();
     anim_->stop();
+    // 前一条提示排的收起定时器作废：这次显示由新的 finished 重新计时。
+    hideTimer_->stop();
     anim_->setStartValue(from);
     anim_->setEndValue(target);
     anim_->start();

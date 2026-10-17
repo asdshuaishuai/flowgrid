@@ -6,6 +6,7 @@
 #include "icons.h"
 #include "clipboardpanel.h"
 #include "filespanel.h"
+#include "keymappanel.h"
 #include "widgets.h"
 
 #include <QApplication>
@@ -184,22 +185,46 @@ QWidget *ConnectionsPanel::buildKeymapSection()
     // （竖排，gap 5，padding 8）= [源键]→[目标键] + 下方一行说明。
     // 早先这里摆的是「2 列 × 3 行裸键帽」，既丢了箭头也丢了说明文字，
     // 而且 QLabel 在网格里会被拉伸到整格宽，键帽变成横贯屏幕的长条。
-    struct Pair { const char *from; const char *to; const char *ctx; };
-    const Pair pairs[3] = {
-        {"Ctrl", "\xe2\x8c\x98", QT_TR_NOOP("复制 / 粘贴")},
-        {"Win", "\xe2\x8c\xa5", QT_TR_NOOP("系统快捷键")},
-        {"Alt", "Ctrl", QT_TR_NOOP("终端应用")},
-    };
-
     auto *grid = new QWidget(body);
-    auto *gl = new QGridLayout(grid);
-    gl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
-    gl->setHorizontalSpacing(tokens::kS2);
-    gl->setVerticalSpacing(tokens::kS2);
+    keymapGrid_ = new QGridLayout(grid);
+    keymapGrid_->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
+    keymapGrid_->setHorizontalSpacing(tokens::kS2);
+    keymapGrid_->setVerticalSpacing(tokens::kS2);
+    vl->addWidget(grid);
+
+    // 设计稿：映射网格下面还有一行「按应用切换映射，游戏内自动停用」+「编辑」。
+    vl->addWidget(makeSectionFooter(tr("按应用切换映射，游戏内自动停用"), tr("编辑"), body,
+                                    [this](FgButton *) { Q_EMIT keymapRequested(); }));
+
+    keymapBadge_ = new Badge(QStringLiteral("—"), Badge::Variant::Neutral);
+    rebuildKeymapGrid();   // 挂上规则表前是空的，attachKeymap 会再补一次
+    return new Collapsible(tr("键位映射"), QStringLiteral("keyboard"), body, keymapBadge_);
+}
+
+// 摘要区只列前三条生效规则（设计稿这一区就是 3 列），顺序与键位浮板一致——两边
+// 读同一张表，不再各摆一份示例：早先这里写死「3 条生效」+ 三条示例，而键位浮板
+// 里生效的是 5 条，同一个应用里两块屏各说各话。
+void ConnectionsPanel::rebuildKeymapGrid()
+{
+    if (keymapGrid_ == nullptr) {
+        return;
+    }
+    clearLayout(keymapGrid_);
+    if (keymap_ == nullptr) {
+        return;
+    }
 
     const Palette &p = Theme::instance().palette();
-    for (int i = 0; i < 3; ++i) {
-        auto *cell = new QWidget(grid);
+    QWidget *host = keymapGrid_->parentWidget();
+    int shown = 0;
+    for (const KeyRule &rule : keymap_->rules()) {
+        if (shown >= 3) {
+            break;
+        }
+        if (!isEffectiveKeyRule(rule)) {
+            continue;
+        }
+        auto *cell = new QWidget(host);
         auto *cl = new QVBoxLayout(cell);
         cl->setContentsMargins(tokens::kS2, tokens::kS2, tokens::kS2, tokens::kS2);
         cl->setSpacing(5);   // ui.css .keypair gap
@@ -208,30 +233,37 @@ QWidget *ConnectionsPanel::buildKeymapSection()
         auto *kl = new QHBoxLayout(keys);
         kl->setContentsMargins(0, 0, 0, 0);
         kl->setSpacing(5);   // ui.css .keys gap
-        kl->addWidget(new FgKeycap(QString::fromUtf8(pairs[i].from), false, keys));
+        kl->addWidget(new FgKeycap(rule.from, false, keys));
         auto *arrow = new QLabel(keys);
         arrow->setFixedSize(tokens::kIconXs, tokens::kIconXs);
         arrow->setPixmap(icons::icon(QStringLiteral("arrowRight"), tokens::kIconXs, p.text3).pixmap(tokens::kIconXs, tokens::kIconXs));
         kl->addWidget(arrow, 0, Qt::AlignVCenter);
-        kl->addWidget(new FgKeycap(QString::fromUtf8(pairs[i].to), false, keys));
+        kl->addWidget(new FgKeycap(rule.to, false, keys));
         kl->addStretch(1);
         cl->addWidget(keys);
 
-        auto *ctx = new QLabel(tr(pairs[i].ctx), cell);
+        auto *ctx = new QLabel(rule.context, cell);
         ctx->setFont(uiFont(tokens::kFont11));
         ctx->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
         cl->addWidget(ctx);
 
-        gl->addWidget(cell, 0, i);
+        keymapGrid_->addWidget(cell, 0, shown);
+        ++shown;
     }
-    vl->addWidget(grid);
 
-    // 设计稿：映射网格下面还有一行「按应用切换映射，游戏内自动停用」+「编辑」。
-    vl->addWidget(makeSectionFooter(tr("按应用切换映射，游戏内自动停用"), tr("编辑"), body,
-                                    [this](FgButton *) { Q_EMIT keymapRequested(); }));
+    if (keymapBadge_ != nullptr) {
+        keymapBadge_->setText(tr("%1 条生效").arg(keymap_->effectiveRuleCount()));
+    }
+}
 
-    auto *badge = new Badge(tr("3 条生效"), Badge::Variant::Neutral);
-    return new Collapsible(tr("键位映射"), QStringLiteral("keyboard"), body, badge);
+void ConnectionsPanel::attachKeymap(KeymapPanel *keymap)
+{
+    keymap_ = keymap;
+    if (keymap_ != nullptr) {
+        // 规则表将来由 YAML 加载：换了表这块摘要要跟着变，不能停在首次渲染。
+        connect(keymap_, &KeymapPanel::rulesChanged, this, &ConnectionsPanel::rebuildKeymapGrid);
+    }
+    rebuildKeymapGrid();
 }
 
 QWidget *ConnectionsPanel::buildLatencySection()
@@ -375,7 +407,11 @@ void ConnectionsPanel::rebuildFileRows()
             shown.append(s);
         }
     }
-    for (const XferSummary &s : list) {
+    // 终态按「最新在前」挑：transferSummary() 给的是追加序（由旧到新），
+    // 跟文件浮板「最新的在最上面」相反，两屏的行序就会自相矛盾
+    // （41 分钟前 排在 3 分钟前 上面）。倒着取。
+    for (int i = list.size() - 1; i >= 0; --i) {
+        const XferSummary &s = list.at(i);
         if (s.state != XferSummary::State::Active && shown.size() < 2) {
             shown.append(s);
         }
@@ -398,14 +434,20 @@ void ConnectionsPanel::rebuildFileRows()
         auto *iconBox = new QLabel(row);
         iconBox->setFixedSize(tokens::kXferIconSize, tokens::kXferIconSize);
         iconBox->setAlignment(Qt::AlignCenter);
+        // 与文件浮板同一套三档配色：拒绝是对端的决定（warn）、校验失败是数据
+        // 损坏（danger）、超限是根本没上线。全涂成红色只会让人以为是同一种问题。
         const StatusColor tone =
             activeRow ? StatusColor{p.surface3, p.surface3, p.text2}
-                      : (e.state == XferSummary::State::Done ? p.ok : p.danger);
+                      : (e.state == XferSummary::State::Done       ? p.ok
+                         : e.state == XferSummary::State::Rejected ? p.warn
+                                                                   : p.danger);
         iconBox->setPixmap(
             icons::icon(activeRow ? (e.inbound ? QStringLiteral("download")
                                                : QStringLiteral("upload"))
                                   : (e.state == XferSummary::State::Done
                                          ? QStringLiteral("check")
+                                     : e.state == XferSummary::State::Rejected
+                                         ? QStringLiteral("close")
                                          : QStringLiteral("warn")),
                       14, tone.text)
                 .pixmap(tokens::kIconSm, tokens::kIconSm));
@@ -425,7 +467,14 @@ void ConnectionsPanel::rebuildFileRows()
         name->setFont(uiFont(tokens::kFont12, QFont::Medium));
         name->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
         top->addWidget(name, 1);
-        auto *pct = new QLabel(activeRow ? tr("%1%").arg(e.pct) : tr("完成"), body);
+        // 终态不能一律写「完成」：这一支里还坐着「已拒绝 / 校验失败 / 超限」，
+        // 配着红色图标却写「完成」，等于把失败说成成功。文案与文件浮板的徽章对齐。
+        const QString stateLabel =
+            e.state == XferSummary::State::Done       ? tr("完成")
+            : e.state == XferSummary::State::Rejected ? tr("已拒绝")
+            : e.state == XferSummary::State::Oversize ? tr("超限")
+                                                      : tr("失败");
+        auto *pct = new QLabel(activeRow ? tr("%1%").arg(e.pct) : stateLabel, body);
         // .xfer__pct 指定 font-mono + tabular-nums：进度每 500ms 跳一次。
         pct->setFont(uiMonoFont(tokens::kFont11, QFont::DemiBold));
         pct->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text2)));
@@ -440,12 +489,19 @@ void ConnectionsPanel::rebuildFileRows()
             vl->addWidget(bar);
         }
 
-        QString meta = activeRow
-                           ? tr("%1 · → %2").arg(humanSize(e.totalBytes), e.peer)
-                           : tr("%1 · %2 · %3")
-                                 .arg(humanSize(e.totalBytes),
-                                      e.inbound ? tr("收到") : tr("已发送"),
-                                      tr("%1 前").arg(agoText(e.agoSecs)));
+        QString meta;
+        if (activeRow) {
+            meta = tr("%1 · → %2").arg(humanSize(e.totalBytes), e.peer);
+        } else if (e.state == XferSummary::State::Oversize) {
+            // 超限的文件压根没上线，写「已发送」是替它喊冤（同文件浮板的措辞）。
+            meta = tr("%1 · 超出单文件上限，未在链路上传输").arg(humanSize(e.totalBytes));
+        } else {
+            // 设计稿这一行是「2.1 MB · 收到 · Linux Workstation · 3m」：对端名
+            // 不能省，否则「收到 / 已发送」是在跟谁传全靠猜。
+            meta = tr("%1 · %2 · %3 · %4")
+                       .arg(humanSize(e.totalBytes), e.inbound ? tr("收到") : tr("已发送"),
+                            e.peer, tr("%1 前").arg(agoText(e.agoSecs)));
+        }
         auto *metaLabel = new ElidedLabel(meta, body);
         metaLabel->setFont(uiFont(tokens::kFont11));
         metaLabel->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
@@ -490,27 +546,16 @@ void ConnectionsPanel::refreshClipboardBadge()
     clipboardBadge_->setVariant(n > 0 ? Badge::Variant::Neutral : Badge::Variant::Idle);
 }
 
-QWidget *ConnectionsPanel::buildLayoutSection()
+void ConnectionsPanel::rebuildLayoutGrid()
 {
+    if (layoutGrid_ == nullptr) {
+        return;
+    }
+    clearLayout(layoutGrid_);
+    // 格子随设备状态重建，不能只在构造时填一次：设备上下线、切换控制端
+    // 都会改「当前」标记和实色档位，网格留在旧状态就和同屏的设备卡自相矛盾。
     const Palette &p = Theme::instance().palette();
-    auto *body = new QWidget(this);
-    auto *vl = new QVBoxLayout(body);
-    vl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
-    vl->setSpacing(tokens::kS3);
-
-    // ui.css .layout：2px 虚线 line-2 / r-card / surface-2 底 / 3×3 / gap 8 /
-    // min-height 200。格子用 QGridLayout，三个空槽也要占位，网格才不会塌成两列。
-    auto *gridBox = new QWidget(body);
-    applyBoxStyle(gridBox,
-                  QStringLiteral("border:2px dashed %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2))
-                      .arg(QString::number(tokens::kRadiusCard))
-                      .arg(css(p.surface2)));
-    auto *grid = new QGridLayout(gridBox);
-    grid->setContentsMargins(tokens::kS4, tokens::kS4, tokens::kS4, tokens::kS4);
-    grid->setHorizontalSpacing(tokens::kS2);
-    grid->setVerticalSpacing(tokens::kS2);
-
+    QWidget *host = layoutGrid_->parentWidget();
     // 只有在线设备占格：离线设备没有屏幕可摆。排到前九个槽的是在线的那些，
     // 剩下的槽留给空位，设计稿里的「+」就是等新设备上线后落进去的。
     QList<Device> placeable;
@@ -526,7 +571,7 @@ QWidget *ConnectionsPanel::buildLayoutSection()
             // 当前的延迟档取实色，规则一致且随实时读数变化。
             const StatusColor tone =
                 Theme::instance().color(Theme::instance().qualityOf(d.latencyMs, true));
-            auto *cell = new QWidget(gridBox);
+            auto *cell = new QWidget(host);
             auto *cl = new QVBoxLayout(cell);
             cl->setContentsMargins(0, 0, 0, 0);
             cl->setSpacing(tokens::kS1);
@@ -568,11 +613,11 @@ QWidget *ConnectionsPanel::buildLayoutSection()
                 qCInfo(lcConnections)
                     << "调整设备布局：" << d.name << QStringLiteral("屏幕布局尚无持久化，暂不可拖动");
             });
-            grid->addWidget(cell, i / 3, i % 3);
+            layoutGrid_->addWidget(cell, i / 3, i % 3);
             continue;
         }
         // .cell__empty：surface-3 底 + 2px 虚线 line-3 + 加号
-        auto *empty = new QLabel(QStringLiteral("+"), gridBox);
+        auto *empty = new QLabel(QStringLiteral("+"), host);
         empty->setFixedSize(tokens::kCellIconSize, tokens::kCellIconSize);
         empty->setAlignment(Qt::AlignCenter);
         empty->setFont(uiFont(tokens::kFont13, QFont::Bold));
@@ -580,9 +625,33 @@ QWidget *ConnectionsPanel::buildLayoutSection()
             QStringLiteral("background:%1;color:%2;border:2px dashed %3;border-radius:%4px")
                 .arg(css(p.surface3), css(p.text3), css(p.line3))
                 .arg(QString::number(tokens::kRadiusCard)));
-        grid->addWidget(empty, i / 3, i % 3, Qt::AlignCenter);
+        layoutGrid_->addWidget(empty, i / 3, i % 3, Qt::AlignCenter);
     }
+}
+
+QWidget *ConnectionsPanel::buildLayoutSection()
+{
+    const Palette &p = Theme::instance().palette();
+    auto *body = new QWidget(this);
+    auto *vl = new QVBoxLayout(body);
+    vl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
+    vl->setSpacing(tokens::kS3);
+
+    // ui.css .layout：2px 虚线 line-2 / r-card / surface-2 底 / 3×3 / gap 8 /
+    // min-height 200。格子用 QGridLayout，三个空槽也要占位，网格才不会塌成两列。
+    auto *gridBox = new QWidget(body);
+    applyBoxStyle(gridBox,
+                  QStringLiteral("border:2px dashed %1;border-radius:%2px;background:%3")
+                      .arg(css(p.line2))
+                      .arg(QString::number(tokens::kRadiusCard))
+                      .arg(css(p.surface2)));
+    layoutGrid_ = new QGridLayout(gridBox);
+    layoutGrid_->setContentsMargins(tokens::kS4, tokens::kS4, tokens::kS4, tokens::kS4);
+    layoutGrid_->setHorizontalSpacing(tokens::kS2);
+    layoutGrid_->setVerticalSpacing(tokens::kS2);
+
     vl->addWidget(gridBox);
+    rebuildLayoutGrid();
 
     // .legend：三条说明，每条一个图标
     auto *legend = new QWidget(body);
@@ -702,6 +771,7 @@ void ConnectionsPanel::refresh()
     }
 
     rebuildDeviceCards();
+    rebuildLayoutGrid();
     updateLatencyBadge();
     refreshClipboardFootHint();
 }
@@ -720,17 +790,12 @@ void ConnectionsPanel::updateLatencyBadge()
     if (latencyBadge_ == nullptr) {
         return;
     }
-    // 均值徽章跟着真实采样算，不写死；首帧也要算一次，否则折叠区一展开就摆着
-    // 「均值 --」直到下一个采样周期。
-    double sum = 0.0;
-    int n = 0;
-    for (const Device &d : DeviceManager::instance().devices()) {
-        if (d.online) {
-            sum += d.latencyMs;
-            ++n;
-        }
-    }
-    latencyBadge_->setText(n > 0 ? tr("均值 %1ms").arg(sum / n, 0, 'f', 1) : tr("无数据"));
+    // 与延迟浮板取同一个数（设计稿两屏都写 2.3ms）：本区画的是**当前控制端**的
+    // 采样曲线。早先这里按「所有在线设备求瞬时值平均」，会把一条 12ms 的局域网
+    // 设备和 2ms 的直连设备平均成 6ms——一个不属于任何链路的数，还跟同屏顶部
+    // 胶囊上的读数对不上。均值来自 Go 的 LatencyMonitor，本层略过采样。
+    const double avg = DeviceManager::instance().activeLatencyAvgMs();
+    latencyBadge_->setText(avg >= 0.0 ? tr("均值 %1ms").arg(avg, 0, 'f', 1) : tr("无数据"));
     latencyBadge_->setVariant(Badge::Variant::Ok);
 }
 

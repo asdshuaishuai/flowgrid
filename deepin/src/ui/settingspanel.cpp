@@ -228,14 +228,36 @@ QWidget *SettingsPanel::buildInputGroup()
     applyInputStyle(edgeThreshold_);
     edgeThreshold_->setFixedWidth(64);
     QObject::connect(edgeThreshold_, &QLineEdit::editingFinished, this, [this] {
-        Settings::instance().setEdgeThreshold(edgeThreshold_->text().toInt());
+        auto &current = Settings::instance();
+        bool ok = false;
+        const int px = edgeThreshold_->text().toInt(&ok);
+        // 自由输入框能填出「abc」或 0，写进去就把这条设置变成一块空转的牌子
+        // （真正生效的阈值不是界面上那串字）。不接受，回填真实值。
+        if (!ok || px < 1) {
+            qCInfo(lcSettingsPanel) << "边缘切换阈值" << edgeThreshold_->text()
+                                     << "不是正整数，已回退到" << current.edgeThreshold() << "px";
+            edgeThreshold_->setText(QString::number(current.edgeThreshold()));
+            return;
+        }
+        current.setEdgeThreshold(px);
     });
 
     switchHotkey_ = new QLineEdit(QString::number(s.switchHotkey()), this);
     applyInputStyle(switchHotkey_);
     switchHotkey_->setFixedWidth(44);
     QObject::connect(switchHotkey_, &QLineEdit::editingFinished, this, [this] {
-        Settings::instance().setSwitchHotkey(switchHotkey_->text().toInt());
+        auto &current = Settings::instance();
+        bool ok = false;
+        const int key = switchHotkey_->text().toInt(&ok);
+        // 修饰键只有 1=Ctrl / 2=Alt 两档（settings.h 的 switchModifierName）：填 5
+        // 会被显示成「Ctrl」，界面与实际值当场对不上。
+        if (!ok || key < 1 || key > 2) {
+            qCInfo(lcSettingsPanel) << "切换热键" << switchHotkey_->text()
+                                     << "不是 1(Ctrl)/2(Alt)，已回退到" << current.switchHotkey();
+            switchHotkey_->setText(QString::number(current.switchHotkey()));
+            return;
+        }
+        current.setSwitchHotkey(key);
     });
     // 键帽画的是**当前**那个修饰键，不是写死的 Ctrl：改完数字后若键帽不跟着变，
     // 这一行就在指着一组不存在的快捷键。
@@ -292,11 +314,8 @@ QWidget *SettingsPanel::buildSecurityGroup()
 {
     // 端到端加密是协议层的硬约束（PROTOCOL.md §3），不是用户能关的开关。
     // 早先这里摆的是一个禁用开关，视觉上像"可以改但改不了"；设计稿给的是
-    // 徽章，直接说清状态。
+    // 徽章，直接说清状态。徽章自己跟着 Theme::changed 重取颜色，这里不再转发。
     auto *e2eBadge = new Badge(tr("已启用"), Badge::Variant::Ok, this);
-    QObject::connect(&Theme::instance(), &Theme::changed, e2eBadge, [e2eBadge] {
-        e2eBadge->update();
-    });
 
     return groupBox(tr("安全"),
            {new ListRow(tr("端到端加密"), tr("XChaCha20-Poly1305"), e2eBadge, this),
@@ -371,7 +390,16 @@ void SettingsPanel::reload()
         switchKeycap_->setText(switchModifierName(s.switchHotkey()));
     }
     if (clipHistory_ != nullptr) {
-        clipHistory_->setCurrentIndex(historyCountIndex(s.clipboardHistory()));
+        const int idx = historyCountIndex(s.clipboardHistory());
+        clipHistory_->setCurrentIndex(idx);
+        // 存档里可能留着旧版自由输入框写下的数（37 / 500 这类）：界面只有三档
+        // 可显示，不写回就成了「界面写 50 条、实际按 500 条保留」。按显示档位
+        // 归一（写回后值相等，不会再来一轮）。
+        if (kHistoryCounts[idx] != s.clipboardHistory()) {
+            qCInfo(lcSettingsPanel) << "历史条数" << s.clipboardHistory()
+                                     << "不在 50/100/200 三档内，已归一为" << kHistoryCounts[idx];
+            s.setClipboardHistory(kHistoryCounts[idx]);
+        }
     }
 }
 

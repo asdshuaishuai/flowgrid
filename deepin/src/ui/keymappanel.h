@@ -20,6 +20,19 @@ struct KeyRule {
     bool enabled = true;
 };
 
+// 设计稿网格末尾那条「未设置 → 未设置 / 点击添加」是占位槽，不是一条规则。
+// 徽章计数与网格渲染共用这一个判据，否则加一行占位就多出一条「生效」。
+inline bool isPlaceholderKeyRule(const KeyRule &rule)
+{
+    return rule.from.isEmpty() || rule.to.isEmpty();
+}
+
+// 真正生效的规则：不是占位槽，且没有被停用。
+inline bool isEffectiveKeyRule(const KeyRule &rule)
+{
+    return !isPlaceholderKeyRule(rule) && rule.enabled;
+}
+
 class KeymapPanel : public Panel {
     Q_OBJECT
 public:
@@ -28,9 +41,18 @@ public:
     // 规则表来自协议层解析的 YAML。这里保留一个 setter，便于将来接真实加载。
     void setRules(const QList<KeyRule> &rules);
 
+    // 已生效的规则条数。本屏两处徽章与连接屏那条「N 条生效」都取这一个数，
+    // 免得同一张表在三个地方各算一遍。
+    int effectiveRuleCount() const;
+
+    // 供连接屏那种只读摘要区取同一张表，不另存一份。
+    const QList<KeyRule> &rules() const { return rules_; }
+
 Q_SIGNALS:
     // 「新增规则」「编辑」目前没有落盘流程，交给外层统一提示未接通。
     void editRequested();
+    // 规则表被整体替换后发出（将来接 YAML 加载时用）。
+    void rulesChanged();
 
 private:
     QWidget *buildGlobalSection();

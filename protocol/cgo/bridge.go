@@ -12,6 +12,13 @@ package main
 // let an attacker run an offline dictionary attack on the PSK. Do not compute
 // one, do not send one -- bytes 15-18 of the discovery payload are zero. PSK
 // ownership is proved in the DTLS/TLS pairing handshake instead.
+//
+// fg_frame_validate returns 0 when the frame may go on the wire, otherwise a
+// PROTOCOL.md 12 error code: 0x11 unknownFrameType (drop the frame) or 0x12
+// invalidPayload (PayloadLen does not match the payload -- fix the encoder).
+// It never returns a negative value: it takes no handle, so there is no
+// "invalid handle" case to report. Error codes can be turned into text with
+// fg_error_string.
 #include <stdlib.h>
 #include <stdint.h>
 */
@@ -239,7 +246,9 @@ func fg_frame_validate(frameType C.uint8_t, sequence C.uint16_t, timestamp C.uin
 		Payload: p,
 	}
 	if err := f.Validate(); err != nil {
-		return -1
+		// 返回 §12 错误码（0x11 类型不认识 / 0x12 长度不符）而不是笼统的 -1：
+		// 前者整条丢帧即可，后者说明发送侧编码有 bug，要修。
+		return C.int(errCode(err))
 	}
 	return 0
 }

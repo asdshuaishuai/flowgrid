@@ -28,6 +28,8 @@ class QHBoxLayout;
 class QVBoxLayout;
 class QGridLayout;
 class QPropertyAnimation;
+class QTimer;
+class QVariantAnimation;
 
 namespace fg {
 
@@ -98,13 +100,15 @@ private:
 };
 
 // ── 开关：36×20，滑块 16，按下 200ms 过渡 ────────────────────────────
+//
+// 勾选状态只有 QAbstractButton 那一份，这里不再自己存一份。早先留了个
+// checked_ 影子，绘制与 isChecked() 都读影子，而点击翻的是基类状态：用户
+// 按下去纹丝不动，回调里读到的还是旧值（「剪贴板同步」关不掉就是这么来的）。
+// 过渡（ui.css .switch 的 200ms）由 toggled 驱动 progress_ 插值完成。
 class ToggleSwitch : public QAbstractButton {
     Q_OBJECT
 public:
     explicit ToggleSwitch(QWidget *parent = nullptr);
-
-    bool isChecked() const { return checked_; }
-    void setChecked(bool on);
 
     QSize sizeHint() const override { return {tokens::kSwitchWidth, tokens::kSwitchHeight}; }
 
@@ -114,9 +118,9 @@ protected:
     void leaveEvent(QEvent *) override;
 
 private:
-    bool checked_ = false;
     bool hovered_ = false;
-    qreal knob_ = 0.0;  // 0=关 1=开
+    qreal progress_ = 0.0;                     // 0=关 1=开；过渡中的当前值
+    QVariantAnimation *transition_ = nullptr;  // this 为父对象，无需手动释放
 };
 
 // ── 延迟胶囊：min-width 56，按 good/warn/bad/idle 着色 ─────────────────
@@ -199,13 +203,13 @@ private:
 // ── 进度条：5px pill 轨道 + 主色填充（ui.css .bar）─────────────────────
 class ProgressTrack : public QWidget {
     Q_OBJECT
-    // 用属性动画驱动填充宽度，过渡时长取设计稿的 --dur-micro。
-    Q_PROPERTY(int progress READ progress WRITE setProgress)
 public:
     explicit ProgressTrack(QWidget *parent = nullptr);
 
-    int progress() const { return progress_; }
+    // 填充百分比 0–100。改动走一段 --dur-micro 的过渡（同一个动画实例反复用，
+    // 每帧自己收值，不经属性系统——原因见 .cpp）。
     void setProgress(int pct);
+    int progress() const { return progress_; }
 
     QSize sizeHint() const override { return {120, kTrackHeight}; }
 
@@ -215,6 +219,7 @@ protected:
 private:
     static constexpr int kTrackHeight = 5;   // ui.css .bar
     int progress_ = 0;
+    QVariantAnimation *transition_ = nullptr;   // 惰性建：有的进度条只更新一两次
 };
 
 // ── 按钮：28px 高（sm 24px），4 种变体 ────────────────────────────────
@@ -468,6 +473,9 @@ private:
     QString text_;
     ToastKind kind_ = ToastKind::Info;
     QPropertyAnimation *anim_ = nullptr;
+    // 收起定时器全应用复用这一个。早先用 QTimer::singleShot 每唤一次排一个、
+    // 旧的又不撤销：第二条提示刚滑上来，前一条排的收起就会把它整块收走。
+    QTimer *hideTimer_ = nullptr;
 };
 
 // 全应用共用同一个 Toast 实例。

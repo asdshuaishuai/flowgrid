@@ -32,6 +32,7 @@ inline constexpr int kDurEnter = 220;  // --dur-enter：浮板与托盘入场
 inline constexpr int kDurToast = 300;  // --dur-toast
 inline constexpr int kDurChart = 500;  // 柱状图高度过渡（ui.css chart__bar）
 inline constexpr int kDurCollapse = 200;  // chevron rotate(-90deg)
+inline constexpr int kDurSwitch = 200;  // .switch 底色/位移过渡（ui.css 里的字面量 200ms）
 
 inline constexpr int kChartHeight  = 70;  // .chart：上一版原值
 inline constexpr int kChartBars    = 12;  // 设计稿柱数

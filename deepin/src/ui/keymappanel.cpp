@@ -50,6 +50,16 @@ FgButton *unwiredButton(const QString &text, const QString &iconName, const QStr
     return btn;
 }
 
+// 规则表尚未接通（等传输层加载 YAML）：开关照设计稿摆出来，但点了要给出反馈，
+// 不然就和「点了没反应的按钮」是同一类问题——unwiredButton 是这么处理的。
+void unwiredToggle(ToggleSwitch *sw, const QString &what, QObject *ctx)
+{
+    QObject::connect(sw, &ToggleSwitch::clicked, ctx, [sw, what] {
+        qCInfo(lcKeymap) << what << (sw->isChecked() ? QStringLiteral("已开启") : QStringLiteral("已关闭"))
+                         << QStringLiteral("尚未接通，规则表仍由 YAML 提供");
+    });
+}
+
 // 行首带图标的列表行标题（设计稿里的 code / play 图标）。
 QWidget *iconTitle(const QString &iconName, const QString &text, const QColor &color,
                    QWidget *parent)
@@ -153,6 +163,7 @@ QWidget *KeymapPanel::buildAppSection()
 
         auto *sw = new ToggleSwitch(host);
         sw->setChecked(true);
+        unwiredToggle(sw, tr(apps[i].name), host);
         auto *edit = new IconButton(QStringLiteral("edit"), tr("进入编辑"), host);
         QObject::connect(edit, &IconButton::clicked, this, [this] { Q_EMIT editRequested(); });
         hl->addWidget(sw);
@@ -181,6 +192,7 @@ QWidget *KeymapPanel::buildAdvancedSection()
     for (int i = 0; i < 2; ++i) {
         auto *sw = new ToggleSwitch(this);
         sw->setChecked(false);
+        unwiredToggle(sw, tr(rows[i].label), this);
         vl->addWidget(new ListRow(tr(rows[i].label), tr(rows[i].hint), sw, this));
     }
 
@@ -230,13 +242,27 @@ QWidget *KeymapPanel::buildFooter()
 void KeymapPanel::setRules(const QList<KeyRule> &rules)
 {
     rules_ = rules;
+    // 徽章报的是「生效的规则数」，不是网格里的格子数（末尾的「点击添加」占位槽不算）。
+    const int effective = effectiveRuleCount();
     if (countBadge_ != nullptr) {
-        countBadge_->setText(tr("%1 条生效").arg(rules.size()));
+        countBadge_->setText(tr("%1 条生效").arg(effective));
     }
     if (globalBadge_ != nullptr) {
-        globalBadge_->setText(tr("%1 条").arg(rules.size()));
+        globalBadge_->setText(tr("%1 条").arg(effective));
     }
     rebuildRows();
+    Q_EMIT rulesChanged();
+}
+
+int KeymapPanel::effectiveRuleCount() const
+{
+    int n = 0;
+    for (const KeyRule &rule : rules_) {
+        if (isEffectiveKeyRule(rule)) {
+            ++n;
+        }
+    }
+    return n;
 }
 
 void KeymapPanel::rebuildRows()
@@ -259,8 +285,8 @@ void KeymapPanel::rebuildRows()
     QList<KeyPair> pairs;
     pairs.reserve(rules_.size());
     for (const KeyRule &rule : rules_) {
-        // 全空的一行是设计稿里的「未设置 → 未设置 / 点击添加」占位槽。
-        const bool ghost = rule.from.isEmpty() || rule.to.isEmpty();
+        // 占位槽与徽章计数共用判据（isPlaceholderKeyRule），两处各写一遍就会漂开。
+        const bool ghost = isPlaceholderKeyRule(rule);
         pairs.append(KeyPair{ghost ? tr("未设置") : rule.from, ghost ? tr("未设置") : rule.to,
                              rule.context, ghost});
     }

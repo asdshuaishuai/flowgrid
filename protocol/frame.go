@@ -4,7 +4,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 )
@@ -226,12 +225,32 @@ func DecodeFrameBytes(data []byte) (*HIDFrame, int, error) {
 	return &HIDFrame{Header: hdr, Payload: payload}, total, nil
 }
 
-// Validate checks that the frame header is consistent. The 255-byte payload
-// ceiling is enforced at encode time (checkPayloadLen) — PayloadLen is a
-// uint8 and cannot exceed it by construction.
+// isKnownFrameType reports whether t is a frame type this version implements
+// (§5.2 + §7.4). 0x06 is deliberately absent: it is reserved, not defined.
+func isKnownFrameType(t uint8) bool {
+	switch t {
+	case FrameKeyDown, FrameKeyUp, FrameMouseMove, FrameMouseButton, FrameScroll,
+		FrameClipboard, FrameHeartbeat, FrameLatencyPing, FrameLatencyPong,
+		FrameIdentify, FrameIdentifyRes, FrameDisconnect, FrameError,
+		FrameFileOffer, FrameFileAck, FrameFileChunk, FrameFileAbort:
+		return true
+	}
+	return false
+}
+
+// Validate checks that the frame can go on the wire: the type must be one this
+// version implements and PayloadLen must match the payload. The 255-byte
+// payload ceiling is enforced at encode time (checkPayloadLen) — PayloadLen is
+// a uint8 and cannot exceed it by construction.
+//
+// 错误带 §12 错误码：调用方（含 C 侧的 fg_frame_validate）要能分清「类型不
+// 认识」（0x11，帧可以整条丢）和「长度对不上」（0x12，说明发送侧编错了）。
 func (f *HIDFrame) Validate() error {
+	if !isKnownFrameType(f.Header.FrameType) {
+		return NewError(ErrUnknownFrameType, fmt.Sprintf("unknown frame type 0x%02X", f.Header.FrameType))
+	}
 	if len(f.Payload) != int(f.Header.PayloadLen) {
-		return errors.New("payload length mismatch")
+		return NewError(ErrInvalidPayload, fmt.Sprintf("payload length mismatch: header says %d, payload is %d", f.Header.PayloadLen, len(f.Payload)))
 	}
 	return nil
 }
