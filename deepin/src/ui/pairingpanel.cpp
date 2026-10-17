@@ -169,9 +169,10 @@ QWidget *PairingPanel::buildPairCode()
     vl->addWidget(label);
 
     // 设计稿 .paircode：虚线描边 + surface-2 底，里面四个 34×42 的数字槽，
-    // 槽是 surface 底、r-ctl 圆角、底部 1px 阴影。配对码要真生成需要传输层的
-    // 密钥协商，所以这里画的是四个空槽而不是具体数字——摆一个"8421"会让人
-    // 真去输一个根本不存在的码。
+    // 槽是 surface 底、r-ctl 圆角、底部 1px 阴影（box-shadow:0 1px 0 line-1，
+    // Qt 样式表没有 box-shadow，用 border-bottom 等价代偿）。配对码要真生成需要
+    // 传输层的密钥协商，所以这里画的是四个空槽而不是具体数字——摆一个"8421"
+    // 会让人真去输一个根本不存在的码；槽心那个「·」是占位提示，说明这里待填数字。
     auto *codeBox = new QWidget(box);
     auto *hl = new QHBoxLayout(codeBox);
     hl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
@@ -183,10 +184,12 @@ QWidget *PairingPanel::buildPairCode()
         slot->setAlignment(Qt::AlignCenter);
         slot->setFont(uiFont(tokens::kFont20, QFont::Bold));
         slot->setText(QStringLiteral("·"));
-        slot->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px;color:%3")
+        slot->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px;color:%3;"
+                                          "border-bottom:1px solid %4")
                                 .arg(css(p.surface))
                                 .arg(tokens::kRadiusCtl)
-                                .arg(css(p.text3)));
+                                .arg(css(p.text3))
+                                .arg(css(p.line1)));
         hl->addWidget(slot);
     }
     hl->addStretch(1);
