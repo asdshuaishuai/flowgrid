@@ -145,7 +145,7 @@ LatencyMonitor::LatencyMonitor(LatencyMonitor &&o) noexcept
 LatencyMonitor &LatencyMonitor::operator=(LatencyMonitor &&o) noexcept
 {
     if (this != &o) {
-        reset();
+        release();
         id_ = std::exchange(o.id_, 0);
         maxSamples_ = o.maxSamples_;
     }
@@ -154,15 +154,23 @@ LatencyMonitor &LatencyMonitor::operator=(LatencyMonitor &&o) noexcept
 
 LatencyMonitor::~LatencyMonitor()
 {
-    reset();
+    // 只释放，绝不 reset：reset 会再建一个新句柄，析构里建就是每析构一个漏
+    // 一个 Go 侧 monitor（DeviceManager::setSource 换设备时逐个 delete 即中招）。
+    release();
 }
 
-void LatencyMonitor::reset()
+void LatencyMonitor::release()
 {
     if (id_ != 0) {
         fg_latency_monitor_free(id_);
         id_ = 0;
     }
+}
+
+void LatencyMonitor::reset()
+{
+    // reset = 「丢弃旧句柄、换一个新的」（句柄失效时用），与 release 不同。
+    release();
     id_ = fg_latency_monitor_new(maxSamples_);
 }
 
@@ -459,8 +467,16 @@ bool FileReceiver::takeComplete(QString *outName, QByteArray *outData, int *outE
 
 QString errorString(int code)
 {
-    const char *s = fg_error_string(code);
-    return s != nullptr ? QString::fromUtf8(s) : QStringLiteral("未知错误 (%1)").arg(code);
+    // fg_error_string 返回的是 C.CString（malloc 出来的），必须自己释放——
+    // 早先直接 fromUtf8 后就丢指针，每弹一次错误提示漏一小段。fg_free_buffer
+    // 就是 C.free 的封装。
+    char *s = fg_error_string(code);
+    if (s == nullptr) {
+        return QStringLiteral("未知错误 (%1)").arg(code);
+    }
+    const QString text = QString::fromUtf8(s);
+    fg_free_buffer(s);
+    return text;
 }
 
 } // namespace fg::proto

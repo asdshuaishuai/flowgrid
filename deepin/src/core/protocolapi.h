@@ -102,6 +102,10 @@ public:
     void reset();
 
 private:
+    // 只释放句柄，不重建。析构与移动赋值要的是这个——把它们接到 reset()
+    // 上会在对象将死时又造一个新句柄，等于泄漏。
+    void release();
+
     unsigned long long id_ = 0;
     int maxSamples_ = 32;
 };
