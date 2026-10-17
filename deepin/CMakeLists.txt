@@ -101,6 +101,10 @@ if(FLOWGRID_GO)
     # 漏掉的那次改动不会触发重建，于是客户端链接的是过期 archive——
     # 而 c-archive 不会报错，只会让新函数在运行期「不存在」。
     file(GLOB GO_PROTOCOL_SRC CONFIGURE_DEPENDS "${GO_PROTOCOL_DIR}/*.go")
+    # cgo 包自己也是一个 Go 包（bridge.go 就住在那儿），上面那条 glob 只盖到
+    # 协议根包：改了 FFI 桥不重建 archive，客户端链接的仍是旧实现——正是这段
+    # 注释警告的「新函数在运行期不存在」，只不过漏的是 cgo 那一半。
+    file(GLOB GO_CGO_SRC CONFIGURE_DEPENDS "${GO_PROTOCOL_DIR}/cgo/*.go")
     add_custom_command(
         OUTPUT ${GO_PROTOCOL_A} ${GO_PROTOCOL_H}
         COMMAND ${CMAKE_COMMAND} -E env
@@ -109,7 +113,7 @@ if(FLOWGRID_GO)
                 ${FLOWGRID_GO} build -buildmode=c-archive -o libflowgrid_protocol.a .
         WORKING_DIRECTORY ${GO_PROTOCOL_DIR}/cgo
         COMMENT "Building Go protocol c-archive"
-        DEPENDS ${GO_PROTOCOL_SRC}
+        DEPENDS ${GO_PROTOCOL_SRC} ${GO_CGO_SRC}
         VERBATIM)
 else()
     message(WARNING "未找到 go，跳过自动构建 c-archive；将使用已存在的 ${GO_PROTOCOL_A}")
