@@ -59,8 +59,8 @@ QWidget *iconTitle(const QString &iconName, const QString &text, const QColor &c
     hl->setContentsMargins(0, 0, 0, 0);
     hl->setSpacing(tokens::kS2);
     auto *icon = new QLabel(w);
-    icon->setFixedSize(14, 14);
-    icon->setPixmap(icons::icon(iconName, 14, color).pixmap(14, 14));
+    icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
+    icon->setPixmap(icons::icon(iconName, tokens::kIconSm, color).pixmap(tokens::kIconSm, tokens::kIconSm));
     auto *label = new QLabel(text, w);
     label->setFont(uiFont(tokens::kFont12));
     label->setStyleSheet(QStringLiteral("color:%1").arg(css(color)));
@@ -200,8 +200,8 @@ QWidget *KeymapPanel::buildFooter()
     hl->setSpacing(tokens::kS2);
 
     auto *icon = new QLabel(foot);
-    icon->setFixedSize(14, 14);
-    icon->setPixmap(icons::icon(QStringLiteral("info"), 14, p.text3).pixmap(14, 14));
+    icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
+    icon->setPixmap(icons::icon(QStringLiteral("info"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
     auto *hint = new QLabel(tr("规则按从上到下顺序匹配"), foot);
     hint->setFont(uiFont(tokens::kFont11));
     hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));

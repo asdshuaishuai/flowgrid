@@ -101,9 +101,9 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         linkLabel_ = new QLabel(QStringLiteral("—"), linkRow);
         linkLabel_->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
         auto *wifi = new QLabel(linkRow);
-        wifi->setFixedSize(12, 12);
-        wifi->setPixmap(icons::icon(QStringLiteral("wifi"), 12,
-                                    Theme::instance().palette().text3).pixmap(12, 12));
+        wifi->setFixedSize(tokens::kIconXs, tokens::kIconXs);
+        wifi->setPixmap(icons::icon(QStringLiteral("wifi"), tokens::kIconXs,
+                                    Theme::instance().palette().text3).pixmap(tokens::kIconXs, tokens::kIconXs));
         lrl->addStretch(1);
         lrl->addWidget(wifi);
         lrl->addWidget(linkLabel_);
@@ -253,8 +253,8 @@ QWidget *LatencyPanel::buildFooter()
     hl->setSpacing(tokens::kS2);
 
     auto *icon = new QLabel(foot);
-    icon->setFixedSize(14, 14);
-    icon->setPixmap(icons::icon(QStringLiteral("info"), 14, p.text3).pixmap(14, 14));
+    icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
+    icon->setPixmap(icons::icon(QStringLiteral("info"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
     auto *hint = new QLabel(tr("每 2 秒采样一次"), foot);
     hint->setFont(uiFont(tokens::kFont11));
     hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
@@ -352,8 +352,8 @@ void LatencyPanel::refresh()
             tl->setContentsMargins(0, 0, 0, 0);
             tl->setSpacing(tokens::kS2);
             auto *icon = new QLabel(title);
-            icon->setFixedSize(14, 14);
-            icon->setPixmap(icons::icon(d.icon, 14, d.online ? p.text2 : p.text3).pixmap(14, 14));
+            icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
+            icon->setPixmap(icons::icon(d.icon, tokens::kIconSm, d.online ? p.text2 : p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
             tl->addWidget(icon);
             auto *name = new QLabel(d.name, title);
             name->setFont(uiFont(tokens::kFont12, QFont::DemiBold));

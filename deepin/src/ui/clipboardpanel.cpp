@@ -200,7 +200,7 @@ QWidget *ClipboardPanel::buildCurrent()
     auto *typeIcon = new QLabel(head);
     typeIcon->setFixedSize(tokens::kBadgeHeight, tokens::kBadgeHeight);
     typeIcon->setAlignment(Qt::AlignCenter);
-    typeIcon->setPixmap(icons::icon(QStringLiteral("type"), 12, p.text2).pixmap(12, 12));
+    typeIcon->setPixmap(icons::icon(QStringLiteral("type"), tokens::kIconXs, p.text2).pixmap(tokens::kIconXs, tokens::kIconXs));
     applyBoxStyle(typeIcon,
                   QStringLiteral("border-radius:%1px;background:%2")
                       .arg(QString::number(tokens::kRadiusChip), css(p.surface3)));
@@ -244,8 +244,8 @@ QWidget *ClipboardPanel::buildCurrent()
     fl->setContentsMargins(6, tokens::kS3, tokens::kS3, 6);
     fl->setSpacing(tokens::kS2);
     auto *info = new QLabel(foot);
-    info->setFixedSize(14, 14);
-    info->setPixmap(icons::icon(QStringLiteral("info"), 14, p.text3).pixmap(14, 14));
+    info->setFixedSize(tokens::kIconSm, tokens::kIconSm);
+    info->setPixmap(icons::icon(QStringLiteral("info"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
     spec_ = new QLabel(tr("--"), foot);
     spec_->setFont(uiFont(tokens::kFont11));
     spec_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
@@ -414,8 +414,8 @@ QWidget *ClipboardPanel::buildFooter()
     hl->setSpacing(tokens::kS2);
     const Palette &p = Theme::instance().palette();
     auto *icon = new QLabel(foot);
-    icon->setFixedSize(14, 14);
-    icon->setPixmap(icons::icon(QStringLiteral("shield"), 14, p.text3).pixmap(14, 14));
+    icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
+    icon->setPixmap(icons::icon(QStringLiteral("shield"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
     auto *hint = new QLabel(tr("端到端加密 · 不落盘"), foot);
     hint->setFont(uiFont(tokens::kFont11));
     hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));

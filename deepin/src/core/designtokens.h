@@ -82,9 +82,24 @@ inline constexpr int kStatusPillHoriPad = 8;
 inline constexpr int kStatusDotSize  = 7;    // .dot
 inline constexpr int kLatChipMinWidth = 56;  // .lat
 inline constexpr int kDeviceIconSize = 42;   // .device__icon
-inline constexpr int kSwitchBtnSize  = 28;   // .switch-btn__icon
+inline constexpr int kSwitchBtnIconSize = 24;  // .switch-btn__icon
+inline constexpr int kTrayActiveIconSize = 28; // .tray__active .device__icon
+inline constexpr int kXferIconSize   = 28;   // .xfer__icon
+inline constexpr int kCellIconSize   = 56;   // .cell__icon / .cell__empty
+inline constexpr int kPairSlotW      = 34;   // .paircode span
+inline constexpr int kPairSlotH      = 42;
 inline constexpr int kStepBadgeSize  = 22;   // 配对流程的序号圆
 inline constexpr int kEmptyIconSize  = 40;   // .empty__icon 圆形底
+
+// ── 5b. 图标尺寸阶梯 ─────────────────────────────────────────────────
+// 设计稿 .ic 定义了四档：默认 16 / --sm 14 / --lg 20 / --xl 28。--xl 与
+// kXferIconSize(28) 同值，按语义归组件尺寸，不在此重复。12 不在设计稿阶梯
+// 里（.arrow 未定义尺寸），是小键帽与徽章内图标的 Qt 适配值，放在一起便于
+// 统一审视。
+inline constexpr int kIconSm        = 14;   // .ic--sm
+inline constexpr int kIconMd        = 16;   // .ic 默认档
+inline constexpr int kIconLg        = 20;   // .ic--lg
+inline constexpr int kIconXs        = 12;   // Qt 适配：键位行箭头 / 徽章内小图标
 
 // ── 6. 阴影 ───────────────────────────────────────────────────────────
 // 设计稿为 rgba 色值；Qt 侧给 QColor，由 theme 在明暗两套下取值。

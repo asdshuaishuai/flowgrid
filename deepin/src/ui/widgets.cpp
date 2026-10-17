@@ -369,8 +369,8 @@ Collapsible::Collapsible(const QString &title, const QString &iconName, QWidget 
 
     if (!iconName.isEmpty()) {
         auto *ic = new QLabel(head_);
-        ic->setFixedSize(16, 16);
-        ic->setPixmap(icons::icon(iconName, 16, Theme::instance().palette().text2).pixmap(16, 16));
+        ic->setFixedSize(tokens::kIconMd, tokens::kIconMd);
+        ic->setPixmap(icons::icon(iconName, tokens::kIconMd, Theme::instance().palette().text2).pixmap(tokens::kIconMd, tokens::kIconMd));
         hl->addWidget(ic);
     }
 
@@ -385,7 +385,7 @@ Collapsible::Collapsible(const QString &title, const QString &iconName, QWidget 
     hl->addStretch(1);
 
     chevron_ = new QLabel(head_);
-    chevron_->setFixedSize(16, 16);
+    chevron_->setFixedSize(tokens::kIconMd, tokens::kIconMd);
     hl->addWidget(chevron_);
 
     root->addWidget(head_);
@@ -407,7 +407,7 @@ void Collapsible::setCollapsed(bool collapsed)
         const QString name = collapsed ? QStringLiteral("chevronRight")
                                        : QStringLiteral("chevronDown");
         chevron_->setPixmap(
-            icons::icon(name, 16, Theme::instance().palette().text3).pixmap(16, 16));
+            icons::icon(name, tokens::kIconMd, Theme::instance().palette().text3).pixmap(tokens::kIconMd, tokens::kIconMd));
     }
     updateGeometry();
 }
@@ -990,7 +990,7 @@ NavRow::NavRow(const QString &iconName, const QString &label, QWidget *trailing,
     hl->setSpacing(tokens::kS2);
 
     iconLabel_ = new QLabel(this);
-    iconLabel_->setFixedSize(16, 16);
+    iconLabel_->setFixedSize(tokens::kIconMd, tokens::kIconMd);
     hl->addWidget(iconLabel_);
 
     labelWidget_ = new QLabel(label_, this);
@@ -1018,8 +1018,8 @@ void NavRow::setDanger(bool danger)
 
 void NavRow::repaintChildren(const Palette &p)
 {
-    iconLabel_->setPixmap(icons::icon(iconName_, 16, danger_ ? p.danger.text : p.text2)
-                              .pixmap(16, 16));
+    iconLabel_->setPixmap(icons::icon(iconName_, tokens::kIconMd, danger_ ? p.danger.text : p.text2)
+                              .pixmap(tokens::kIconMd, tokens::kIconMd));
     labelWidget_->setFont(uiFont(tokens::kFont12));
     labelWidget_->setStyleSheet(
         QStringLiteral("color:%1").arg(cssColor(danger_ ? p.danger.text : p.text1)));
@@ -1140,7 +1140,7 @@ ClipRow::ClipRow(const QString &iconName, const QString &text, const QString &hi
         auto *iconLabel = new QLabel(leading_);
         iconLabel->setFixedSize(tokens::kBadgeHeight, tokens::kBadgeHeight);
         iconLabel->setAlignment(Qt::AlignCenter);
-        iconLabel->setPixmap(icons::icon(iconName, 12, p.text2).pixmap(12, 12));
+        iconLabel->setPixmap(icons::icon(iconName, tokens::kIconXs, p.text2).pixmap(tokens::kIconXs, tokens::kIconXs));
         tl->addWidget(iconLabel);
         applyBoxStyle(leading_,
                       QStringLiteral("border-radius:%1px;background:%2")
@@ -1428,8 +1428,8 @@ QWidget *banner(const QString &text, QWidget *parent, BannerVariant variant)
     hl->setContentsMargins(10, tokens::kS3, tokens::kS3, 10);
     hl->setSpacing(tokens::kS2);
     auto *icon = new QLabel(w);
-    icon->setFixedSize(14, 14);
-    icon->setPixmap(icons::icon(iconName, 14, fg).pixmap(14, 14));
+    icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
+    icon->setPixmap(icons::icon(iconName, tokens::kIconSm, fg).pixmap(tokens::kIconSm, tokens::kIconSm));
     auto *label = new QLabel(text, w);
     label->setWordWrap(true);
     label->setFont(uiFont(tokens::kFont12));
@@ -1460,7 +1460,7 @@ EmptyState::EmptyState(const QString &iconName, const QString &title, const QStr
         auto *icon = new QLabel(this);
         icon->setFixedSize(tokens::kEmptyIconSize, tokens::kEmptyIconSize);
         icon->setAlignment(Qt::AlignCenter);
-        icon->setPixmap(icons::icon(iconName, 16, p.text3).pixmap(16, 16));
+        icon->setPixmap(icons::icon(iconName, tokens::kIconMd, p.text3).pixmap(tokens::kIconMd, tokens::kIconMd));
         applyBoxStyle(icon, QStringLiteral("border-radius:%1px;background:%2")
                                   .arg(QString::number(tokens::pillRadius(tokens::kEmptyIconSize)),
                                        cssColor(p.surface3)));
@@ -1779,8 +1779,8 @@ QWidget *buildMappingGrid(const QList<KeyPair> &pairs, QWidget *parent)
         kl->setSpacing(5);
         kl->addWidget(new FgKeycap(pair.from, pair.ghost, keys));
         auto *arrow = new QLabel(keys);
-        arrow->setFixedSize(12, 12);
-        arrow->setPixmap(icons::icon(QStringLiteral("arrowRight"), 12, p.text3).pixmap(12, 12));
+        arrow->setFixedSize(tokens::kIconXs, tokens::kIconXs);
+        arrow->setPixmap(icons::icon(QStringLiteral("arrowRight"), tokens::kIconXs, p.text3).pixmap(tokens::kIconXs, tokens::kIconXs));
         kl->addWidget(arrow, 0, Qt::AlignVCenter);
         kl->addWidget(new FgKeycap(pair.to, pair.ghost, keys));
         kl->addStretch(1);

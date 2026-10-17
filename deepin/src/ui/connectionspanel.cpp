@@ -212,8 +212,8 @@ QWidget *ConnectionsPanel::buildKeymapSection()
         kl->setSpacing(5);   // ui.css .keys gap
         kl->addWidget(new FgKeycap(QString::fromUtf8(pairs[i].from), false, keys));
         auto *arrow = new QLabel(keys);
-        arrow->setFixedSize(12, 12);
-        arrow->setPixmap(icons::icon(QStringLiteral("arrowRight"), 12, p.text3).pixmap(12, 12));
+        arrow->setFixedSize(tokens::kIconXs, tokens::kIconXs);
+        arrow->setPixmap(icons::icon(QStringLiteral("arrowRight"), tokens::kIconXs, p.text3).pixmap(tokens::kIconXs, tokens::kIconXs));
         kl->addWidget(arrow, 0, Qt::AlignVCenter);
         kl->addWidget(new FgKeycap(QString::fromUtf8(pairs[i].to), false, keys));
         kl->addStretch(1);
@@ -398,7 +398,7 @@ void ConnectionsPanel::rebuildFileRows()
 
         // ui.css .xfer__icon：28×28 / r-ctl / 按状态取 soft 底 + text 字色。
         auto *iconBox = new QLabel(row);
-        iconBox->setFixedSize(28, 28);
+        iconBox->setFixedSize(tokens::kXferIconSize, tokens::kXferIconSize);
         iconBox->setAlignment(Qt::AlignCenter);
         const StatusColor tone =
             activeRow ? StatusColor{p.surface3, p.surface3, p.text2}
@@ -410,7 +410,7 @@ void ConnectionsPanel::rebuildFileRows()
                                          ? QStringLiteral("check")
                                          : QStringLiteral("warn")),
                       14, tone.text)
-                .pixmap(14, 14));
+                .pixmap(tokens::kIconSm, tokens::kIconSm));
         applyBoxStyle(iconBox,
                       QStringLiteral("border-radius:%1px;background:%2")
                           .arg(QString::number(tokens::kRadiusCtl), css(tone.soft)));
@@ -534,7 +534,7 @@ QWidget *ConnectionsPanel::buildLayoutSection()
             cl->setSpacing(tokens::kS1);
             cl->setAlignment(Qt::AlignCenter);
             auto *iconBox = new QLabel(cell);
-            iconBox->setFixedSize(56, 56);
+            iconBox->setFixedSize(tokens::kCellIconSize, tokens::kCellIconSize);
             iconBox->setAlignment(Qt::AlignCenter);
             iconBox->setText(d.abbrev.isEmpty() ? d.name.left(2).toUpper() : d.abbrev);
             iconBox->setFont(uiFont(tokens::kFont15, QFont::Bold));
@@ -569,7 +569,7 @@ QWidget *ConnectionsPanel::buildLayoutSection()
         }
         // .cell__empty：surface-3 底 + 2px 虚线 line-3 + 加号
         auto *empty = new QLabel(QStringLiteral("+"), gridBox);
-        empty->setFixedSize(56, 56);
+        empty->setFixedSize(tokens::kCellIconSize, tokens::kCellIconSize);
         empty->setAlignment(Qt::AlignCenter);
         empty->setFont(uiFont(tokens::kFont13, QFont::Bold));
         empty->setStyleSheet(
@@ -603,9 +603,9 @@ QWidget *ConnectionsPanel::buildLayoutSection()
             lh->addWidget(dot, 0, Qt::AlignVCenter);
         } else {
             auto *icon = new QLabel(legend);
-            icon->setFixedSize(12, 12);
+            icon->setFixedSize(tokens::kIconXs, tokens::kIconXs);
             icon->setPixmap(
-                icons::icon(QString::fromLatin1(it.icon), 12, it.color).pixmap(12, 12));
+                icons::icon(QString::fromLatin1(it.icon), tokens::kIconXs, it.color).pixmap(tokens::kIconXs, tokens::kIconXs));
             lh->addWidget(icon);
         }
         auto *label = new QLabel(it.text, legend);
@@ -629,8 +629,8 @@ QWidget *ConnectionsPanel::buildFooter()
     hl->setSpacing(tokens::kS2);
 
     auto *icon = new QLabel(foot);
-    icon->setFixedSize(14, 14);
-    icon->setPixmap(icons::icon(QStringLiteral("shield"), 14, p.text3).pixmap(14, 14));
+    icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
+    icon->setPixmap(icons::icon(QStringLiteral("shield"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
     auto *hint = new QLabel(tr("端到端加密 · IntelligentLink 优先"), foot);
     hint->setFont(uiFont(tokens::kFont11));
     hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));

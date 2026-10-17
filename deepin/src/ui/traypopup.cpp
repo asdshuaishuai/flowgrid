@@ -81,7 +81,7 @@ public:
         // .switch-btn__icon：24×24 实色块 + 白字。实色取状态色 solid 一档，
         // 不用 soft——soft 底 + 同族字色在 24px 的小块上几乎分不出档位。
         auto *icon = new QLabel(abbrev, this);
-        icon->setFixedSize(24, 24);
+        icon->setFixedSize(tokens::kSwitchBtnIconSize, tokens::kSwitchBtnIconSize);
         icon->setAlignment(Qt::AlignCenter);
         icon->setFont(uiFont(tokens::kFont11, QFont::Bold));
         icon->setStyleSheet(QStringLiteral("background:%1;color:#ffffff;border-radius:%2px")
@@ -276,8 +276,8 @@ QWidget *TrayPopup::buildHead()
     hl->setSpacing(tokens::kS3);
 
     auto *icon = new QLabel(head);
-    icon->setFixedSize(16, 16);
-    icon->setPixmap(icons::icon(QStringLiteral("link"), 16, p.text1).pixmap(16, 16));
+    icon->setFixedSize(tokens::kIconMd, tokens::kIconMd);
+    icon->setPixmap(icons::icon(QStringLiteral("link"), tokens::kIconMd, p.text1).pixmap(tokens::kIconMd, tokens::kIconMd));
 
     auto *title = new QLabel(QStringLiteral("FlowGrid"), head);
     title->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
@@ -376,7 +376,7 @@ QWidget *TrayPopup::buildCurrentDevice()
     styleActiveRow();
 
     deviceIcon_ = new QLabel(row);
-    deviceIcon_->setFixedSize(tokens::kSwitchBtnSize, tokens::kSwitchBtnSize);
+    deviceIcon_->setFixedSize(tokens::kTrayActiveIconSize, tokens::kTrayActiveIconSize);
     deviceIcon_->setAlignment(Qt::AlignCenter);
     deviceIcon_->setFont(uiFont(tokens::kFont12, QFont::Bold));
     deviceIcon_->setStyleSheet(QStringLiteral("background:%1;color:%2;border-radius:%3px")

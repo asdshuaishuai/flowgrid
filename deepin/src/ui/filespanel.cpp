@@ -101,9 +101,9 @@ QString agoText(qint64 ms)
 QLabel *xferIcon(const QString &name, const StatusColor &c, QWidget *parent)
 {
     auto *box = new QLabel(parent);
-    box->setFixedSize(28, 28);
+    box->setFixedSize(tokens::kXferIconSize, tokens::kXferIconSize);
     box->setAlignment(Qt::AlignCenter);
-    box->setPixmap(icons::icon(name, 14, c.text).pixmap(14, 14));
+    box->setPixmap(icons::icon(name, tokens::kIconSm, c.text).pixmap(tokens::kIconSm, tokens::kIconSm));
     box->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
                            .arg(css(c.soft), QString::number(tokens::kRadiusCtl)));
     return box;
@@ -288,7 +288,8 @@ QWidget *FilesPanel::buildDropZone()
 
     auto *icon = new QLabel(zone);
     icon->setAlignment(Qt::AlignCenter);
-    icon->setPixmap(icons::icon(QStringLiteral("upload"), 20, p.text3).pixmap(20, 20));
+    icon->setPixmap(icons::icon(QStringLiteral("upload"), tokens::kIconLg, p.text3)
+                        .pixmap(tokens::kIconLg, tokens::kIconLg));
 
     auto *text = new QLabel(tr("拖入文件，或点击选择"), zone);
     text->setAlignment(Qt::AlignCenter);
@@ -472,8 +473,8 @@ QWidget *FilesPanel::buildFooter()
     hl->setSpacing(tokens::kS2);
     const Palette &p = Theme::instance().palette();
     auto *icon = new QLabel(foot);
-    icon->setFixedSize(14, 14);
-    icon->setPixmap(icons::icon(QStringLiteral("shield"), 14, p.text3).pixmap(14, 14));
+    icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
+    icon->setPixmap(icons::icon(QStringLiteral("shield"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
     auto *hint = new QLabel(tr("SHA-256 校验后交付"), foot);
     hint->setFont(uiFont(tokens::kFont11));
     hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));

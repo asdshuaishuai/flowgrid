@@ -104,7 +104,7 @@ QWidget *PairingPanel::buildSteps()
         num->setFixedSize(tokens::kStepBadgeSize, tokens::kStepBadgeSize);
         num->setAlignment(Qt::AlignCenter);
         if (done) {
-            num->setPixmap(icons::icon(QStringLiteral("check"), 12, p.ok.text).pixmap(12, 12));
+            num->setPixmap(icons::icon(QStringLiteral("check"), tokens::kIconXs, p.ok.text).pixmap(tokens::kIconXs, tokens::kIconXs));
         } else {
             num->setText(QString::number(i + 1));
             num->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
@@ -181,7 +181,7 @@ QWidget *PairingPanel::buildPairCode()
     hl->addStretch(1);
     for (int i = 0; i < kPairCodeDigits; ++i) {
         auto *slot = new QLabel(codeBox);
-        slot->setFixedSize(34, 42);
+        slot->setFixedSize(tokens::kPairSlotW, tokens::kPairSlotH);
         slot->setAlignment(Qt::AlignCenter);
         slot->setFont(uiFont(tokens::kFont20, QFont::Bold));
         slot->setText(QStringLiteral("·"));
@@ -219,8 +219,8 @@ QWidget *PairingPanel::buildPairCode()
     wl->setContentsMargins(0, tokens::kS1, 0, 0);
     wl->setSpacing(tokens::kS2);
     auto *icon = new QLabel(warn);
-    icon->setFixedSize(14, 14);
-    icon->setPixmap(icons::icon(QStringLiteral("warn"), 14, p.warn.solid).pixmap(14, 14));
+    icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
+    icon->setPixmap(icons::icon(QStringLiteral("warn"), tokens::kIconSm, p.warn.solid).pixmap(tokens::kIconSm, tokens::kIconSm));
     auto *text = new QLabel(
         tr("配对码由传输层密钥协商生成，传输层尚未实现，当前为占位"), warn);
     text->setWordWrap(true);
@@ -353,8 +353,8 @@ void PairingPanel::rebuildDevices()
         th->setContentsMargins(0, 0, 0, 0);
         th->setSpacing(tokens::kS2);
         auto *icon = new QLabel(title);
-        icon->setFixedSize(14, 14);
-        icon->setPixmap(icons::icon(d.icon, 14, d.online ? p.text2 : p.text3).pixmap(14, 14));
+        icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
+        icon->setPixmap(icons::icon(d.icon, tokens::kIconSm, d.online ? p.text2 : p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
         auto *name = new QLabel(d.name, title);
         name->setFont(uiFont(tokens::kFont12));
         name->setStyleSheet(QStringLiteral("color:%1").arg(css(d.online ? p.text1 : p.text3)));
