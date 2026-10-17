@@ -187,6 +187,11 @@ Receiver: OFFER →(用户 Accept)→ 缓存 CHUNK → SHA-256 校验 → ACK co
 - **句柄从 1 开始**，0 永远表示失败/空
 - 所有返回缓冲用 `fg_free_buffer` 释放，**且只释放一次**
 - 字符串入参可为 NULL（按空串处理）；`out*` 出参必须传有效指针
+- `fg_wifidirect_request_encode` 的 `pskHash` 入参**被忽略**，只为不改动已有 C ABI
+  才留着：协议 v1.1 已从 Wi-Fi Direct 发现载荷里删掉 PSK 哈希（§3.1.3，广播它
+  等于给 PSK 的离线字典攻击递刀）。不要算、不要传，载荷字节 15-18 置零；
+  PSK 所有权改在 DTLS/TLS 配对握手里证明。同样的说明写在 bridge.go 的 cgo
+  C 前导块里，会随生成过程进到 `cgo.h`
 - `fg_latency_record_pong` 返回 -1 表示该 PONG 被拒（未来时间戳/不匹配），丢弃即可
 - 会话层（clipboard / filetransfer）已有 cgo 导出，一律「Go 缓存、C 轮询」：
   - 接收侧：`fg_clipboard_take_pending`、`fg_file_sender_poll`、

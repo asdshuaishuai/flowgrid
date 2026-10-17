@@ -2,6 +2,16 @@
 package main
 
 /*
+// C-side notes for whoever binds this header. cgo copies this block verbatim
+// into cgo.h, the only FFI surface a Rust/C client sees -- Go doc comments do
+// not travel with it, so anything a C caller must know has to live here.
+//
+// fg_wifidirect_request_encode's pskHash parameter is IGNORED. It is kept only
+// so the existing C ABI does not change. Protocol v1.1 removed the PSK hash
+// from the Wi-Fi Direct discovery payload (PROTOCOL.md 3.1.3): broadcasting it
+// let an attacker run an offline dictionary attack on the PSK. Do not compute
+// one, do not send one -- bytes 15-18 of the discovery payload are zero. PSK
+// ownership is proved in the DTLS/TLS pairing handshake instead.
 #include <stdlib.h>
 #include <stdint.h>
 */
