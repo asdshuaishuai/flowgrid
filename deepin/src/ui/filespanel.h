@@ -44,6 +44,19 @@ struct XferEntry {
     qint64 finishedAtMs = 0;  // QDateTime::currentMSecsSinceEpoch
 };
 
+// 连接屏「文件传输」折叠区要的只读摘要。整份 XferEntry 暴露出去等于让第二个
+// 面板也能去改传输状态，所以只给一份拷贝出来的快照 + 一个进度百分比。
+struct XferSummary {
+    QString name;
+    QString peer;
+    bool inbound = false;
+    int pct = 0;
+    qint64 totalBytes = 0;
+    int agoSecs = 0;
+    enum class State { Active, Done, Rejected, Failed, Oversize };
+    State state = State::Active;
+};
+
 // 拖放区。mouseReleaseEvent / dropEvent 都是 QWidget 的 protected 虚函数，
 // 没法用 QObject::connect 取地址，因此单独派生一个带信号的小控件。
 class DropZone : public QWidget {
@@ -85,8 +98,16 @@ public:
     // 对端设备，.xfer 的进度条/速率/剩余、三种失败徽章一条都跑不到。
     void seedForSnapshot();
 
+    // 托盘徽标用的进行中路数（只读）。
+    int activeCount() const;
+
+    // 只读快照，供连接屏那一区展示（传输本身仍只归本面板所有）。
+    QList<XferSummary> transferSummary() const;
+
 Q_SIGNALS:
     void fileChosen();
+    // 列表有任何变化就发，连接屏据此重建那一区。
+    void transfersChanged();
 
 private:
     QWidget *buildTransferList();

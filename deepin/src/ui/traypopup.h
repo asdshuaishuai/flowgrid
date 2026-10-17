@@ -30,6 +30,10 @@ public:
 
     void refresh();
 
+    // 托盘只做索引：剪贴板条目数与传输路数由各自的浮板持有，托盘读它们的
+    // 公开计数刷新徽标，不另存一份——两处各记一份必然会漂。
+    void setCounts(int clipEntries, int activeTransfers);
+
     // 摆位与入场动画复用 panel.h 的自由函数，行为与 520px 浮板完全一致。
     void popupAt(const QPoint &anchor);
 
@@ -67,8 +71,11 @@ private:
     QLabel *deviceIcon_ = nullptr;
     QLabel *deviceName_ = nullptr;
     QLabel *deviceMeta_ = nullptr;
-    // 「设备与连接」右侧的在线台数徽标，跟随 DeviceManager 实时更新。
+    // 「设备与连接 / 剪贴板 / 文件传输」右侧的徽标，分别跟随 DeviceManager 与
+    // 对应浮板实时更新，不写死占位数字。
     Badge *deviceCount_ = nullptr;
+    Badge *clipboardBadge_ = nullptr;
+    Badge *filesBadge_ = nullptr;
 
     // 快捷开关：refresh() 拿它们跟随 Settings::changed（「恢复默认」改了配置后，
     // 托盘这几个开关要跟着回到默认值，否则两处状态会不一致）。

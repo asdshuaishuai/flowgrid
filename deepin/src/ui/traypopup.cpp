@@ -40,25 +40,55 @@ namespace {
 // 快速切换按钮：设计稿里它就是一个「图标方块 + 快捷键」的可点块。
 // 做成类而不是裸 QWidget，是因为 QWidget::mouseReleaseEvent 是 protected，
 // 没法用 connect 直接挂——与其用事件过滤器绕，不如把点击语义收进类型里。
+// .tray__kbd：11px / text-3 / tabular-nums。托盘是键盘用户的主入口，
+// 每个浮板右上角摆着它的快捷键才有用。
+QWidget *kbdHint(const QString &key)
+{
+    const Palette &p = Theme::instance().palette();
+    auto *w = new QWidget;
+    auto *hl = new QHBoxLayout(w);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->setSpacing(tokens::kS1);
+    // 修饰键名跟着设置屏的「切换热键」走：默认 1=Ctrl，改成 Alt 时这里也显示 Alt。
+    const QString mod = Settings::instance().switchHotkey() == 2 ? QObject::tr("Alt")
+                                                                 : QObject::tr("Ctrl");
+    for (const QString &part : {mod, key}) {
+        auto *cap = new QLabel(part, w);
+        cap->setFont(uiFont(tokens::kFont11));
+        cap->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        hl->addWidget(cap);
+    }
+    hl->addStretch(1);
+    return w;
+}
+
 class QuickButton : public QWidget {
     Q_OBJECT
 public:
-    QuickButton(const QString &abbrev, int hotkey, const StatusColor &sc, QWidget *parent)
-        : QWidget(parent)
+    QuickButton(const QString &abbrev, int hotkey, const StatusColor &sc, bool active,
+                QWidget *parent)
+        : QWidget(parent), active_(active)
     {
         setCursor(Qt::PointingHandCursor);
+        // 描边与底色要画在「自己」身上，而普通 QWidget 子类默认不参与样式表绘制，
+        // 必须显式打开——DropZone 当初就是漏了这一句，虚线框画不出来。
+        setAttribute(Qt::WA_StyledBackground, true);
         auto *vl = new QVBoxLayout(this);
-        vl->setContentsMargins(0, 0, 0, 0);
+        // ui.css .switch-btn：padding 6 / gap 4 / 1px line-2 描边 / r-ctl。
+        vl->setContentsMargins(6, 6, 6, 6);
         vl->setSpacing(4);
 
+        // .switch-btn__icon：24×24 实色块 + 白字。实色取状态色 solid 一档，
+        // 不用 soft——soft 底 + 同族字色在 24px 的小块上几乎分不出档位。
         auto *icon = new QLabel(abbrev, this);
-        icon->setFixedSize(tokens::kSwitchBtnSize, tokens::kSwitchBtnSize);
+        icon->setFixedSize(24, 24);
         icon->setAlignment(Qt::AlignCenter);
-        icon->setFont(uiFont(tokens::kFont12, QFont::Bold));
-        icon->setStyleSheet(QStringLiteral("background:%1;color:%2;border-radius:%3px")
-                                 .arg(css(sc.soft), css(sc.text))
+        icon->setFont(uiFont(tokens::kFont11, QFont::Bold));
+        icon->setStyleSheet(QStringLiteral("background:%1;color:#ffffff;border-radius:%2px")
+                                 .arg(css(sc.solid))
                                  .arg(tokens::kRadiusCtl));
 
+        // .switch-btn__key
         auto *kbd = new QLabel(QStringLiteral("Ctrl+%1").arg(hotkey), this);
         kbd->setFont(uiFont(tokens::kFont11));
         kbd->setAlignment(Qt::AlignCenter);
@@ -67,6 +97,15 @@ public:
 
         vl->addWidget(icon);
         vl->addWidget(kbd);
+
+        connect(&Theme::instance(), &Theme::changed, this, [this] { restyle(); });
+        restyle();
+    }
+
+    void setActive(bool on)
+    {
+        active_ = on;
+        restyle();
     }
 
 Q_SIGNALS:
@@ -80,6 +119,34 @@ protected:
         }
         QWidget::mouseReleaseEvent(e);
     }
+    void enterEvent(QEnterEvent *e) override
+    {
+        hovered_ = true;
+        restyle();
+        QWidget::enterEvent(e);
+    }
+    void leaveEvent(QEvent *e) override
+    {
+        hovered_ = false;
+        restyle();
+        QWidget::leaveEvent(e);
+    }
+
+private:
+    // .switch-btn:hover 与 [aria-pressed="true"] 都是 accent 描边 + accent-soft 底。
+    void restyle()
+    {
+        const Palette &p = Theme::instance().palette();
+        const bool on = hovered_ || active_;
+        applyBoxStyle(this,
+                      QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                          .arg(css(on ? p.accent : p.line2))
+                          .arg(tokens::kRadiusCtl)
+                          .arg(css(on ? p.accentSoft : p.surface)));
+    }
+
+    bool active_ = false;
+    bool hovered_ = false;
 };
 
 } // namespace
@@ -133,12 +200,12 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
 
     // ── 数据与同步 ──
     {
+        clipboardBadge_ = new Badge(QStringLiteral("—"), Badge::Variant::Neutral, this);
+        filesBadge_ = new Badge(QStringLiteral("—"), Badge::Variant::Neutral, this);
         QList<QWidget *> rows{
-            buildNavRow(QStringLiteral("clipboard"), tr("剪贴板"),
-                        new Badge(QStringLiteral("—"), Badge::Variant::Neutral),
+            buildNavRow(QStringLiteral("clipboard"), tr("剪贴板"), clipboardBadge_,
                         QStringLiteral("clipboard")),
-            buildNavRow(QStringLiteral("file"), tr("文件传输"),
-                        new Badge(QStringLiteral("—"), Badge::Variant::Neutral),
+            buildNavRow(QStringLiteral("file"), tr("文件传输"), filesBadge_,
                         QStringLiteral("files")),
         };
         root_->addWidget(buildGroup(tr("数据与同步"), rows));
@@ -168,10 +235,11 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
 
     // ── 底部入口 + 退出 ──
     {
+        // 设计稿这两行右侧是 .tray__kbd 的快捷键提示（Ctrl K / Ctrl ,）。
         QList<QWidget *> rows{
-            buildNavRow(QStringLiteral("keyboard"), tr("键位映射"), nullptr,
+            buildNavRow(QStringLiteral("keyboard"), tr("键位映射"), kbdHint("K"),
                         QStringLiteral("keymap")),
-            buildNavRow(QStringLiteral("settings"), tr("设置"), nullptr,
+            buildNavRow(QStringLiteral("settings"), tr("设置"), kbdHint(","),
                         QStringLiteral("settings")),
         };
         root_->addWidget(buildGroup(QString(), rows));
@@ -426,18 +494,44 @@ void TrayPopup::refresh()
             if (!d.online || d.hotkeyIndex <= 0) {
                 continue;
             }
-            const StatusColor sc = Theme::instance().color(
-                d.isActive ? Quality::Good : Quality::Idle);
+            // 设计稿给三台设备的是 accent / ok / warn 三种实色，而不是随手挑的：
+            // 当前控制端取 ok，其余按各自的延迟档取（良好→主色、偏慢→warn、
+            // 告警→danger、离线→idle）。规则是数据推出来的，不随排版漂。
+            const Palette &pal = Theme::instance().palette();
+            // 当前控制端取 ok 实色；其余按各自的延迟档取——良好给主色、偏慢给
+            // warn、告警给 danger、离线给 idle。这样「哪个慢了」在托盘上一眼可辨，
+            // 规则由读数推出，不随排版或设备顺序漂。
+            const Quality q = Theme::instance().qualityOf(d.latencyMs, d.online);
+            StatusColor sc = d.isActive
+                                 ? pal.ok
+                                 : (q == Quality::Good
+                                        ? StatusColor{pal.accent, pal.accentSoft, pal.accentText}
+                                        : Theme::instance().color(q));
             const QString abbrev = d.abbrev.isEmpty()
                                        ? d.name.section(QLatin1Char(' '), 0, 0).left(2).toUpper()
                                        : d.abbrev;
-            auto *btn = new QuickButton(abbrev, d.hotkeyIndex, sc, this);
+            auto *btn = new QuickButton(abbrev, d.hotkeyIndex, sc, d.isActive, this);
             QObject::connect(btn, &QuickButton::clicked, this, [this, id = d.id] {
                 manager_.setActive(id);
             });
             quickRow_->addWidget(btn);
         }
         quickRow_->addStretch(1);
+    }
+}
+
+void TrayPopup::setCounts(int clipEntries, int activeTransfers)
+{
+    if (clipboardBadge_ != nullptr) {
+        clipboardBadge_->setText(clipEntries > 0 ? tr("%1 项").arg(clipEntries) : tr("空闲"));
+        clipboardBadge_->setVariant(clipEntries > 0 ? Badge::Variant::Neutral
+                                                    : Badge::Variant::Idle);
+    }
+    if (filesBadge_ != nullptr) {
+        filesBadge_->setText(activeTransfers > 0 ? tr("%1 项").arg(activeTransfers)
+                                                 : tr("空闲"));
+        filesBadge_->setVariant(activeTransfers > 0 ? Badge::Variant::Ok
+                                                    : Badge::Variant::Idle);
     }
 }
 

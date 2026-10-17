@@ -446,6 +446,7 @@ void ClipboardPanel::clearHistory()
     current_ = ClipEntry();
     rebuildHistory();
     Q_EMIT clearHistoryRequested();
+    Q_EMIT transfersChanged();
 }
 
 void ClipboardPanel::reloadHistory()
@@ -471,6 +472,7 @@ void ClipboardPanel::reloadHistory()
         history_.append(e);
     }
     rebuildHistory();
+    Q_EMIT transfersChanged();
 }
 
 void ClipboardPanel::seedForSnapshot()
@@ -499,6 +501,7 @@ void ClipboardPanel::seedForSnapshot()
         history_.append(e);
     }
     rebuildHistory();
+    Q_EMIT transfersChanged();
 }
 
 void ClipboardPanel::rebuildHistory()

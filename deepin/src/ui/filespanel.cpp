@@ -222,6 +222,7 @@ FilesPanel::FilesPanel(QWidget *parent) : Panel(tr("文件传输"), parent)
     // 首帧就要画出空状态，否则只有两个小标题、下面什么都没有，看着像加载坏了。
     rebuildTransfers();
     rebuildRecords();
+    Q_EMIT transfersChanged();
 
     // 会话轮询早先只有 pollSessions() 这个方法、没有任何调用点，等于整块列表
     // 是死的。这里按 500ms 拉一次：Go 侧是非阻塞出队，没数据时开销可忽略，
@@ -533,6 +534,47 @@ void FilesPanel::seedForSnapshot()
     rebuildTransfers();
     rebuildRecords();
     refreshPill();
+    // 播种也得通知：不发的话连接屏那一区与托盘徽标会一直停在播种前的空态。
+    Q_EMIT transfersChanged();
+}
+
+int FilesPanel::activeCount() const
+{
+    int n = 0;
+    for (const XferEntry &e : entries_) {
+        if (!e.done && !e.failed && !e.rejected && !e.oversize) {
+            ++n;
+        }
+    }
+    return n;
+}
+
+QList<XferSummary> FilesPanel::transferSummary() const
+{
+    QList<XferSummary> out;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    for (const XferEntry &e : entries_) {
+        XferSummary s;
+        s.name = e.name;
+        s.peer = e.peer;
+        s.inbound = e.inbound;
+        s.totalBytes = e.totalBytes;
+        s.pct = e.totalBytes > 0 ? int(e.sentBytes * 100 / e.totalBytes) : 0;
+        s.agoSecs = int((now - e.finishedAtMs) / 1000);
+        if (e.oversize) {
+            s.state = XferSummary::State::Oversize;
+        } else if (e.rejected) {
+            s.state = XferSummary::State::Rejected;
+        } else if (e.failed) {
+            s.state = XferSummary::State::Failed;
+        } else if (e.done) {
+            s.state = XferSummary::State::Done;
+        } else {
+            s.state = XferSummary::State::Active;
+        }
+        out.append(s);
+    }
+    return out;
 }
 
 int FilesPanel::offerFile(const QString &path)
@@ -559,6 +601,7 @@ int FilesPanel::offerFile(const QString &path)
         entries_.append(e);
         rebuildRecords();
         refreshPill();
+        Q_EMIT transfersChanged();
         return -1;
     }
 
@@ -577,6 +620,7 @@ int FilesPanel::offerFile(const QString &path)
     entries_.append(e);
     rebuildTransfers();
     refreshPill();
+    Q_EMIT transfersChanged();
     return 0;
 }
 
@@ -655,6 +699,7 @@ void FilesPanel::pollSessions()
         rebuildTransfers();
         rebuildRecords();
         refreshPill();
+        Q_EMIT transfersChanged();
     }
 }
 

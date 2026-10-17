@@ -34,6 +34,9 @@ public:
 
     void reloadHistory();
 
+    // 托盘徽标用的条目数（只读）。
+    int historyCount() const { return history_.size(); }
+
     // 仅 --snapshot 用：无头环境没有对端设备，历史永远是空的，ClipRow 的双行
     // 排版、分段控件的过滤、搜索框的匹配这三条路径一条都跑不到。种一批与
     // clipboard.html 同款的数据进去，截图才能和设计稿逐项对照。正常运行
@@ -48,6 +51,8 @@ public Q_SLOTS:
     proto::ClipboardSession &session() { return session_; }
 
 Q_SIGNALS:
+    // 历史列表任何变化（收到新条目、过滤、清空）都发，托盘徽标据此刷新。
+    void transfersChanged();
     void localWriteRequested(const ClipEntry &entry);
     void pushRequested(const ClipEntry &entry);
     // 页脚「清空历史」。历史目前只在进程内，Go 侧不持有副本，

@@ -220,6 +220,18 @@ int main(int argc, char *argv[])
                      [] { showPanel(g_latency); });
     QObject::connect(g_connections, &ConnectionsPanel::clipboardRequested, g_connections,
                      [] { g_clipboard->reloadHistory(); showPanel(g_clipboard); });
+    QObject::connect(g_connections, &ConnectionsPanel::filesRequested, g_connections,
+                     [] { showPanel(g_files); });
+    // 连接屏的剪贴板 / 文件传输折叠区只读对应浮板的状态，不另开会话。
+    g_connections->attachPanels(g_clipboard, g_files);
+    // 托盘那两个徽标同样只读别人的数据：谁变了就推一次，不在托盘里另存一份。
+    auto syncTrayCounts = [tray = g_trayPopup, clip = g_clipboard, files = g_files] {
+        tray->setCounts(clip->historyCount(), files->activeCount());
+    };
+    QObject::connect(g_clipboard, &ClipboardPanel::transfersChanged, g_trayPopup,
+                     [syncTrayCounts] { syncTrayCounts(); });
+    QObject::connect(g_files, &FilesPanel::transfersChanged, g_trayPopup,
+                     [syncTrayCounts] { syncTrayCounts(); });
     QObject::connect(g_pairing, &PairingPanel::doneRequested, g_pairing,
                      [] { showPanel(g_connections); });
     QObject::connect(g_clipboard, &ClipboardPanel::clearHistoryRequested, g_clipboard, [] {
@@ -264,7 +276,7 @@ int main(int argc, char *argv[])
     // 截图模式：依次渲染八块界面并退出，供无头环境验收。
     if (parser.isSet(snapshotOpt)) {
         const QString base = parser.value(snapshotOpt);
-        QTimer::singleShot(600, &app, [&app, base] {
+        QTimer::singleShot(600, &app, [&app, base, syncTrayCounts] {
             // 走真实的 pop-up 定位（showPanel 内部会算 anchorPoint），而不是手调
             // 几何：截图与实际唤出同一条路径，否则「截图好看、实际错位」这类问题
             // 在无头环境里根本查不出来。
@@ -299,15 +311,18 @@ int main(int argc, char *argv[])
                 }
                 w->hide();
             };
+            // 连接屏的文件传输折叠区读的是 FilesPanel 的快照，而 FilesPanel
+            // 在下面才播种——顺序反了这一区会拍成「暂无传输」。
+            g_files->seedForSnapshot();
+            g_clipboard->seedForSnapshot();
+            syncTrayCounts();
             shot(g_trayPopup, QStringLiteral("tray"));
             shot(g_connections, QStringLiteral("connections"));
             shot(g_latency, QStringLiteral("latency"));
             shot(g_settings, QStringLiteral("settings"));
             shot(g_keymap, QStringLiteral("keymap"));
             shot(g_pairing, QStringLiteral("pairing"));
-            g_clipboard->seedForSnapshot();
             shot(g_clipboard, QStringLiteral("clipboard"));
-            g_files->seedForSnapshot();
             shot(g_files, QStringLiteral("files"));
             app.quit();
         });
