@@ -188,8 +188,19 @@ Receiver: OFFER →(用户 Accept)→ 缓存 CHUNK → SHA-256 校验 → ACK co
 - 所有返回缓冲用 `fg_free_buffer` 释放，**且只释放一次**
 - 字符串入参可为 NULL（按空串处理）；`out*` 出参必须传有效指针
 - `fg_latency_record_pong` 返回 -1 表示该 PONG 被拒（未来时间戳/不匹配），丢弃即可
-- 注意：会话层（clipboard/filetransfer）暂无 cgo 导出——新增导出需在 Linux
-  上重新生成 cgo.h；在此之前 Rust 客户端可走帧级 API 自行装配，或等导出补齐
+- 会话层（clipboard / filetransfer）已有 cgo 导出，一律「Go 缓存、C 轮询」：
+  - 接收侧：`fg_clipboard_take_pending`、`fg_file_sender_poll`、
+    `fg_file_receiver_take_offer`、`fg_file_receiver_take_complete`
+    （终态读一次即复位，不会重复提示）
+  - 发送侧：先 `fg_session_set_sink(1)` 声明传输就绪，再调用
+    `fg_clipboard_send` / `fg_file_sender_offer` + `fg_file_sender_pump` 等；
+    产出的帧进全局出帧队列，用 `fg_session_poll_out` 逐帧取走。帧只带
+    Type + Payload，序列号/时间戳与 HMAC 由客户端用帧级 API 自己打。
+    **未声明 sink 时发送接口返回 `ErrNotConnected`(0x05)，不会静默丢帧报成功**；
+    队列上限 4096 帧，满了返回 `ErrSendFailed`(0x06)。队列是全局的，v1.1
+    只支持单连接。
+- **改任何 cgo 导出后必须在 Linux 上重新生成 `protocol/cgo/cgo.h`**（AGENTS.md）：
+  `cd protocol/cgo && CGO_ENABLED=1 CC=/usr/bin/gcc CXX=/usr/bin/g++ go build -buildmode=c-archive -o libflowgrid_protocol.a . && cp libflowgrid_protocol.h cgo.h`
 
 ---
 

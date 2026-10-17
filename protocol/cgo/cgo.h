@@ -108,7 +108,9 @@ extern int fg_payload_unmarshal_mousemove(uint8_t* data, size_t len, int16_t* ou
 extern int fg_payload_unmarshal_mousebtn(uint8_t* data, size_t len, uint8_t* outBtn, uint8_t* outState);
 extern int fg_payload_unmarshal_scroll(uint8_t* data, size_t len, int16_t* outDY, int16_t* outDX);
 extern int fg_payload_unmarshal_disconnect(uint8_t* data, size_t len, uint8_t* outReason);
-extern void* fg_keymap_load_file(char* path, char** outVersion, size_t* outRuleCount);
+extern uint8_t* fg_payload_clipboard(char* mime, uint8_t* data, size_t dataLen, size_t* outLen);
+extern int fg_payload_unmarshal_clipboard(uint8_t* data, size_t n, uint8_t* outMimeLen, uint8_t** outMime, size_t* outDataLen, uint8_t** outData);
+extern GoUintptr fg_keymap_load_file(char* path, char** outVersion, size_t* outRuleCount);
 extern int fg_keymap_lookup(void* handle, uint8_t fromPlatform, uint8_t toPlatform, uint16_t keyCode, uint8_t modifiers, char* context, uint16_t* outKeyCode, uint8_t* outModifiers, int* outFound);
 extern uint8_t fg_remap_modifiers(uint8_t mods, uint8_t fromPlatform, uint8_t toPlatform);
 extern void fg_keymap_free(void* handle);
@@ -123,6 +125,7 @@ extern GoUintptr fg_latency_monitor_new(int maxSamples);
 extern void fg_latency_record_ping(GoUintptr id, uint64_t sendTimeUs);
 extern int fg_latency_record_pong(GoUintptr id, uint64_t pongTimestampUs, uint64_t nowUs, double* outMs, double* outJitter);
 extern int fg_latency_latest(GoUintptr id, double* outMs, double* outJitter, int* outQuality);
+extern int fg_latency_consecutive_bad(GoUintptr id);
 extern int fg_latency_stats(GoUintptr id, double* outMin, double* outMax, double* outAvg);
 extern void fg_latency_monitor_free(GoUintptr id);
 extern GoUintptr fg_heartbeat_tracker_new(void);
@@ -146,6 +149,26 @@ extern void fg_fragment_reassembler_free(GoUintptr id);
 extern char* fg_error_string(uint8_t code);
 extern uint8_t* fg_identify_payload_encode(uint8_t version, uint8_t platform, uint8_t role, uint8_t caps, uint32_t seqInit, char* name, size_t* outLen);
 extern uint8_t* fg_identify_response_encode(uint8_t status, uint8_t platform, uint8_t caps, char* name, size_t* outLen);
+extern void fg_session_set_sink(GoUintptr userdata);
+extern int fg_session_poll_out(uint8_t* outType, uint8_t** outPayload, size_t* outLen);
+extern GoUintptr fg_clipboard_session_new(void);
+extern void fg_clipboard_session_free(GoUintptr handle);
+extern int fg_clipboard_send(GoUintptr handle, char* mime, uint8_t* data, size_t dataLen, int passes);
+extern int fg_clipboard_handle_frame(GoUintptr handle, uint8_t* payload, size_t n);
+extern int fg_clipboard_take_pending(GoUintptr handle, uint8_t** outMime, size_t* outMimeLen, uint8_t** outData, size_t* outDataLen);
+extern GoUintptr fg_file_sender_new(void);
+extern void fg_file_sender_free(GoUintptr handle);
+extern int fg_file_sender_offer(GoUintptr handle, char* name, uint8_t* data, size_t dataLen, uint16_t* outID);
+extern int fg_file_sender_pump(GoUintptr handle, int maxChunks, int* outPumped);
+extern int fg_file_sender_handle_frame(GoUintptr handle, uint8_t frameType, uint8_t* payload, size_t n);
+extern int fg_file_sender_poll(GoUintptr handle, int* outState, int* outSent, int* outTotal, int* outErr);
+extern GoUintptr fg_file_receiver_new(void);
+extern void fg_file_receiver_free(GoUintptr handle);
+extern int fg_file_receiver_handle_frame(GoUintptr handle, uint8_t frameType, uint8_t* payload, size_t n, int* outHandled);
+extern int fg_file_receiver_take_offer(GoUintptr handle, uint16_t* outID, uint8_t** outName, size_t* outNameLen, uint64_t* outSize);
+extern int fg_file_receiver_accept(GoUintptr handle, uint16_t id);
+extern int fg_file_receiver_reject(GoUintptr handle, uint16_t id, uint8_t status);
+extern int fg_file_receiver_take_complete(GoUintptr handle, uint8_t** outName, size_t* outNameLen, uint8_t** outData, size_t* outDataLen, int* outErr);
 
 #ifdef __cplusplus
 }

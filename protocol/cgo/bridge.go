@@ -942,11 +942,26 @@ type clipSession struct {
 	pending *protocol.Clipboard
 }
 
-// send seam：会话层把「帧类型 + 载荷」交给这里；客户端用自己的 FrameSink。
-// v1.1 的客户端目前只做单连接演示，故 sink 是全局的；真正的多连接版本需要
-// 把 sink 随句柄一起存（见 docs/PROTOCOL-INTEGRATION.md 的后续项）。
-var sessionSinkMu sync.RWMutex
-var sessionSink func(frameType uint8, payload []byte) error
+// send seam：会话层把「帧类型 + 载荷」交给 emitFrame，这里入队；C 侧用
+// fg_session_poll_out 取走，自行打序列号/时间戳、按需加 HMAC 后写传输。
+//
+// 为什么是轮询而不是回调：Go 回调无法直接跨 C ABI（函数指针编组脆弱），
+// 本文件其余各处也一律「Go 缓存、C 轮询」。队列是全局的——v1.1 只做单连接
+// 演示；多连接版本需把队列随句柄存（见 docs/PROTOCOL-INTEGRATION.md §8）。
+//
+// 帧在入队前拷贝：会话层可能复用底层缓冲，只存切片会拿到被改写的字节。
+const sessionOutMax = 4096
+
+type sessionFrame struct {
+	frameType uint8
+	payload   []byte
+}
+
+var (
+	sessionOutOnMu sync.RWMutex
+	sessionOutOn   bool // 客户端是否已声明「传输就绪、会来取帧」
+	sessionOut     = make(chan sessionFrame, sessionOutMax)
+)
 
 // errCode 把任意 error 归一成协议错误码：*ProtocolError 直接取 Code，
 // 其它 error 一律归到 ErrSendFailed。C 侧只认数字错误码，不认 Go 的 error 树。
@@ -961,28 +976,62 @@ func errCode(err error) int {
 	return int(protocol.ErrSendFailed)
 }
 
+// fg_session_set_sink(userdata≠0) 声明传输就绪：此后 emitFrame 才会入队。
+// 未声明时 emitFrame 返回 ErrNotConnected，于是 SendClipboard/Pump 直接报错，
+// 而不是把帧悄悄丢掉又报成功。userdata=0 撤下并清空队列。
+//
 //export fg_session_set_sink
 func fg_session_set_sink(userdata uintptr) {
-	sessionSinkMu.Lock()
-	defer sessionSinkMu.Unlock()
+	sessionOutOnMu.Lock()
+	sessionOutOn = userdata != 0
+	sessionOutOnMu.Unlock()
 	if userdata == 0 {
-		sessionSink = nil
-		return
+		for len(sessionOut) > 0 {
+			<-sessionOut
+		}
 	}
-	// 这里的 userdata 是客户端注册的 sink 标识；当前实现只支持全局唯一 sink，
-	// 多连接场景需扩展为按句柄查找。
-	sessionSink = func(frameType uint8, payload []byte) error { return nil }
-	_ = userdata
 }
 
 func emitFrame(frameType uint8, payload []byte) error {
-	sessionSinkMu.RLock()
-	sink := sessionSink
-	sessionSinkMu.RUnlock()
-	if sink == nil {
+	sessionOutOnMu.RLock()
+	on := sessionOutOn
+	sessionOutOnMu.RUnlock()
+	if !on {
 		return protocol.NewError(protocol.ErrNotConnected, "no session sink registered")
 	}
-	return sink(frameType, payload)
+	cp := make([]byte, len(payload))
+	copy(cp, payload)
+	select {
+	case sessionOut <- sessionFrame{frameType: frameType, payload: cp}:
+		return nil
+	default:
+		return protocol.NewError(protocol.ErrSendFailed, "session outbox full: client not draining")
+	}
+}
+
+// pollSessionOut 取一帧，ok=false 表示队列空。抽成独立函数是为了能脱离 cgo
+// 指针编组测试出队语义。
+func pollSessionOut() (frameType uint8, payload []byte, ok bool) {
+	select {
+	case f := <-sessionOut:
+		return f.frameType, f.payload, true
+	default:
+		return 0, nil, false
+	}
+}
+
+// 取一帧待发：有则返回 1，payload 交调用方用 fg_free_buffer 释放；队列空返回 0。
+//
+//export fg_session_poll_out
+func fg_session_poll_out(outType *C.uint8_t, outPayload **C.uint8_t, outLen *C.size_t) C.int {
+	ft, payload, ok := pollSessionOut()
+	if !ok {
+		return 0
+	}
+	*outType = C.uint8_t(ft)
+	*outLen = C.size_t(len(payload))
+	*outPayload = cBuffer(payload)
+	return 1
 }
 
 //export fg_clipboard_session_new
