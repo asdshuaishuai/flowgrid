@@ -359,7 +359,10 @@ func (b *MdnsBrowser) Start() error {
 	b.conn = conn
 	b.mu.Unlock()
 
-	b.wg.Add(1)
+	// readLoop 与 queryLoop 各自 defer 一次 wg.Done，Add 就得配到 2。少加一个
+	// 的话计数会从 0 掉到 -1：后收尾的那个循环直接在 Done 里 panic
+	// （sync: negative WaitGroup counter），Stop 里的 Wait 也跟着炸。
+	b.wg.Add(2)
 	go b.readLoop(conn)
 
 	// 启动即查一次，之后按 interval 轮询。

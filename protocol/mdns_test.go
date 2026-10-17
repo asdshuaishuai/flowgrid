@@ -171,6 +171,31 @@ func TestMdnsBrowserPrune(t *testing.T) {
 	}
 }
 
+// Start 起了两个循环，Stop 必须等两个都退干净。曾经只 Add(1) 却有两个
+// Done——计数掉到 -1，后收尾的循环在 Done 里 panic，Stop 直接把进程带走。
+// 这个不靠组播就能测：组播不可用（容器 / 隔离网段）时 Start 返回错误，跳过。
+func TestMdnsBrowserStopBalancesWaitGroup(t *testing.T) {
+	b := NewMdnsBrowser()
+	if err := b.Start(); err != nil {
+		t.Skipf("当前网络不支持组播：%v", err)
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		b.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop 未在两个循环退出后返回")
+	}
+
+	// 留一拍给两个循环各自的 defer：计数若不平衡，第二个 Done 会在这里
+	// panic，测试进程以非零状态退出，而不是悄悄放过。
+	time.Sleep(200 * time.Millisecond)
+}
+
 func TestMdnsAdvertisorRoundTrip(t *testing.T) {
 	txt := MdnsTXTRecord{
 		Version: "1", Platform: "linux", Name: "deepin 工作站",
