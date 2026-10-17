@@ -279,7 +279,6 @@ QWidget *ClipboardPanel::buildCurrent()
             toast(proto::errorString(err), ToastKind::Danger);
             return;
         }
-        Q_EMIT pushRequested(e);
         toast(tr("已推送"), ToastKind::Ok);
     });
     fl->addWidget(write);
@@ -473,6 +472,12 @@ void ClipboardPanel::reloadHistory()
     QString mime;
     QByteArray data;
     while (session_.takePending(&mime, &data)) {
+        // 「同步图片」关闭后，入站的 image/* 直接丢弃，不进历史。settings.h
+        // 把这条过滤明确划给客户端——协议帧只带 MIME，不认识内容类型。
+        if (mime.startsWith(QLatin1String("image/")) && !Settings::instance().clipboardImages()) {
+            qCInfo(lcClipboard) << "已关闭图片同步，丢弃入站" << mime << "条目";
+            continue;
+        }
         ClipEntry e;
         e.mime = mime;
         e.raw = data;
@@ -488,9 +493,23 @@ void ClipboardPanel::reloadHistory()
             continue;
         }
         history_.append(e);
+        // 「接收后自动写入本地」打开时，收一条就写回本机系统剪贴板一次。
+        // 真正的 QClipboard 写入由 main 接 localWriteRequested 完成。
+        if (Settings::instance().clipboardAutoWrite()) {
+            Q_EMIT localWriteRequested(e);
+        }
     }
+    trimHistory();
     rebuildHistory();
     Q_EMIT transfersChanged();
+}
+
+void ClipboardPanel::trimHistory()
+{
+    const int keep = Settings::instance().clipboardHistory();
+    while (history_.size() > keep) {
+        history_.removeFirst();
+    }
 }
 
 void ClipboardPanel::seedForSnapshot()
@@ -520,6 +539,7 @@ void ClipboardPanel::seedForSnapshot()
         e.agoSecs = s.ago;
         history_.append(e);
     }
+    trimHistory();
     rebuildHistory();
     Q_EMIT transfersChanged();
 }

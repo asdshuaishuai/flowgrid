@@ -33,9 +33,11 @@
 #include <QCommandLineOption>
 #include <QGridLayout>
 #include <QCommandLineParser>
+#include <QClipboard>
 #include <QDir>
 #include <QFileDialog>
 #include <QLoggingCategory>
+#include <QMimeData>
 #include <QPixmap>
 #include <QScreen>
 #include <QSystemTrayIcon>
@@ -118,6 +120,25 @@ void showPanel(QWidget *panel)
 void notYetWired(const QString &what)
 {
     qCInfo(lcApp) << "尚未接通:" << what;
+}
+
+// 「写入本地」与「接收后自动写入本地」的落点：把一条剪贴板历史写回本机系统
+// 剪贴板。面板只负责发 localWriteRequested 并弹成功提示，真正的 QClipboard
+// 写入放在 main（与 clearHistoryRequested 的接线方式一致）。载荷按收到的
+// MIME 原样透传，不重新编码——收到什么就贴什么。
+void writeClipboardEntryToLocal(const ClipEntry &entry)
+{
+    if (entry.raw.isEmpty()) {
+        return;
+    }
+    auto *mime = new QMimeData;   // setMimeData 接管所有权
+    mime->setData(entry.mime, entry.raw);
+    // 文本类再按 text/plain 暴露一份：终端、单行输入框这类消费方只认
+    // text/plain，不补这一下就粘不到。
+    if (entry.mime.startsWith(QLatin1String("text/"))) {
+        mime->setText(QString::fromUtf8(entry.raw));
+    }
+    QApplication::clipboard()->setMimeData(mime);
 }
 
 QIcon appIcon()
@@ -247,6 +268,11 @@ int main(int argc, char *argv[])
         // 这里要改成删盘上的那份，这里先明确记一笔而不是悄悄无事发生。
         qCInfo(lcApp) << "已清空剪贴板同步历史（当前仅内存副本）";
     });
+    // 点「写入本地」/ 历史条目的复制按钮，以及「接收后自动写入本地」，都从这里
+    // 真正落到系统剪贴板。此前这个信号没人接，面板却已经弹了「已写入本地剪贴板」
+    // ——弹了成功提示却什么都没发生。
+    QObject::connect(g_clipboard, &ClipboardPanel::localWriteRequested, g_clipboard,
+                     [](const ClipEntry &e) { writeClipboardEntryToLocal(e); });
     // 下面两处要等传输层 / 键位映射编辑器落地，先明确告诉用户而不是点了没反应。
     QObject::connect(g_pairing, &PairingPanel::pairRequested, g_pairing,
                      [](const QString &name) { notYetWired(QObject::tr("向 %1 发起配对").arg(name)); });

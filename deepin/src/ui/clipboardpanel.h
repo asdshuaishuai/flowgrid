@@ -54,7 +54,6 @@ Q_SIGNALS:
     // 历史列表任何变化（收到新条目、过滤、清空）都发，托盘徽标据此刷新。
     void transfersChanged();
     void localWriteRequested(const ClipEntry &entry);
-    void pushRequested(const ClipEntry &entry);
     // 页脚「清空历史」。历史目前只在进程内，Go 侧不持有副本，
     // 所以清空是本地动作；但要不要真的丢，等接上持久化后要重新确认。
     void clearHistoryRequested();
@@ -67,6 +66,10 @@ private:
     QWidget *badgeHost();
     QWidget *buildFooter();
     void rebuildHistory();
+    // 历史条数上限取自 sync/clipboard_history（设置屏「保留最近 N 条」）。
+    // 每收一条裁一次——界面上写着「保留最近 50 条」，就得真按 50 条裁，
+    // 否则设置只是块好看的牌子。
+    void trimHistory();
     // 预览正文按固定行数截断（设计稿是 max-height + 内部滚动，浮板里不能嵌套
     // 滚动区），所以文字要先按可用宽高省略再交给 QLabel。
     void setPreviewText(const QString &text);

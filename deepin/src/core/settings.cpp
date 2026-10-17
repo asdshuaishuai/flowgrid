@@ -242,19 +242,21 @@ void Settings::setRequireConfirmation(bool on)
 
 void Settings::resetToDefaults()
 {
-    static const char *const kAllKeys[] = {
-        kKeyPreferredLink, kKeyAutoRouting,   kKeyAutoStart,
-        kKeyKeymap,       kKeySmoothing,     kKeyEdgeThreshold,
-        kKeySwitchHotkey, kKeyClipSync,      kKeyClipHistory,
-        kKeyFileTransfer, kKeyE2E,            kKeyConfirm,
-    };
-    for (const char *k : kAllKeys) {
-        const QString key = QLatin1String(k);
-        if (config_ != nullptr) {
+    // 键表以 DConfig meta 为唯一源头，不在此手抄一份。上一版正是手抄的：
+    // 「恢复默认」漏掉了 clipboard_images / clipboard_ignore_passwords /
+    // clipboard_auto_write 三个键，点完按钮它们不还原——列表与定义两处漂移。
+    if (config_ != nullptr) {
+        const QStringList keys = config_->keyList();
+        for (const QString &key : keys) {
             config_->reset(key);   // 回到 meta 文件里的 default
-        } else if (fallback_.remove(key) > 0) {
-            Q_EMIT changed(key);
         }
+        return;
+    }
+    // 兜底 Hash：只有被写过的键才在表里，逐个移除即回到进程内默认。
+    const QStringList keys = fallback_.keys();
+    for (const QString &key : keys) {
+        fallback_.remove(key);
+        Q_EMIT changed(key);
     }
 }
 
