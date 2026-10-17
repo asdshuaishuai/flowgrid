@@ -1157,6 +1157,14 @@ var (
 	fileReceivers registry[*fileReceiver]
 )
 
+// fg_file_sender_poll 的 state 出参取值，与 C++ FileSender::State 同序。
+const (
+	fileSenderIdle   = 0
+	fileSenderActive = 1
+	fileSenderDone   = 2
+	fileSenderFailed = 3
+)
+
 // fileSender 包装 FileSender 并把回调结果缓存下来供轮询。
 type fileSender struct {
 	sess *protocol.FileSender
@@ -1164,8 +1172,26 @@ type fileSender struct {
 	mu      sync.Mutex
 	sent    int
 	total   int
-	state   int // 0=空闲 1=传输中 2=完成 3=失败
+	state   int
 	errCode int
+}
+
+// snapshot 取一次状态给 C 侧，并消费掉已经报出去的终态与进度。
+//
+// 出参编组那层要 *C.int、测试里不能 import "C"，所以状态消费的逻辑放这儿，
+// 只留一层薄薄的赋值在导出函数里。
+func (fs *fileSender) snapshot() (state, sent, total, code int) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	state, sent, total, code = fs.state, fs.sent, fs.total, fs.errCode
+	if fs.state == fileSenderDone || fs.state == fileSenderFailed {
+		// 终态只报一次，报完连进度一起清掉：留着的话，下一路传输在发出第一帧
+		// 之前，客户端拉到的就是上一路的最终进度（100%），而它只能按「第一条
+		// 进行中的条目」去匹配，分不出这是旧数字。
+		fs.state, fs.errCode = fileSenderIdle, 0
+		fs.sent, fs.total = 0, 0
+	}
+	return state, sent, total, code
 }
 
 //export fg_file_sender_new
@@ -1173,15 +1199,15 @@ func fg_file_sender_new() uintptr {
 	fs := &fileSender{sess: protocol.NewFileSender(emitFrame)}
 	fs.sess.OnProgress = func(_ uint16, sent, total int) {
 		fs.mu.Lock()
-		fs.sent, fs.total, fs.state = sent, total, 1
+		fs.sent, fs.total, fs.state = sent, total, fileSenderActive
 		fs.mu.Unlock()
 	}
 	fs.sess.OnDone = func(_ uint16, err error) {
 		fs.mu.Lock()
-		fs.state = 2
+		fs.state = fileSenderDone
 		fs.errCode = 0
 		if err != nil {
-			fs.state = 3
+			fs.state = fileSenderFailed
 			fs.errCode = errCode(err)
 		}
 		fs.mu.Unlock()
@@ -1249,16 +1275,11 @@ func fg_file_sender_poll(handle uintptr, outState *C.int, outSent *C.int, outTot
 	if !ok {
 		return -1
 	}
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
-	*outState = C.int(fs.state)
-	*outSent = C.int(fs.sent)
-	*outTotal = C.int(fs.total)
-	*outErr = C.int(fs.errCode)
-	if fs.state == 2 || fs.state == 3 {
-		fs.state = 0
-		fs.errCode = 0
-	}
+	state, sent, total, code := fs.snapshot()
+	*outState = C.int(state)
+	*outSent = C.int(sent)
+	*outTotal = C.int(total)
+	*outErr = C.int(code)
 	return 0
 }
 

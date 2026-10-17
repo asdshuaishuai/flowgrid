@@ -199,3 +199,34 @@ func TestClipboardInboxDropsOldestWhenFull(t *testing.T) {
 		t.Errorf("该丢最旧的 %d 条，队首却是 %q", overflow, first)
 	}
 }
+
+// 终态报一次就要把随行的进度一起清掉。留着的话，下一路传输在客户端眼里是从
+// 上一路的 100% 开始的——客户端只能按「第一条进行中的条目」匹配，分不出这是
+// 旧数字（条目在发起瞬间就显示满进度）。
+func TestFileSenderSnapshotConsumesTerminalState(t *testing.T) {
+	fs := &fileSender{state: fileSenderDone, sent: 1000, total: 1000}
+
+	state, sent, total, _ := fs.snapshot()
+	if state != fileSenderDone || sent != 1000 || total != 1000 {
+		t.Errorf("第一次轮询要报出终态本身：state=%d sent=%d total=%d", state, sent, total)
+	}
+
+	state, sent, total, _ = fs.snapshot()
+	if state != fileSenderIdle {
+		t.Errorf("终态只报一次，第二次应为空闲，实际 state=%d", state)
+	}
+	if sent != 0 || total != 0 {
+		t.Errorf("上一路的进度应随终态一起清掉，实际 sent=%d total=%d", sent, total)
+	}
+
+	// 失败终态同理：否则下一路会带着上一路失败时的错误码。
+	fs.mu.Lock()
+	fs.state, fs.errCode, fs.sent, fs.total = fileSenderFailed, int(protocol.ErrTransferTimeout), 12, 34
+	fs.mu.Unlock()
+	if _, _, _, code := fs.snapshot(); code != int(protocol.ErrTransferTimeout) {
+		t.Errorf("失败要带上错误码，实际 %d", code)
+	}
+	if _, sent, total, code := fs.snapshot(); sent != 0 || total != 0 || code != 0 {
+		t.Errorf("失败终态也应消费干净，实际 sent=%d total=%d code=%d", sent, total, code)
+	}
+}

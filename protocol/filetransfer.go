@@ -192,6 +192,7 @@ type fileOutTransfer struct {
 	data      []byte
 	nextChunk uint32
 	pass      int // completed retransmission passes
+	delivered int // bytes reported as sent so far (monotonic, ≤ len(data))
 	created   time.Time
 	lastMove  time.Time
 }
@@ -360,7 +361,18 @@ func (s *FileSender) Pump(maxChunks int) (int, error) {
 		t.nextChunk++
 		t.lastMove = s.now()
 		sent++
-		updates = append(updates, fileProgress{id: t.offer.TransferID, sent: int(t.nextChunk) * MaxFileChunk, total: int(totalChunks) * MaxFileChunk})
+		// 进度报「已经至少交付过一次的字节数」，且只增不减：
+		//   · 末段不满 MaxFileChunk，拿 chunk 边界当字节数，一个 1000 B 的文件
+		//     会被报成 1245 B，客户端的「文件大小」跟着一起说谎；
+		//   · 每个补发 pass 都把 nextChunk 归零，照它报数字会从 100% 掉回 20%
+		//     ——接收端按索引去重，补发不等于进度倒退。
+		if done := int(t.nextChunk) * MaxFileChunk; done > t.delivered {
+			t.delivered = done
+			if t.delivered > len(t.data) {
+				t.delivered = len(t.data)
+			}
+		}
+		updates = append(updates, fileProgress{id: t.offer.TransferID, sent: t.delivered, total: len(t.data)})
 	}
 	s.mu.Unlock()
 	s.flushProgress(updates)

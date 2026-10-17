@@ -332,3 +332,55 @@ func TestFileOfferValidation(t *testing.T) {
 		t.Error("oversize chunk must be rejected")
 	}
 }
+
+// 进度口报的是「至少交付过一次的字节数」，而且要只增不减——客户端直接拿它算
+// 百分比、显示文件大小、估剩余时间（FilesPanel::pollSessions）。
+//
+// 早先报的是 chunk 边界（nextChunk*MaxFileChunk）乘出来的数：末段不满 249 B，
+// 1000 B 的文件被报成 1245 B；补发 pass 又把 nextChunk 归零，进度条于是从
+// 100% 掉回 20%，再爬回 100%，来回三次。
+func TestFileSenderProgressIsRealAndMonotonic(t *testing.T) {
+	s := NewFileSender(func(uint8, []byte) error { return nil }) // 只出帧，不回 ACK
+	var reports [][2]int
+	s.OnProgress = func(_ uint16, sent, total int) {
+		reports = append(reports, [2]int{sent, total})
+	}
+
+	data := make([]byte, 1000) // 5 段（249 B/段），末段只有 4 B
+	id, err := s.OfferFile("report.txt", data)
+	if err != nil {
+		t.Fatalf("OfferFile: %v", err)
+	}
+	// 模拟对端接受（FILE_ACK accepted），让 active 立起来。
+	if err := s.HandleFrame(FrameFileAck,
+		(&FileAck{TransferID: id, Status: FileAccepted}).Marshal()); err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+
+	// 一遍 5 段 + 默认 2 次补发 = 15 段；每次只发 1 段，逼出多次 pass 边界。
+	for i := 0; i < 20; i++ {
+		if _, err := s.Pump(1); err != nil {
+			t.Fatalf("Pump: %v", err)
+		}
+	}
+	if len(reports) == 0 {
+		t.Fatal("OnProgress 一次都没报")
+	}
+
+	prev := -1
+	for i, r := range reports {
+		if r[1] != len(data) {
+			t.Errorf("第 %d 次进度 total=%d，应为文件真实大小 %d", i+1, r[1], len(data))
+		}
+		if r[0] < prev {
+			t.Errorf("第 %d 次进度倒退：sent %d -> %d", i+1, prev, r[0])
+		}
+		if r[0] > len(data) {
+			t.Errorf("第 %d 次进度超出文件大小：sent %d > %d", i+1, r[0], len(data))
+		}
+		prev = r[0]
+	}
+	if prev != len(data) {
+		t.Errorf("跑完一遍应报到 100%%，最后一次却只到 %d/%d", prev, len(data))
+	}
+}
