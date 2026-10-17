@@ -166,8 +166,3 @@ func (t *KeyMapTable) Lookup(fromOS, toOS Platform, keyCode uint16, modifiers ui
 	}
 	return keyCode, modifiers, false
 }
-
-// Rules returns all rules in the table.
-func (t *KeyMapTable) Rules() []KeyMapRule {
-	return t.rules
-}

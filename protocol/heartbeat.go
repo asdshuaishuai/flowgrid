@@ -173,7 +173,6 @@ func (m *LatencyMonitor) Stats() (min, max, avg float64) {
 type HeartbeatTracker struct {
 	mu               sync.Mutex
 	missed           int
-	lastReceived     time.Time
 	lostFired        bool // onConnectionLost fires once per loss episode
 	onConnectionLost func()
 }
@@ -182,7 +181,6 @@ type HeartbeatTracker struct {
 // onLost is called when heartbeat timeout is detected.
 func NewHeartbeatTracker(onLost func()) *HeartbeatTracker {
 	return &HeartbeatTracker{
-		lastReceived:    time.Now(),
 		onConnectionLost: onLost,
 	}
 }
@@ -193,7 +191,6 @@ func (t *HeartbeatTracker) ReceivedHeartbeat() {
 	defer t.mu.Unlock()
 	t.missed = 0
 	t.lostFired = false
-	t.lastReceived = time.Now()
 }
 
 // Tick should be called every HeartbeatInterval.
@@ -225,5 +222,4 @@ func (t *HeartbeatTracker) Reset() {
 	defer t.mu.Unlock()
 	t.missed = 0
 	t.lostFired = false
-	t.lastReceived = time.Now()
 }
