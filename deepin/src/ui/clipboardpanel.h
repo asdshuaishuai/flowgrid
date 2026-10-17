@@ -67,6 +67,9 @@ private:
     QWidget *badgeHost();
     QWidget *buildFooter();
     void rebuildHistory();
+    // 预览正文按固定行数截断（设计稿是 max-height + 内部滚动，浮板里不能嵌套
+    // 滚动区），所以文字要先按可用宽高省略再交给 QLabel。
+    void setPreviewText(const QString &text);
     // 标题栏胶囊跟着 sync/clipboard_enabled 走：设置屏关掉同步后，这一屏
     // 顶上不能还写着「同步中」。
     void refreshSyncState();

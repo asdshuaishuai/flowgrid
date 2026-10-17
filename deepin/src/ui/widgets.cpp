@@ -251,8 +251,20 @@ void ToggleSwitch::paintEvent(QPaintEvent *)
     const qreal pad = 2.0;
     const qreal travel = width() - tokens::kSwitchKnob - pad * 2;
     const qreal x = pad + knob_ * travel;
+    const qreal d = tokens::kSwitchKnob;
+    // 设计稿 .switch::after 带 box-shadow: var(--shadow-bar)（0 1px 3px）。没有
+    // 这层投影，旋钮就是一块贴在轨道上的纯白圆片；轨道又和底色同族，开关看着
+    // 像把轨道抠掉一块，而不是「轨道上停着一个钮」。
+    // QPainter 画不出模糊，这里用三层递减 alpha 的椭圆叠出 3px 的羽化边。
+    pt.setPen(Qt::NoPen);
+    for (int i = 3; i >= 1; --i) {
+        QColor sh = p.shadowBar;
+        sh.setAlphaF(sh.alphaF() / (i + 1.0));
+        pt.setBrush(sh);
+        pt.drawEllipse(QRectF(x - i * 0.5, pad + 1.0 - i * 0.5, d + i, d + i));
+    }
     pt.setBrush(QColor(Qt::white));
-    pt.drawEllipse(QRectF(x, pad, tokens::kSwitchKnob, tokens::kSwitchKnob));
+    pt.drawEllipse(QRectF(x, pad, d, d));
 
     if (hasFocus()) {
         QColor ring = p.accent;

@@ -11,6 +11,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QStringList>
+#include <QTextLayout>
 #include <QVBoxLayout>
 
 Q_LOGGING_CATEGORY(lcClipboard, "flowgrid.clipboard")
@@ -21,6 +23,10 @@ namespace {
 // 设计稿明确给出的分段上限（PROTOCOL.md §5.3）：单条超过 63,240 B 即超限，
 // 历史里标记但不入库，也不推送。
 constexpr int kClipSegLimit = 63240;
+
+// 预览正文显示几行。设计稿 .preview__body 给的是 max-height:92px + 内部滚动，
+// 减去上下 12px 内边距还剩 68px，按 --lh-13 折正好 3 行。
+constexpr int kPreviewLines = 3;
 
 QFont uiFont(int px, int weight = QFont::Normal)
 {
@@ -215,14 +221,16 @@ QWidget *ClipboardPanel::buildCurrent()
 
     // __body：等宽字体原文，最多 3 行，超出省略——设计稿给的是 max-height 92
     // 加滚动，浮板里再套一个滚动区会把整屏高度算错，所以改成按行截断。
+    // 截断必须自己做：QLabel 只要开着 wordWrap 就会一路撑高，没有 maxHeight
+    // 它能排到几千行，一条 63 KB 的剪贴板能把整块浮板顶出屏幕。
     auto *bodyBox = new QWidget(card);
     auto *bl = new QVBoxLayout(bodyBox);
     bl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
     preview_ = new QLabel(tr("暂无剪贴板内容"), bodyBox);
-    preview_->setWordWrap(true);
     preview_->setFont(uiMonoFont(tokens::kFont12));
+    preview_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
     preview_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
-    preview_->setMinimumHeight(3 * 16);
+    preview_->setFixedHeight(QFontMetrics(preview_->font()).lineSpacing());
     bl->addWidget(preview_);
     applyBoxStyle(bodyBox, QStringLiteral("background:%1").arg(css(p.surface2)));
     vl->addWidget(bodyBox);
@@ -491,7 +499,9 @@ void ClipboardPanel::seedForSnapshot()
         ClipEntry e;
         e.mime = QString::fromLatin1(s.mime);
         e.raw = QByteArray(s.text);
-        e.text = QString::fromLatin1(s.text);
+        // fromLatin1 只对 ASCII 安全：真收到中文条目时这里是乱码（截图里只要
+        // 有一条中文就藏不住）。剪贴板载荷按 UTF-8 走，和 send() 同一套编码。
+        e.text = QString::fromUtf8(s.text);
         e.kind = kindOf(e.mime, e.raw);
         e.source = QString::fromUtf8(s.source);
         e.agoSecs = s.ago;
@@ -499,6 +509,78 @@ void ClipboardPanel::seedForSnapshot()
     }
     rebuildHistory();
     Q_EMIT transfersChanged();
+}
+
+void ClipboardPanel::setPreviewText(const QString &text)
+{
+    if (preview_ == nullptr) {
+        return;
+    }
+    if (text.isEmpty()) {
+        preview_->setText(tr("暂无剪贴板内容"));
+        return;
+    }
+    const QFont f = preview_->font();
+    const QFontMetrics fm(f);
+    // 浮板宽度是定死的，所以正文可用宽度可以直接算：520 - 内容左右 14×2
+    // - 卡片左右描边 1×2 - 正文左右内边距 12×2。与 Panel::sizeHint() 同一套
+    // 算法，不依赖「浮板此刻显示没有」。再让 6px 余地给字形溢出。
+    const int w = tokens::kPanelWidth - 2 * tokens::kContentPadding - 2 - 2 * tokens::kS3 - 6;
+
+    // QFontMetrics 在这一版 Qt 里没有「按宽高同时省略」的重载，只能自己排：
+    // 先按词宽排版取前 N 行，剩下的丢掉并把末行缩到省略号。
+    QTextLayout layout(text, f);
+    QTextOption opt;
+    opt.setWrapMode(QTextOption::WordWrap);
+    layout.setTextOption(opt);
+    layout.beginLayout();
+    QVector<QTextLine> lines;
+    qreal y = 0.0;
+    for (;;) {
+        QTextLine line = layout.createLine();
+        if (!line.isValid()) {
+            break;
+        }
+        line.setLineWidth(w);
+        line.setPosition(QPointF(0.0, y));
+        y += line.height();
+        lines.append(line);
+        if (lines.size() > kPreviewLines) {
+            break;
+        }
+    }
+    layout.endLayout();
+
+    if (lines.isEmpty()) {
+        preview_->clear();
+        return;
+    }
+    const bool truncated = lines.size() > kPreviewLines;
+    const int keep = qMin<int>(kPreviewLines, lines.size());
+    // 用原文切片而不是把各行拼起来：显式换行符本来就含在 line.textLength() 里，
+    // 逐行拼接会在已经带 \n 的地方再补一个，出现空行。
+    const int head = lines.first().textStart();
+    const int tail = lines.at(keep - 1).textStart() + lines.at(keep - 1).textLength();
+    QString out = text.mid(head, tail - head);
+    if (truncated) {
+        while (out.endsWith(QLatin1Char('\n'))) {
+            out.chop(1);
+        }
+        const int nl = out.lastIndexOf(QLatin1Char('\n'));
+        QString last = out.mid(nl + 1);
+        const int avail = w - fm.horizontalAdvance(QChar(0x2026));
+        int cut = last.size();
+        while (cut > 0 && fm.horizontalAdvance(last.left(cut)) > avail) {
+            --cut;
+        }
+        out = out.left(nl + 1) + last.left(cut) + QChar(0x2026);
+    }
+    preview_->setText(out);
+    // 设计稿是 max-height:92px——短内容时这块就该收紧，长内容才涨到上限。
+    // 这里按实际行数定高（1~3 行），否则一条几十字节的剪贴板会在预览框里
+    // 留下两行空白，下面的历史列表被顶下去一截。
+    const int used = out.count(QLatin1Char('\n')) + 1;
+    preview_->setFixedHeight(qBound(1, used, kPreviewLines) * fm.lineSpacing());
 }
 
 void ClipboardPanel::rebuildHistory()
@@ -513,7 +595,7 @@ void ClipboardPanel::rebuildHistory()
     // 当前预览取历史首条，也就是最新一条——Go 侧只给「刚到的那条」，没有
     // 「本机现在的剪贴板是什么」的查询口，所以这里和历史首条同源。
     current_ = history_.isEmpty() ? ClipEntry() : history_.first();
-    preview_->setText(current_.raw.isEmpty() ? tr("暂无剪贴板内容") : current_.text);
+    setPreviewText(current_.raw.isEmpty() ? tr("暂无剪贴板内容") : current_.text);
     spec_->setText(current_.raw.isEmpty()
                        ? QStringLiteral("--")
                        : tr("%1 · 单帧发送 · 未分段").arg(humanSize(current_.raw.size())));
