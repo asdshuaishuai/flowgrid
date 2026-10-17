@@ -33,12 +33,15 @@ Q_SIGNALS:
     void editRequested();
 
 private:
-    QWidget *buildRuleList();
+    QWidget *buildGlobalSection();
+    QWidget *buildAppSection();
+    QWidget *buildAdvancedSection();
     QWidget *buildFooter();
     void rebuildRows();
 
-    QVBoxLayout *listLayout_ = nullptr;
+    QVBoxLayout *mappingLayout_ = nullptr;
     Badge *countBadge_ = nullptr;
+    Badge *globalBadge_ = nullptr;
     QList<KeyRule> rules_;
 };
 

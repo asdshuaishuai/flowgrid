@@ -16,7 +16,7 @@
           "name": "键位映射", "description": "跨平台修饰键转换" },
         { "key": "input/mouse_smoothing", "type": "b", "default": false,
           "name": "鼠标平滑", "description": "降低跨屏移动抖动" },
-        { "key": "input/edge_threshold", "type": "i", "default": 2,
+        { "key": "input/edge_threshold", "type": "i", "default": 8,
           "name": "边缘切换阈值", "description": "指针抵达屏幕边缘后触发的像素数" },
         { "key": "input/switch_hotkey", "type": "i", "default": 1,
           "name": "切换热键", "description": "按住后按数字键直切（1=Ctrl，2=Alt）" },

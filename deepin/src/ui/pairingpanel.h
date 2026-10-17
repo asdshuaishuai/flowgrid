@@ -18,15 +18,20 @@ class Badge;
 // 发现的设备条目
 struct DiscoveredDevice {
     QString name;
-    QString address;    // 「192.168.x.x」
+    QString address;    // 「192.168.x.x」，离线设备为空
+    QString icon;       // 行首类型图标：laptop / monitor / tablet
     int signal = 0;     // 0..3
     int foundSecs = 0;
+    bool online = true; // 离线设备不显示「发起配对」，只给一个离线徽章
     bool paired = false;
 };
 
 class PairingPanel : public Panel {
     Q_OBJECT
 public:
+    // 设计稿 .paircode 的数字槽个数（8421 是四位）。
+    static constexpr int kPairCodeDigits = 4;
+
     explicit PairingPanel(QWidget *parent = nullptr);
 
     void setDevices(const QList<DiscoveredDevice> &devices);
@@ -40,6 +45,7 @@ private:
     QWidget *buildSteps();
     QWidget *buildPairCode();
     QWidget *buildDeviceList();
+    QWidget *buildManualSection();
     QWidget *buildFooter();
     void rebuildDevices();
 

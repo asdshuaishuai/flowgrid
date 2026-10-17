@@ -1,5 +1,6 @@
 #include "traypopup.h"
 #include "core/designtokens.h"
+#include "core/settings.h"
 #include "core/theme.h"
 #include "icons.h"
 #include "panel.h"
@@ -141,12 +142,21 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
     root_->addWidget(buildSeparator());
 
     // ── 快捷开关 ──
+    //
+    // 设计稿 tray.html 这四行就是「设置」屏同名的四个开关。早先这里是写死的
+    // buildToggleRow(label, 常量)，点了什么都不发生、也不落 DConfig——两处开关
+    // 各说各话。现在统一读写 Settings，配置只留一份。
     {
+        auto &cfg = Settings::instance();
         QList<QWidget *> rows{
-            buildToggleRow(tr("键位映射"), true),
-            buildToggleRow(tr("剪贴板同步"), true),
-            buildToggleRow(tr("鼠标平滑"), false),
-            buildToggleRow(tr("自动路由"), true),
+            buildToggleRow(tr("键位映射"), cfg.keymapEnabled(),
+                           [](bool v) { Settings::instance().setKeymapEnabled(v); }),
+            buildToggleRow(tr("剪贴板同步"), cfg.clipboardSync(),
+                           [](bool v) { Settings::instance().setClipboardSync(v); }),
+            buildToggleRow(tr("鼠标平滑"), cfg.mouseSmoothing(),
+                           [](bool v) { Settings::instance().setMouseSmoothing(v); }),
+            buildToggleRow(tr("自动路由"), cfg.autoRouting(),
+                           [](bool v) { Settings::instance().setAutoRouting(v); }),
         };
         root_->addWidget(buildGroup(tr("快捷开关"), rows));
     }
@@ -169,6 +179,8 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
         root_->addWidget(buildGroup(QString(), {quit}));
     }
 
+    // 设置屏改动（或「恢复默认」）后，托盘的快捷开关要跟着变。
+    QObject::connect(&Settings::instance(), &Settings::changed, this, &TrayPopup::refresh);
     refresh();
 }
 
@@ -318,7 +330,8 @@ QWidget *TrayPopup::buildQuickSwitch()
     return group;
 }
 
-QWidget *TrayPopup::buildToggleRow(const QString &label, bool on)
+QWidget *TrayPopup::buildToggleRow(const QString &label, bool on,
+                                   const std::function<void(bool)> &onWrite)
 {
     auto *row = new QWidget(this);
     auto *hl = new QHBoxLayout(row);
@@ -331,6 +344,9 @@ QWidget *TrayPopup::buildToggleRow(const QString &label, bool on)
     hl->addStretch(1);
     auto *toggle = new ToggleSwitch(row);
     toggle->setChecked(on);
+    QObject::connect(toggle, &ToggleSwitch::clicked, row,
+                     [toggle, onWrite] { onWrite(toggle->isChecked()); });
+    quickToggles_.append(toggle);   // refresh() 用它跟随「恢复默认」等外部改动
     hl->addWidget(toggle);
     return row;
 }
@@ -346,6 +362,18 @@ void TrayPopup::refresh()
     const Device *active = manager_.activeDevice();
     const bool online = active != nullptr && active->online;
     const double ms = manager_.activeLatencyMs();
+
+    // 快捷开关跟随配置：「恢复默认」或设置屏改动后，托盘这几个不能还摆着旧值。
+    {
+        auto &cfg = Settings::instance();
+        const bool values[4] = {cfg.keymapEnabled(), cfg.clipboardSync(),
+                                cfg.mouseSmoothing(), cfg.autoRouting()};
+        for (int i = 0; i < quickToggles_.size() && i < 4; ++i) {
+            if (quickToggles_.at(i)->isChecked() != values[i]) {
+                quickToggles_.at(i)->setChecked(values[i]);
+            }
+        }
+    }
 
     if (headLatency_ != nullptr) {
         headLatency_->setText(online ? QStringLiteral("%1ms").arg(ms, 0, 'f', 1)

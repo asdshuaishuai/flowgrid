@@ -26,6 +26,10 @@ public Q_SLOTS:
     // 页脚「恢复默认」：把 12 个键写回 schema 里的默认值。
     void restoreDefaults();
 
+Q_SIGNALS:
+    // 输入组的「编辑」：跨屏跳转由 main 统一调度，浮板互斥逻辑只有一处。
+    void keymapRequested();
+
 private:
     QWidget *buildConnectionGroup();
     QWidget *buildInputGroup();
@@ -36,13 +40,13 @@ private:
     FgSelect *preferredLink_ = nullptr;
     ToggleSwitch *autoRouting_ = nullptr;
     ToggleSwitch *autoStart_ = nullptr;
-    ToggleSwitch *keymap_ = nullptr;
     ToggleSwitch *smoothing_ = nullptr;
     QLineEdit *edgeThreshold_ = nullptr;
     QLineEdit *switchHotkey_ = nullptr;
     ToggleSwitch *clipSync_ = nullptr;
-    QLineEdit *clipHistory_ = nullptr;
+    FgSelect *clipHistory_ = nullptr;
     ToggleSwitch *fileTransfer_ = nullptr;
+    ToggleSwitch *confirm_ = nullptr;
 };
 
 } // namespace fg

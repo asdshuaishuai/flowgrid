@@ -6,11 +6,13 @@
 #include "widgets.h"
 
 #include <QApplication>
-#include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLoggingCategory>
 #include <QVBoxLayout>
+
+Q_LOGGING_CATEGORY(lcSettingsPanel, "flowgrid.settings.panel")
 
 namespace fg {
 namespace {
@@ -26,6 +28,20 @@ QFont uiFont(int px, int weight = QFont::Normal)
 QString css(const QColor &c)
 {
     return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
+}
+
+// 设计稿 settings.html 剪贴板组给的档位。协议侧只认这三个值，早先用的自由
+// 数字输入框能填出 37 这种没人认的数。
+constexpr int kHistoryCounts[3] = {50, 100, 200};
+
+int historyCountIndex(int count)
+{
+    for (int i = 0; i < 3; ++i) {
+        if (kHistoryCounts[i] == count) {
+            return i;
+        }
+    }
+    return 0;
 }
 
 // 分组标题：设计稿 .list__group-title，全大写 + 字距 + text-3
@@ -67,24 +83,76 @@ QWidget *groupBox(const QString &title, const QList<QWidget *> &rows, QWidget *p
     return box;
 }
 
-QWidget *banner(const QString &text, QWidget *parent)
+// 设计稿 ui.css .banner：padding 10/12、1px 描边、r-card 圆角、浅底 + 同族文字色。
+// info 用 accent 那一族（accentLine / accentSoft / accentText 三个角色都有）；
+// warn 那一族 Palette 里只有 solid / soft / text，没有 line，描边按 solid 压一档
+// 透明度派生——宁可从语义角色派生，也不写死主题色。
+QWidget *banner(const QString &text, bool warning, QWidget *parent)
 {
     const Palette &p = Theme::instance().palette();
+    QColor line = p.accentLine;
+    QColor bg = p.accentSoft;
+    QColor fg = p.accentText;
+    QString iconName = QStringLiteral("info");
+    if (warning) {
+        line = p.warn.solid;
+        line.setAlphaF(0.45);
+        bg = p.warn.soft;
+        fg = p.warn.text;
+        iconName = QStringLiteral("warn");
+    }
+
     auto *w = new QWidget(parent);
     auto *hl = new QHBoxLayout(w);
-    hl->setContentsMargins(tokens::kS3, tokens::kS2, tokens::kS3, tokens::kS2);
+    hl->setContentsMargins(10, tokens::kS3, tokens::kS3, 10);
     hl->setSpacing(tokens::kS2);
     auto *icon = new QLabel(w);
     icon->setFixedSize(14, 14);
-    icon->setPixmap(icons::icon(QStringLiteral("info"), 14, p.text3).pixmap(14, 14));
+    icon->setPixmap(icons::icon(iconName, 14, fg).pixmap(14, 14));
     auto *label = new QLabel(text, w);
     label->setWordWrap(true);
-    label->setFont(uiFont(tokens::kFont11));
-    label->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-    hl->addWidget(icon);
+    label->setFont(uiFont(tokens::kFont12));
+    label->setStyleSheet(QStringLiteral("color:%1").arg(css(fg)));
+    hl->addWidget(icon, 0, Qt::AlignTop);
     hl->addWidget(label, 1);
-    applyBoxStyle(w, QStringLiteral("border-radius:%1px").arg(tokens::kRadiusCtl));
+    applyBoxStyle(w,
+                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                      .arg(css(line))
+                      .arg(tokens::kRadiusCard)
+                      .arg(css(bg)));
     return w;
+}
+
+// ListRow 的 trailing 是单个控件，但有两行的右侧是「输入 + 单位」或
+// 「键帽 + 输入」这种组合，ListRow 装不下整个行，只能另包一层当控件用。
+QWidget *makeControlRow(QWidget *parent, const QList<QWidget *> &parts)
+{
+    auto *row = new QWidget(parent);
+    auto *hl = new QHBoxLayout(row);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->setSpacing(tokens::kS2);
+    for (QWidget *w : parts) {
+        hl->addWidget(w);
+    }
+    return row;
+}
+
+QLabel *unitLabel(const QString &text, QWidget *parent)
+{
+    auto *l = new QLabel(text, parent);
+    l->setFont(uiFont(tokens::kFont11));
+    l->setStyleSheet(QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+    return l;
+}
+
+// 还没接通的功能一律明确记一条日志，不做成点了没反应的按钮，也不假装成功。
+FgButton *unwiredButton(const QString &text, const QString &what, QWidget *parent)
+{
+    auto *btn = new FgButton(text, FgButton::Variant::Secondary, true, parent);
+    QObject::connect(btn, &FgButton::clicked, parent, [what] {
+        qCInfo(lcSettingsPanel) << what << QLatin1String("尚未接通");
+    });
+    return btn;
 }
 
 } // namespace
@@ -94,11 +162,16 @@ SettingsPanel::SettingsPanel(QWidget *parent) : Panel(tr("设置"), parent)
     auto *body = qobject_cast<QVBoxLayout *>(content()->layout());
     auto &settings = Settings::instance();
 
-    body->addWidget(banner(tr("设置即时生效并同步到全部已配对设备，无需重启。"), this));
+    body->addWidget(
+        banner(tr("设置即时生效并同步到全部已配对设备，无需重启。"), false, this));
     body->addWidget(buildConnectionGroup());
     body->addWidget(buildInputGroup());
     body->addWidget(buildSyncGroup());
     body->addWidget(buildSecurityGroup());
+    // 设计稿把这条警告放在安全组之后：它解释的正是上一行开关的后果。
+    body->addWidget(banner(tr("关闭「新设备需确认」会让同一网络内的任意设备发起配对请求，"
+                              "仅在可信网络中临时使用。"),
+                           true, this));
     setFooterWidget(buildFooter());
 
     QObject::connect(&settings, &Settings::changed, this, &SettingsPanel::reload);
@@ -137,7 +210,9 @@ QWidget *SettingsPanel::buildConnectionGroup()
     });
 
     return groupBox(tr("连接"),
-                    {new ListRow(tr("优先链路"), tr("无可用链路时自动回落"), preferredLink_, this),
+                    {new ListRow(tr("优先链路"),
+                                 tr("IntelligentLink 不可用时回落到 DirectLink"),
+                                 preferredLink_, this),
                      new ListRow(tr("自动路由"), tr("按延迟自动选择中转节点"), autoRouting_, this),
                      new ListRow(tr("开机自启"), tr("登录后托盘常驻"), autoStart_, this)},
                     this);
@@ -147,10 +222,11 @@ QWidget *SettingsPanel::buildInputGroup()
 {
     auto &s = Settings::instance();
 
-    keymap_ = new ToggleSwitch(this);
-    keymap_->setChecked(s.keymapEnabled());
-    QObject::connect(keymap_, &ToggleSwitch::clicked, this, [this] {
-        Settings::instance().setKeymapEnabled(keymap_->isChecked());
+    // 设计稿这一行是「编辑」按钮而不是开关：键位映射在独立浮板里编辑，
+    // 这里的开关没有第二处能改，纯属重复入口。开关键位映射的是键位浮板自己。
+    auto *editKeymap = new FgButton(tr("编辑"), FgButton::Variant::Secondary, true, this);
+    QObject::connect(editKeymap, &FgButton::clicked, this, [this] {
+        Q_EMIT keymapRequested();
     });
 
     smoothing_ = new ToggleSwitch(this);
@@ -168,30 +244,24 @@ QWidget *SettingsPanel::buildInputGroup()
 
     switchHotkey_ = new QLineEdit(QString::number(s.switchHotkey()), this);
     applyInputStyle(switchHotkey_);
-    switchHotkey_->setFixedWidth(64);
+    switchHotkey_->setFixedWidth(44);
     QObject::connect(switchHotkey_, &QLineEdit::editingFinished, this, [this] {
         Settings::instance().setSwitchHotkey(switchHotkey_->text().toInt());
     });
 
-    auto *edgeRow = new QWidget(this);
-    auto *ehl = new QHBoxLayout(edgeRow);
-    ehl->setContentsMargins(tokens::kS3, 9, tokens::kS3, 9);
-    ehl->setSpacing(tokens::kS2);
-    auto *edgeLabel = new QLabel(tr("边缘切换阈值"), edgeRow);
-    edgeLabel->setFont(uiFont(tokens::kFont12));
-    ehl->addWidget(edgeLabel);
-    ehl->addStretch(1);
-    ehl->addWidget(edgeThreshold_);
-    auto *px = new QLabel(tr("px"), edgeRow);
-    px->setFont(uiFont(tokens::kFont11));
-    px->setStyleSheet(QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
-    ehl->addWidget(px);
-
     return groupBox(tr("输入"),
-           {new ListRow(tr("键位映射"), tr("跨平台修饰键转换"), keymap_, this),
+           {new ListRow(tr("键位映射"), tr("跨平台修饰键转换"), editKeymap, this),
             new ListRow(tr("鼠标平滑"), tr("降低跨屏移动抖动"), smoothing_, this),
-            edgeRow,
-            new ListRow(tr("切换热键"), tr("按住后按数字键直切"), switchHotkey_, this)},
+            new ListRow(tr("边缘切换阈值"), tr("指针抵达屏幕边缘后触发"),
+                        makeControlRow(this, {edgeThreshold_, unitLabel(tr("px"), this)}),
+                        this),
+            // 设计稿的 trailing 是修饰键键帽（按住后按数字直切）。我们把数字
+            // 也留着可编辑，所以按 .keys 的「键帽 + 输入」排，而不是只画键帽。
+            new ListRow(tr("切换热键"), tr("按住后按数字键直切"),
+                        makeControlRow(this,
+                                       {new FgKeycap(QStringLiteral("Ctrl"), false, this),
+                                        switchHotkey_}),
+                        this)},
            this);
 }
 
@@ -205,11 +275,14 @@ QWidget *SettingsPanel::buildSyncGroup()
         Settings::instance().setClipboardSync(clipSync_->isChecked());
     });
 
-    clipHistory_ = new QLineEdit(QString::number(s.clipboardHistory()), this);
-    applyInputStyle(clipHistory_);
-    clipHistory_->setFixedWidth(64);
-    QObject::connect(clipHistory_, &QLineEdit::editingFinished, this, [this] {
-        Settings::instance().setClipboardHistory(clipHistory_->text().toInt());
+    // 设计稿是 50 / 100 / 200 三档下拉，不是自由输入。
+    clipHistory_ = new FgSelect({tr("50 条"), tr("100 条"), tr("200 条")}, 0, this);
+    clipHistory_->setMinimumWidth(96);
+    clipHistory_->setCurrentIndex(historyCountIndex(s.clipboardHistory()));
+    QObject::connect(clipHistory_, &FgSelect::currentIndexChanged, this, [](int i) {
+        if (i >= 0 && i < 3) {
+            Settings::instance().setClipboardHistory(kHistoryCounts[i]);
+        }
     });
 
     fileTransfer_ = new ToggleSwitch(this);
@@ -218,31 +291,39 @@ QWidget *SettingsPanel::buildSyncGroup()
         Settings::instance().setFileTransfer(fileTransfer_->isChecked());
     });
 
+    confirm_ = new ToggleSwitch(this);
+    confirm_->setChecked(s.requireConfirmation());
+    QObject::connect(confirm_, &ToggleSwitch::clicked, this, [this] {
+        Settings::instance().setRequireConfirmation(confirm_->isChecked());
+    });
+
     return groupBox(tr("跨端同步"),
-           {new ListRow(tr("剪贴板"), tr("文本与图片，单条上限 8 MB"), clipSync_, this),
+           {new ListRow(tr("跨端同步"), tr("文本与图片，单条上限 8 MB"), clipSync_, this),
             new ListRow(tr("历史条数"), tr("超出后按时间淘汰"), clipHistory_, this),
+            new ListRow(tr("排除应用"), tr("密码管理器等窗口内不采集"),
+                        unwiredButton(tr("3 个"), tr("排除应用列表"), this), this),
+            // 设计稿这一组只有剪贴板三项，没有文件传输开关；这是 deepin 侧
+            // 自己加的一条（文件传输浮板的标题胶囊要读它），故并在本组末尾。
             new ListRow(tr("文件传输"), tr("拖放或选择文件发送"), fileTransfer_, this)},
            this);
 }
 
 QWidget *SettingsPanel::buildSecurityGroup()
 {
-    auto &s = Settings::instance();
-
-    // 端到端加密强制开启（PROTOCOL.md §3），所以这里只读不写，
-    // 给一个禁用开关 + 「已启用」徽章，避免用户以为能关。
-    auto *e2e = new ToggleSwitch(this);
-    e2e->setChecked(s.e2eEncryption());
-    e2e->setEnabled(false);
-    auto *e2eRow = new ListRow(tr("端到端加密"), tr("XChaCha20-Poly1305"), e2e, this);
-
-    auto *confirm = new ToggleSwitch(this);
-    confirm->setChecked(s.requireConfirmation());
-    confirm->setEnabled(false);   // 只读项：本轮未实现配对确认流
+    // 端到端加密是协议层的硬约束（PROTOCOL.md §3），不是用户能关的开关。
+    // 早先这里摆的是一个禁用开关，视觉上像"可以改但改不了"；设计稿给的是
+    // 徽章，直接说清状态。
+    auto *e2eBadge = new Badge(tr("已启用"), Badge::Variant::Ok, this);
+    QObject::connect(&Theme::instance(), &Theme::changed, e2eBadge, [e2eBadge] {
+        e2eBadge->update();
+    });
 
     return groupBox(tr("安全"),
-           {e2eRow,
-            new ListRow(tr("新设备需确认"), tr("关闭后任何局域网设备可直接配对"), confirm, this)},
+           {new ListRow(tr("端到端加密"), tr("XChaCha20-Poly1305"), e2eBadge, this),
+            new ListRow(tr("新设备需确认"), tr("关闭后任何局域网设备可直接配对"),
+                        confirm_, this),
+            new ListRow(tr("已授权设备"), tr("可单独撤销信任"),
+                        unwiredButton(tr("管理"), tr("授权设备管理"), this), this)},
            this);
 }
 
@@ -296,16 +377,19 @@ void SettingsPanel::reload()
     };
     sync(autoRouting_, s.autoRouting());
     sync(autoStart_, s.autoStart());
-    sync(keymap_, s.keymapEnabled());
     sync(smoothing_, s.mouseSmoothing());
     sync(clipSync_, s.clipboardSync());
     sync(fileTransfer_, s.fileTransfer());
+    sync(confirm_, s.requireConfirmation());
 
     if (edgeThreshold_ != nullptr) {
         edgeThreshold_->setText(QString::number(s.edgeThreshold()));
     }
+    if (switchHotkey_ != nullptr) {
+        switchHotkey_->setText(QString::number(s.switchHotkey()));
+    }
     if (clipHistory_ != nullptr) {
-        clipHistory_->setText(QString::number(s.clipboardHistory()));
+        clipHistory_->setCurrentIndex(historyCountIndex(s.clipboardHistory()));
     }
 }
 

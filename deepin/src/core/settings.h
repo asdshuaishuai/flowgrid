@@ -59,8 +59,12 @@ public:
     void setFileTransfer(bool on);
 
     // ── 安全 ──
+    // 端到端加密没有关闭项：DTLS 握手强制启用（PROTOCOL.md §3），只有 getter。
     bool e2eEncryption() const;
+    // 新设备需确认是用户偏好，设计稿 settings.html 给的就是一个可点开关，
+    // DConfig meta 里也是普通可写键（默认 true）。
     bool requireConfirmation() const;
+    void setRequireConfirmation(bool on);
 
     // 页脚「恢复默认」：交给 DConfig 的 reset，回到 meta 文件里的默认值，
     // 而不是在这里把 12 个默认值再抄一遍——抄一份就会漂移一份。

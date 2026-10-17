@@ -202,15 +202,16 @@ void Panel::popupAt(const QPoint &anchor)
 
 QSize Panel::sizeHint() const
 {
-    // 浮板宽度固定、内容区是 setWidgetResizable 的，所以可以直接问内容布局
-    // 「在当前宽度下你要多高」，再把标题栏和页脚加回去。
+    // 浮板宽度是 setFixedWidth 定死的，所以内容宽度可以直接算出来，而不是去问
+    // content_->width()——首次调用 sizeHint 时浮板还没显示过，那个值是 0，
+    // heightForWidth(0) 会把每个可换行标签都当成「窄到每个字一行」来算，
+    // 于是浮板凭空高出几百像素（实测设置屏首报 1594、稳定值 1054）。
+    // 这里按「浮板宽度 - 内容左右内边距」算，布局状态无关，结果稳定。
     const int w = qMax(1, width());
+    const int contentW = qMax(1, tokens::kPanelWidth - 2 * tokens::kContentPadding);
     int body = 0;
     if (content_ != nullptr && content_->layout() != nullptr) {
-        // 首次算 sizeHint 时浮板还没显示，content_->width() 可能还是 0，
-        // 这时退回浮板宽度。
-        const int cw = content_->width() > 0 ? content_->width() : w;
-        body = content_->layout()->heightForWidth(cw);
+        body = content_->layout()->heightForWidth(contentW);
     }
     if (body <= 0) {
         body = content_ != nullptr ? content_->sizeHint().height() : 0;

@@ -8,7 +8,12 @@
 #include <QApplication>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLoggingCategory>
 #include <QVBoxLayout>
+
+#include <functional>
+
+Q_LOGGING_CATEGORY(lcKeymap, "flowgrid.keymap")
 
 namespace fg {
 namespace {
@@ -26,25 +31,69 @@ QString css(const QColor &c)
     return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
 }
 
-// 键帽：设计稿 .key，带 1px 底边模拟键帽厚度
-QLabel *keycap(const QString &text, bool ghost, QWidget *parent)
+// 设计稿 ui.css .banner（warn 变体）：warn-soft 底 + warn 文字 + 同族描边。
+QWidget *warnBanner(const QString &text, QWidget *parent)
 {
     const Palette &p = Theme::instance().palette();
-    auto *key = new QLabel(text, parent);
-    key->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-    key->setAlignment(Qt::AlignCenter);
-    key->setMinimumWidth(34);
-    if (ghost) {
-        key->setStyleSheet(QStringLiteral("border:1px dashed %1;border-radius:%2px;color:%3")
-                               .arg(css(p.line2)).arg(tokens::kRadiusCtl).arg(css(p.text3)));
-    } else {
-        key->setStyleSheet(
-            QStringLiteral("border:1px solid %1;border-bottom-width:2px;border-radius:%2px;"
-                          "background:%3;color:%4")
-                .arg(css(p.line2)).arg(tokens::kRadiusCtl).arg(css(p.surface))
-                .arg(css(p.text1)));
+    QColor line = p.warn.solid;
+    line.setAlphaF(0.45);
+    auto *w = new QWidget(parent);
+    auto *hl = new QHBoxLayout(w);
+    hl->setContentsMargins(10, tokens::kS3, tokens::kS3, 10);
+    hl->setSpacing(tokens::kS2);
+    auto *icon = new QLabel(w);
+    icon->setFixedSize(14, 14);
+    icon->setPixmap(icons::icon(QStringLiteral("warn"), 14, p.warn.text).pixmap(14, 14));
+    auto *label = new QLabel(text, w);
+    label->setWordWrap(true);
+    label->setFont(uiFont(tokens::kFont12));
+    label->setStyleSheet(QStringLiteral("color:%1").arg(css(p.warn.text)));
+    hl->addWidget(icon, 0, Qt::AlignTop);
+    hl->addWidget(label, 1);
+    applyBoxStyle(w,
+                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                      .arg(css(line))
+                      .arg(tokens::kRadiusCard)
+                      .arg(css(p.warn.soft)));
+    return w;
+}
+
+// 规则编辑器未接通的动作统一记一条日志，不做成点了没反应的按钮。
+FgButton *unwiredButton(const QString &text, const QString &iconName, const QString &what,
+                        QWidget *parent, bool accent, const std::function<void()> &onClick)
+{
+    auto *btn = new FgButton(text,
+                             accent ? FgButton::Variant::Accent : FgButton::Variant::Secondary,
+                             false, parent);
+    if (!iconName.isEmpty()) {
+        btn->setIcon(iconName);
     }
-    return key;
+    QObject::connect(btn, &FgButton::clicked, parent, [what, onClick] {
+        qCInfo(lcKeymap) << what << QLatin1String("尚未接通，规则表仍由 YAML 提供");
+        if (onClick) {
+            onClick();
+        }
+    });
+    return btn;
+}
+
+// 行首带图标的列表行标题（设计稿里的 code / play 图标）。
+QWidget *iconTitle(const QString &iconName, const QString &text, const QColor &color,
+                   QWidget *parent)
+{
+    auto *w = new QWidget(parent);
+    auto *hl = new QHBoxLayout(w);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->setSpacing(tokens::kS2);
+    auto *icon = new QLabel(w);
+    icon->setFixedSize(14, 14);
+    icon->setPixmap(icons::icon(iconName, 14, color).pixmap(14, 14));
+    auto *label = new QLabel(text, w);
+    label->setFont(uiFont(tokens::kFont12));
+    label->setStyleSheet(QStringLiteral("color:%1").arg(css(color)));
+    hl->addWidget(icon);
+    hl->addWidget(label);
+    return w;
 }
 
 } // namespace
@@ -52,83 +101,120 @@ QLabel *keycap(const QString &text, bool ghost, QWidget *parent)
 KeymapPanel::KeymapPanel(QWidget *parent) : Panel(tr("键位映射"), parent)
 {
     auto *body = qobject_cast<QVBoxLayout *>(content()->layout());
-    auto &settings = Settings::instance();
 
-    // ── 顶部：生效开关 + 新增规则 ──
+    // ── 顶部：生效条数 + 「按应用自动切换」说明 + 新增规则 ──
     {
         auto *row = new QWidget(this);
         auto *hl = new QHBoxLayout(row);
         hl->setContentsMargins(0, 0, 0, 0);
         hl->setSpacing(tokens::kS3);
 
+        const Palette &p = Theme::instance().palette();
         countBadge_ = new Badge(QStringLiteral("0 条"), Badge::Variant::Accent);
-        auto *toggle = new ToggleSwitch(row);
-        toggle->setChecked(settings.keymapEnabled());
-        QObject::connect(toggle, &ToggleSwitch::clicked, this, [toggle] {
-            Settings::instance().setKeymapEnabled(toggle->isChecked());
-        });
+        auto *hint = new QLabel(tr("按应用自动切换"), row);
+        hint->setFont(uiFont(tokens::kFont11));
+        hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
 
         hl->addWidget(countBadge_);
-        hl->addWidget(toggle);
+        hl->addWidget(hint);
         hl->addStretch(1);
-
-        auto *add = new FgButton(tr("新增规则"), FgButton::Variant::Accent, false, row);
-        QObject::connect(add, &FgButton::clicked, this, &KeymapPanel::editRequested);
-        hl->addWidget(add);
+        hl->addWidget(unwiredButton(tr("新增规则"), QStringLiteral("plus"), tr("新增规则"),
+                                     row, true, [this] { Q_EMIT editRequested(); }));
         body->addWidget(row);
     }
 
-    // ── 按应用自动切换 ──
-    {
-        auto *appToggle = new ToggleSwitch(this);
-        appToggle->setChecked(true);
-        body->addWidget(new ListRow(tr("按应用自动切换"),
-                                       tr("游戏内自动停用映射"), appToggle, this));
-    }
-
-    body->addWidget(buildRuleList());
-
-    // ── 说明条 ──
-    {
-        const Palette &p = Theme::instance().palette();
-        auto *banner = new QWidget(this);
-        auto *hl = new QHBoxLayout(banner);
-        hl->setContentsMargins(tokens::kS3, tokens::kS2, tokens::kS3, tokens::kS2);
-        hl->setSpacing(tokens::kS2);
-        auto *icon = new QLabel(banner);
-        icon->setFixedSize(14, 14);
-        icon->setPixmap(icons::icon(QStringLiteral("warn"), 14, p.warn.solid).pixmap(14, 14));
-        auto *text = new QLabel(
-            tr("规则表按 YAML 加载，修改后热重载；游戏内不生效以避免误触"), banner);
-        text->setWordWrap(true);
-        text->setFont(uiFont(tokens::kFont11));
-        text->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-        hl->addWidget(icon);
-        hl->addWidget(text, 1);
-        body->addWidget(banner);
-    }
-
+    body->addWidget(buildGlobalSection());
+    body->addWidget(buildAppSection());
+    body->addWidget(warnBanner(tr("「Win → ⌥」与系统聚焦快捷键冲突，仅在非全屏窗口下生效。"),
+                               this));
+    body->addWidget(buildAdvancedSection());
     setFooterWidget(buildFooter());
 
-    // 设计稿里的三条示例规则，先按静态数据呈现，真实规则等传输层加载 YAML 后注入。
+    // 设计稿给了六条示例规则；真实规则等传输层加载 YAML 后经 setRules 注入。
     setRules({
         {QStringLiteral("Ctrl"), QStringLiteral("⌘"), tr("复制 / 粘贴"), true},
         {QStringLiteral("Win"), QStringLiteral("⌥"), tr("系统快捷键"), true},
         {QStringLiteral("Alt"), QStringLiteral("Ctrl"), tr("终端应用"), true},
+        {QStringLiteral("Ctrl"), QStringLiteral("Ctrl"), tr("直通（不转换）"), true},
+        {QStringLiteral("⌘"), QStringLiteral("Ctrl"), tr("反向（回切 Windows）"), true},
+        {QString(), QString(), tr("点击添加"), false},
     });
 }
 
-QWidget *KeymapPanel::buildRuleList()
+// 设计稿 keymap.html 的「全局」折叠区：3×2 键位网格。
+QWidget *KeymapPanel::buildGlobalSection()
+{
+    auto *body = new QWidget(this);
+    auto *vl = new QVBoxLayout(body);
+    vl->setContentsMargins(0, 0, 0, 0);
+    vl->setSpacing(0);
+
+    mappingLayout_ = new QVBoxLayout;
+    mappingLayout_->setContentsMargins(0, 0, 0, 0);
+    vl->addLayout(mappingLayout_);
+
+    // 与顶部「N 条生效」同源：两条徽章各写一个数，规则一改就会自相矛盾。
+    globalBadge_ = new Badge(tr("0 条"), Badge::Variant::Accent, this);
+    return new Collapsible(tr("全局"), QStringLiteral("keyboard"), body, globalBadge_, this);
+}
+
+// 应用级覆盖：每行一个应用 + 开关 + 进入编辑。
+QWidget *KeymapPanel::buildAppSection()
 {
     const Palette &p = Theme::instance().palette();
-    auto *list = new QWidget(this);
-    listLayout_ = new QVBoxLayout(list);
-    listLayout_->setContentsMargins(0, 0, 0, 0);
-    listLayout_->setSpacing(tokens::kS2);
-    applyBoxStyle(list,
-                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.surface)));
-    return list;
+    auto *body = new QWidget(this);
+    auto *vl = new QVBoxLayout(body);
+    vl->setContentsMargins(0, 0, 0, 0);
+    vl->setSpacing(0);
+
+    struct App { const char *icon; const char *name; const char *hint; };
+    const App apps[2] = {
+        {"code", QT_TR_NOOP("Visual Studio Code"), QT_TR_NOOP("Ctrl 直通，禁用 ⌘ 转换")},
+        {"play", QT_TR_NOOP("游戏（全屏时）"), QT_TR_NOOP("停用全部映射，避免误触")},
+    };
+    for (int i = 0; i < 2; ++i) {
+        auto *host = new QWidget(body);
+        auto *hl = new QHBoxLayout(host);
+        hl->setContentsMargins(0, 0, 0, 0);
+        hl->setSpacing(tokens::kS2);
+
+        auto *sw = new ToggleSwitch(host);
+        sw->setChecked(true);
+        auto *edit = new IconButton(QStringLiteral("edit"), tr("进入编辑"), host);
+        QObject::connect(edit, &IconButton::clicked, this, [this] { Q_EMIT editRequested(); });
+        hl->addWidget(sw);
+        hl->addWidget(edit);
+
+        auto *title = iconTitle(QString::fromUtf8(apps[i].icon), tr(apps[i].name), p.text1, host);
+        vl->addWidget(new ListRow(QString(), tr(apps[i].hint), host, this, title));
+    }
+
+    auto *badge = new Badge(tr("2 条"), Badge::Variant::Neutral, this);
+    return new Collapsible(tr("应用覆盖"), QStringLiteral("monitor"), body, badge, this);
+}
+
+// 高级区：设计稿默认收起。
+QWidget *KeymapPanel::buildAdvancedSection()
+{
+    auto *body = new QWidget(this);
+    auto *vl = new QVBoxLayout(body);
+    vl->setContentsMargins(0, 0, 0, 0);
+    vl->setSpacing(0);
+
+    const struct { const char *label; const char *hint; } rows[2] = {
+        {QT_TR_NOOP("按键重复率跟随目标端"), QT_TR_NOOP("使用被控设备的系统重复设置")},
+        {QT_TR_NOOP("发送原始扫描码"), QT_TR_NOOP("游戏与远程桌面场景更精确")},
+    };
+    for (int i = 0; i < 2; ++i) {
+        auto *sw = new ToggleSwitch(this);
+        sw->setChecked(false);
+        vl->addWidget(new ListRow(tr(rows[i].label), tr(rows[i].hint), sw, this));
+    }
+
+    auto *badge = new Badge(tr("2 项"), Badge::Variant::Neutral, this);
+    auto *section = new Collapsible(tr("高级"), QStringLiteral("settings"), body, badge, this);
+    section->setCollapsed(true);
+    return section;
 }
 
 QWidget *KeymapPanel::buildFooter()
@@ -153,12 +239,14 @@ QWidget *KeymapPanel::buildFooter()
     auto *reset = new FgButton(tr("恢复默认"), FgButton::Variant::Secondary, true, foot);
     QObject::connect(reset, &FgButton::clicked, this, [this] {
         // 规则编辑器未接通，恢复默认要连带写回 YAML，先把边界说清楚。
+        qCInfo(lcKeymap) << tr("恢复默认映射") << QLatin1String("尚未接通");
         Q_EMIT editRequested();
     });
     hl->addWidget(reset);
 
     auto *save = new FgButton(tr("保存"), FgButton::Variant::Accent, true, foot);
     QObject::connect(save, &FgButton::clicked, this, [this] {
+        qCInfo(lcKeymap) << tr("保存映射") << QLatin1String("尚未接通");
         Q_EMIT editRequested();
         hide();
     });
@@ -172,57 +260,44 @@ void KeymapPanel::setRules(const QList<KeyRule> &rules)
     if (countBadge_ != nullptr) {
         countBadge_->setText(tr("%1 条生效").arg(rules.size()));
     }
+    if (globalBadge_ != nullptr) {
+        globalBadge_->setText(tr("%1 条").arg(rules.size()));
+    }
     rebuildRows();
 }
 
 void KeymapPanel::rebuildRows()
 {
-    if (listLayout_ == nullptr) {
+    if (mappingLayout_ == nullptr) {
         return;
     }
-    while (listLayout_->count() > 0) {
-        QLayoutItem *item = listLayout_->takeAt(0);
+    while (mappingLayout_->count() > 0) {
+        QLayoutItem *item = mappingLayout_->takeAt(0);
         if (QWidget *w = item->widget()) {
             w->deleteLater();
         }
         delete item;
     }
-    const Palette &p = Theme::instance().palette();
-
     if (rules_.isEmpty()) {
-        auto *empty = new QLabel(tr("尚无规则"), listLayout_->parentWidget());
+        const Palette &p = Theme::instance().palette();
+        auto *empty = new QLabel(tr("尚无规则"), this);
         empty->setFont(uiFont(tokens::kFont12));
+        empty->setAlignment(Qt::AlignCenter);
+        empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
         empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-        listLayout_->addWidget(empty);
+        mappingLayout_->addWidget(empty);
         return;
     }
 
+    QList<KeyPair> pairs;
+    pairs.reserve(rules_.size());
     for (const KeyRule &rule : rules_) {
-        auto *row = new QWidget(listLayout_->parentWidget());
-        auto *hl = new QHBoxLayout(row);
-        hl->setContentsMargins(tokens::kS3, tokens::kS2, tokens::kS3, tokens::kS2);
-        hl->setSpacing(tokens::kS2);
-
-        auto *keys = new QWidget(row);
-        auto *kl = new QHBoxLayout(keys);
-        kl->setContentsMargins(0, 0, 0, 0);
-        kl->setSpacing(5);
-        kl->addWidget(keycap(rule.from, false, keys));
-        auto *arrow = new QLabel(keys);
-        arrow->setFixedSize(14, 14);
-        arrow->setPixmap(icons::icon(QStringLiteral("arrowRight"), 14, p.text3).pixmap(14, 14));
-        kl->addWidget(arrow);
-        kl->addWidget(keycap(rule.to, rule.to.isEmpty(), keys));
-
-        auto *context = new QLabel(rule.context, row);
-        context->setFont(uiFont(tokens::kFont11));
-        context->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-
-        hl->addWidget(keys);
-        hl->addStretch(1);
-        hl->addWidget(context);
-        listLayout_->addWidget(row);
+        // 全空的一行是设计稿里的「未设置 → 未设置 / 点击添加」占位槽。
+        const bool ghost = rule.from.isEmpty() || rule.to.isEmpty();
+        pairs.append(KeyPair{ghost ? tr("未设置") : rule.from, ghost ? tr("未设置") : rule.to,
+                             rule.context, ghost});
     }
+    mappingLayout_->addWidget(buildMappingGrid(pairs, this));
 }
 
 } // namespace fg

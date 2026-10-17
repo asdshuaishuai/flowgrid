@@ -4,6 +4,7 @@
 #include <QAbstractAnimation>
 #include <QApplication>
 #include <QEnterEvent>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -849,7 +850,8 @@ void NavRow::paintEvent(QPaintEvent *)
 }
 
 // ── ListRow ───────────────────────────────────────────────────────────
-ListRow::ListRow(const QString &label, const QString &hint, QWidget *control, QWidget *parent)
+ListRow::ListRow(const QString &label, const QString &hint, QWidget *control, QWidget *parent,
+                 QWidget *titleWidget)
     : QFrame(parent)
 {
     auto *hl = new QHBoxLayout(this);
@@ -859,13 +861,24 @@ ListRow::ListRow(const QString &label, const QString &hint, QWidget *control, QW
     auto *col = new QVBoxLayout;
     col->setContentsMargins(0, 0, 0, 0);
     col->setSpacing(2);
-    auto *labelWidget = new QLabel(label, this);
-    labelWidget->setFont(uiFont(tokens::kFont12));
-    labelWidget->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text1)));
+    // titleWidget 非空时用它顶替纯文本主标题——设备列表那几行要带类型图标
+    // （设计稿 pairing.html 的 laptop / monitor / tablet），QLabel 塞不下。
+    // 生命周期跟着本行走：加进布局即被 reparent，析构时一起回收。
+    QWidget *title = nullptr;
+    if (titleWidget != nullptr) {
+        title = titleWidget;
+        title->setParent(this);
+    } else {
+        auto *labelWidget = new QLabel(label, this);
+        labelWidget->setFont(uiFont(tokens::kFont12));
+        labelWidget->setStyleSheet(
+            QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text1)));
+        title = labelWidget;
+    }
     hint_ = new QLabel(hint, this);
     hint_->setFont(uiFont(tokens::kFont11));
     hint_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text3)));
-    col->addWidget(labelWidget);
+    col->addWidget(title);
     col->addWidget(hint_);
 
     hl->addLayout(col);
@@ -971,6 +984,51 @@ void FgKeycap::paintEvent(QPaintEvent *)
     pt.setPen(ghost_ ? p.text3 : p.text1);
     pt.setFont(uiFont(tokens::kFont11, QFont::DemiBold));
     pt.drawText(rect(), Qt::AlignCenter, text_);
+}
+
+// ── buildMappingGrid ──────────────────────────────────────────────────
+QWidget *buildMappingGrid(const QList<KeyPair> &pairs, QWidget *parent)
+{
+    // ui.css .mapping：repeat(3, 1fr) / gap 8 / padding 12。
+    // .keypair：竖排、gap 5、padding 8；.keys：横排、gap 5。
+    const Palette &p = Theme::instance().palette();
+    constexpr int kColumns = 3;
+
+    auto *grid = new QWidget(parent);
+    auto *gl = new QGridLayout(grid);
+    gl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
+    gl->setHorizontalSpacing(tokens::kS2);
+    gl->setVerticalSpacing(tokens::kS2);
+
+    for (int i = 0; i < pairs.size(); ++i) {
+        const KeyPair &pair = pairs.at(i);
+        auto *cell = new QWidget(grid);
+        auto *cl = new QVBoxLayout(cell);
+        cl->setContentsMargins(tokens::kS2, tokens::kS2, tokens::kS2, tokens::kS2);
+        cl->setSpacing(5);
+
+        auto *keys = new QWidget(cell);
+        auto *kl = new QHBoxLayout(keys);
+        kl->setContentsMargins(0, 0, 0, 0);
+        kl->setSpacing(5);
+        kl->addWidget(new FgKeycap(pair.from, pair.ghost, keys));
+        auto *arrow = new QLabel(keys);
+        arrow->setFixedSize(12, 12);
+        arrow->setPixmap(icons::icon(QStringLiteral("arrowRight"), 12, p.text3).pixmap(12, 12));
+        kl->addWidget(arrow, 0, Qt::AlignVCenter);
+        kl->addWidget(new FgKeycap(pair.to, pair.ghost, keys));
+        kl->addStretch(1);
+        cl->addWidget(keys);
+
+        if (!pair.note.isEmpty()) {
+            auto *note = new QLabel(pair.note, cell);
+            note->setFont(uiFont(tokens::kFont11));
+            note->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
+            cl->addWidget(note);
+        }
+        gl->addWidget(cell, i / kColumns, i % kColumns);
+    }
+    return grid;
 }
 
 // ── FgSelect ──────────────────────────────────────────────────────────

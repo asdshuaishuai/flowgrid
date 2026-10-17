@@ -11,6 +11,8 @@
 
 #include <QWidget>
 
+#include <functional>
+
 class QVBoxLayout;
 class QHBoxLayout;
 class QLabel;
@@ -18,6 +20,7 @@ class QLabel;
 namespace fg {
 
 class LatencyChip;
+class ToggleSwitch;
 
 class TrayPopup : public QWidget {
     Q_OBJECT
@@ -49,7 +52,8 @@ private:
     QWidget *buildGroup(const QString &label, const QList<QWidget *> &rows);
     QWidget *buildNavRow(const QString &iconName, const QString &label, QWidget *trailing,
                          const QString &kind);
-    QWidget *buildToggleRow(const QString &label, bool on);
+    QWidget *buildToggleRow(const QString &label, bool on,
+                            const std::function<void(bool)> &onWrite);
     QWidget *buildSeparator();
 
     DeviceManager &manager_;
@@ -62,6 +66,10 @@ private:
     QLabel *deviceIcon_ = nullptr;
     QLabel *deviceName_ = nullptr;
     QLabel *deviceMeta_ = nullptr;
+
+    // 快捷开关：refresh() 拿它们跟随 Settings::changed（「恢复默认」改了配置后，
+    // 托盘这几个开关要跟着回到默认值，否则两处状态会不一致）。
+    QList<ToggleSwitch *> quickToggles_;
 };
 
 } // namespace fg

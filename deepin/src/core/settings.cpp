@@ -141,7 +141,7 @@ void Settings::setMouseSmoothing(bool on)
 
 int Settings::edgeThreshold() const
 {
-    return read(QLatin1String(kKeyEdgeThreshold), 2).toInt();
+    return read(QLatin1String(kKeyEdgeThreshold), 8).toInt();
 }
 
 void Settings::setEdgeThreshold(int px)
@@ -200,6 +200,11 @@ bool Settings::e2eEncryption() const
 bool Settings::requireConfirmation() const
 {
     return read(QLatin1String(kKeyConfirm), true).toBool();
+}
+
+void Settings::setRequireConfirmation(bool on)
+{
+    write(QLatin1String(kKeyConfirm), on);
 }
 
 void Settings::resetToDefaults()

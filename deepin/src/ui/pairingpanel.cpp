@@ -7,7 +7,11 @@
 #include <QApplication>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
+#include <QLoggingCategory>
 #include <QVBoxLayout>
+
+Q_LOGGING_CATEGORY(lcPairing, "flowgrid.pairing")
 
 namespace fg {
 namespace {
@@ -34,6 +38,48 @@ QString signalText(int level)
     }
 }
 
+// 设计稿 ui.css .banner：padding 10/12、1px accent-line 描边、r-card 圆角、
+// accent-soft 浅底 + accent-text 文字。
+QWidget *banner(const QString &text, QWidget *parent)
+{
+    const Palette &p = Theme::instance().palette();
+    auto *w = new QWidget(parent);
+    auto *hl = new QHBoxLayout(w);
+    hl->setContentsMargins(10, tokens::kS3, tokens::kS3, 10);
+    hl->setSpacing(tokens::kS2);
+    auto *icon = new QLabel(w);
+    icon->setFixedSize(14, 14);
+    icon->setPixmap(icons::icon(QStringLiteral("info"), 14, p.accentText).pixmap(14, 14));
+    auto *label = new QLabel(text, w);
+    label->setWordWrap(true);
+    label->setFont(uiFont(tokens::kFont12));
+    label->setStyleSheet(QStringLiteral("color:%1").arg(css(p.accentText)));
+    hl->addWidget(icon, 0, Qt::AlignTop);
+    hl->addWidget(label, 1);
+    applyBoxStyle(w,
+                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                      .arg(css(p.accentLine))
+                      .arg(tokens::kRadiusCard)
+                      .arg(css(p.accentSoft)));
+    return w;
+}
+
+// 还没接通的动作一律明确记日志，不做成点了没反应的按钮。
+FgButton *unwiredButton(const QString &text, const QString &iconName, const QString &what,
+                        QWidget *parent, bool accent)
+{
+    auto *btn =
+        new FgButton(text, accent ? FgButton::Variant::Accent : FgButton::Variant::Secondary,
+                     true, parent);
+    if (!iconName.isEmpty()) {
+        btn->setIcon(iconName);
+    }
+    QObject::connect(btn, &FgButton::clicked, parent, [what] {
+        qCInfo(lcPairing) << what << QLatin1String("尚未接通");
+    });
+    return btn;
+}
+
 } // namespace
 
 PairingPanel::PairingPanel(QWidget *parent) : Panel(tr("添加设备"), parent)
@@ -41,13 +87,21 @@ PairingPanel::PairingPanel(QWidget *parent) : Panel(tr("添加设备"), parent)
     auto *body = qobject_cast<QVBoxLayout *>(content()->layout());
 
     body->addWidget(buildSteps());
+    body->addWidget(
+        banner(tr("在新设备上打开 FlowGrid → 添加设备，输入下面的一次性配对码。"), this));
     body->addWidget(buildPairCode());
     body->addWidget(buildDeviceList());
+    body->addWidget(buildManualSection());
     setFooterWidget(buildFooter());
 
+    // 设计稿列了三台：两台在线可发起配对，一台没在跑 FlowGrid、只给一个离线徽章。
+    // 早先只列了前两台，「离线」这个状态就没地方出现。
     setDevices({
-        {QStringLiteral("deepin-laptop"), QStringLiteral("192.168.x.x"), 3, 8, false},
-        {QStringLiteral("office-pc"), QStringLiteral("192.168.x.x"), 2, 24, false},
+        {QStringLiteral("deepin-laptop"), QStringLiteral("192.168.x.x"),
+         QStringLiteral("laptop"), 3, 8, true, false},
+        {QStringLiteral("office-pc"), QStringLiteral("192.168.x.x"),
+         QStringLiteral("monitor"), 2, 24, true, false},
+        {QStringLiteral("tablet-7f"), QString(), QStringLiteral("tablet"), 0, 0, false, false},
     });
 }
 
@@ -68,16 +122,23 @@ QWidget *PairingPanel::buildSteps()
         sv->setSpacing(4);
         sv->setAlignment(Qt::AlignCenter);
 
-        auto *num = new QLabel(QString::number(i + 1), step);
+        // 设计稿 .step--done 的序号圆里是 check 图标，不是数字 1。
+        const bool done = (i < 1);
+        const bool active = (i == 1);   // 本屏停在第 2 步
+        auto *num = new QLabel(step);
         num->setFixedSize(22, 22);
         num->setAlignment(Qt::AlignCenter);
-        num->setFont(uiFont(tokens::kFont12, QFont::Bold));
-        // 当前步骤高亮，其余走中性色——设计稿的 .step__num
-        const bool active = (i == 0);
-        num->setStyleSheet(
-            QStringLiteral("background:%1;color:%2;border-radius:11px")
-                .arg(css(active ? p.accent : p.surface3),
-                     css(active ? p.onAccent : p.text3)));
+        if (done) {
+            num->setPixmap(icons::icon(QStringLiteral("check"), 12, p.onAccent).pixmap(12, 12));
+        } else {
+            num->setText(QString::number(i + 1));
+            num->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
+        }
+        // .step--on 整圆填主色；.step--done 填 ok 实色。
+        const QColor fill = active ? p.accent : (done ? p.ok.solid : p.surface3);
+        const QColor fg = (active || done) ? p.onAccent : p.text3;
+        num->setStyleSheet(QStringLiteral("background:%1;color:%2;border-radius:11px")
+                               .arg(css(fill), css(fg)));
 
         auto *text = new QLabel(labels.at(i), step);
         text->setAlignment(Qt::AlignCenter);
@@ -111,30 +172,51 @@ QWidget *PairingPanel::buildPairCode()
 
     auto *label = new QLabel(tr("一次性配对码"), box);
     label->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-    label->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    label->setStyleSheet(
+        QStringLiteral("color:%1;text-transform:uppercase;letter-spacing:0.3px")
+            .arg(css(p.text3)));
     vl->addWidget(label);
 
-    // 配对码框：设计稿 .paircode，等宽大字符
+    // 设计稿 .paircode：虚线描边 + surface-2 底，里面四个 34×42 的数字槽，
+    // 槽是 surface 底、r-ctl 圆角、底部 1px 阴影。配对码要真生成需要传输层的
+    // 密钥协商，所以这里画的是四个空槽而不是具体数字——摆一个"8421"会让人
+    // 真去输一个根本不存在的码。
     auto *codeBox = new QWidget(box);
     auto *hl = new QHBoxLayout(codeBox);
-    hl->setContentsMargins(tokens::kS3, tokens::kS2, tokens::kS3, tokens::kS2);
-    auto *value = new QLabel(QStringLiteral("···· ····"), codeBox);
-    value->setFont(uiFont(tokens::kFont20, QFont::Bold));
-    value->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    value->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
-    auto *copy = new IconButton(QStringLiteral("copy"), tr("复制配对码"), codeBox);
-    hl->addWidget(value);
+    hl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
+    hl->setSpacing(tokens::kS2);
     hl->addStretch(1);
-    hl->addWidget(copy);
+    for (int i = 0; i < kPairCodeDigits; ++i) {
+        auto *slot = new QLabel(codeBox);
+        slot->setFixedSize(34, 42);
+        slot->setAlignment(Qt::AlignCenter);
+        slot->setFont(uiFont(tokens::kFont20, QFont::Bold));
+        slot->setText(QStringLiteral("·"));
+        slot->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px;color:%3")
+                                .arg(css(p.surface))
+                                .arg(tokens::kRadiusCtl)
+                                .arg(css(p.text3)));
+        hl->addWidget(slot);
+    }
+    hl->addStretch(1);
     applyBoxStyle(codeBox,
-                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.surface)));
+                  QStringLiteral("border:1px dashed %1;border-radius:%2px;background:%3")
+                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.surface2)));
     vl->addWidget(codeBox);
 
-    auto *hint = new QLabel(tr("5 分钟后失效"), box);
+    // 「5 分钟后失效」在左，「刷新」在右。
+    auto *row = new QWidget(box);
+    auto *rh = new QHBoxLayout(row);
+    rh->setContentsMargins(0, 0, 0, 0);
+    rh->setSpacing(tokens::kS2);
+    auto *hint = new QLabel(tr("5 分钟后失效"), row);
     hint->setFont(uiFont(tokens::kFont11));
     hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-    vl->addWidget(hint);
+    rh->addWidget(hint);
+    rh->addStretch(1);
+    rh->addWidget(unwiredButton(tr("刷新"), QStringLiteral("refresh"), tr("刷新配对码"),
+                                 row, false));
+    vl->addWidget(row);
 
     // 配对码要真生成需要传输层的密钥协商；这里明说边界，不假装已接通。
     auto *warn = new QWidget(box);
@@ -149,7 +231,7 @@ QWidget *PairingPanel::buildPairCode()
     text->setWordWrap(true);
     text->setFont(uiFont(tokens::kFont11));
     text->setStyleSheet(QStringLiteral("color:%1").arg(css(p.warn.text)));
-    wl->addWidget(icon);
+    wl->addWidget(icon, 0, Qt::AlignTop);
     wl->addWidget(text, 1);
     vl->addWidget(warn);
     return box;
@@ -173,8 +255,47 @@ QWidget *PairingPanel::buildDeviceList()
     listLayout_ = new QVBoxLayout(list);
     listLayout_->setContentsMargins(0, 0, 0, 0);
     listLayout_->setSpacing(0);
+    applyBoxStyle(list,
+                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                      .arg(css(Theme::instance().palette().line2))
+                      .arg(tokens::kRadiusCard)
+                      .arg(css(Theme::instance().palette().surface)));
     vl->addWidget(list);
     return box;
+}
+
+// 设计稿 pairing.html 末尾的「手动添加」折叠区（默认收起，头部挂「高级」徽章）。
+QWidget *PairingPanel::buildManualSection()
+{
+    const Palette &p = Theme::instance().palette();
+    auto *body = new QWidget(this);
+    auto *vl = new QVBoxLayout(body);
+    vl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
+    vl->setSpacing(tokens::kS2);
+
+    const auto field = [body, &p](const QString &label, const QString &placeholder) {
+        auto *wrap = new QWidget(body);
+        auto *v = new QVBoxLayout(wrap);
+        v->setContentsMargins(0, 0, 0, 0);
+        v->setSpacing(4);
+        auto *text = new QLabel(label, wrap);
+        text->setFont(uiFont(tokens::kFont11));
+        text->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text2)));
+        auto *edit = new QLineEdit(wrap);
+        applyInputStyle(edit);
+        edit->setPlaceholderText(placeholder);
+        v->addWidget(text);
+        v->addWidget(edit);
+        return wrap;
+    };
+    vl->addWidget(field(tr("设备地址"), tr("192.168.1.50:7788")));
+    vl->addWidget(field(tr("备注名"), tr("例如：书房主机")));
+    vl->addWidget(unwiredButton(tr("连接"), QString(), tr("手动添加设备"), body, false));
+
+    auto *badge = new Badge(tr("高级"), Badge::Variant::Neutral, this);
+    auto *section = new Collapsible(tr("手动添加"), QStringLiteral("lan"), body, badge, this);
+    section->setCollapsed(true);   // 设计稿 data-collapsed
+    return section;
 }
 
 QWidget *PairingPanel::buildFooter()
@@ -226,21 +347,49 @@ void PairingPanel::rebuildDevices()
     if (devices_.isEmpty()) {
         auto *empty = new QLabel(tr("未发现设备"), host);
         empty->setFont(uiFont(tokens::kFont12));
+        empty->setAlignment(Qt::AlignCenter);
+        empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
         empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
         listLayout_->addWidget(empty);
         return;
     }
 
-    for (const DiscoveredDevice &d : devices_) {
-        auto *btn = new FgButton(tr("发起配对"), FgButton::Variant::Secondary, true, host);
-        QObject::connect(btn, &FgButton::clicked, this,
-                         [this, name = d.name] { Q_EMIT pairRequested(name); });
+    for (int i = 0; i < devices_.size(); ++i) {
+        const DiscoveredDevice &d = devices_.at(i);
 
-        // 副标题直接用字符串：早先这里建了个只为取 text() 的 QLabel 挂在 host 上，
-        // 没人把它加进布局，于是它浮在列表左上角、和第一个设备名叠在一起。
+        // 设计稿的行首带设备类型图标（laptop / monitor / tablet）。ListRow 的主标题
+        // 只收纯文本，所以这里自己拼一行：图标 + 名字。
+        auto *title = new QWidget(host);
+        auto *th = new QHBoxLayout(title);
+        th->setContentsMargins(0, 0, 0, 0);
+        th->setSpacing(tokens::kS2);
+        auto *icon = new QLabel(title);
+        icon->setFixedSize(14, 14);
+        icon->setPixmap(icons::icon(d.icon, 14, d.online ? p.text2 : p.text3).pixmap(14, 14));
+        auto *name = new QLabel(d.name, title);
+        name->setFont(uiFont(tokens::kFont12));
+        name->setStyleSheet(QStringLiteral("color:%1").arg(css(d.online ? p.text1 : p.text3)));
+        th->addWidget(icon);
+        th->addWidget(name);
+
+        // 离线设备没有地址、没有信号，也没在跑 FlowGrid——给一个 idle 徽章，
+        // 不给「发起配对」按钮，免得点了必然失败。
         const QString hint =
-            tr("%1 · %2 · 已发现 %3s").arg(d.address, signalText(d.signal)).arg(d.foundSecs);
-        listLayout_->addWidget(new ListRow(d.name, hint, btn, host));
+            d.online ? tr("%1 · %2 · 已发现 %3s").arg(d.address, signalText(d.signal)).arg(d.foundSecs)
+                     : tr("未运行 FlowGrid");
+        QWidget *trailing = nullptr;
+        if (d.online) {
+            auto *btn =
+                new FgButton(tr("发起配对"),
+                             i == 0 ? FgButton::Variant::Accent : FgButton::Variant::Secondary,
+                             true, host);
+            QObject::connect(btn, &FgButton::clicked, this,
+                             [this, name = d.name] { Q_EMIT pairRequested(name); });
+            trailing = btn;
+        } else {
+            trailing = new Badge(tr("离线"), Badge::Variant::Idle, host);
+        }
+        listLayout_->addWidget(new ListRow(QString(), hint, trailing, host, title));
     }
 }
 

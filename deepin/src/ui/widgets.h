@@ -321,8 +321,9 @@ private:
 class ListRow : public QFrame {
     Q_OBJECT
 public:
+    // titleWidget 非空时用它顶替纯文本主标题（要带图标时用；由本行接管生命周期）。
     ListRow(const QString &label, const QString &hint, QWidget *control,
-            QWidget *parent = nullptr);
+            QWidget *parent = nullptr, QWidget *titleWidget = nullptr);
 
     void setHint(const QString &hint);
 
@@ -357,6 +358,20 @@ private:
     QString text_;
     bool ghost_;
 };
+
+// ── 键位映射网格：设计稿 ui.css .mapping ───────────────────────────────
+//
+// 3 列等宽网格，每格是一个 .keypair（竖排：[源键] → [目标键]，下方一行说明）。
+// 键位映射屏的「全局」区和设备与连接屏的折叠区是同一套结构，抽出来免得两处
+// 的列数、间距、padding 各漂一点。
+struct KeyPair {
+    QString from;
+    QString to;
+    QString note;         // 键帽下方那一行说明
+    bool ghost = false;   // .key--ghost：虚线描边 + text-3（未设置 / 点击添加）
+};
+
+QWidget *buildMappingGrid(const QList<KeyPair> &pairs, QWidget *parent);
 
 // ── 下拉选择：替代 QComboBox ──────────────────────────────────────────
 //

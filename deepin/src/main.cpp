@@ -212,6 +212,8 @@ int main(int argc, char *argv[])
     // 跨屏跳转一律交给 main：浮板互斥逻辑只有一处，避免各处各 hide 一遍。
     QObject::connect(g_connections, &ConnectionsPanel::settingsRequested, g_connections,
                      [] { showPanel(g_settings); });
+    QObject::connect(g_settings, &SettingsPanel::keymapRequested, g_settings,
+                     [] { showPanel(g_keymap); });
     QObject::connect(g_connections, &ConnectionsPanel::keymapRequested, g_connections,
                      [] { showPanel(g_keymap); });
     QObject::connect(g_connections, &ConnectionsPanel::latencyRequested, g_connections,
@@ -278,6 +280,23 @@ int main(int argc, char *argv[])
                 w->grab().save(path);
                 qCInfo(lcApp) << "snapshot ->" << path
                               << w->width() << "x" << w->height();
+
+                // 真实唤出会被 placePopup 按「屏幕可用高度 - 48」夹断（对应设计稿
+                // tokens.css 的 --panel-max-h: calc(100vh - 48px)），所以上面这张
+                // 只看得到折叠线以上。设置屏、连接屏内容都超过一屏，光靠它没法验收
+                // 末行有没有对齐——这里再出一张不夹屏、按内容全高的图。
+                const int natural = w->sizeHint().height();
+                const int clamped = w->height();
+                if (natural > clamped) {
+                    w->resize(w->width(), natural);
+                    w->ensurePolished();
+                    const QString full =
+                        QStringLiteral("%1-%2-full.png").arg(base, suffix);
+                    w->grab().save(full);
+                    qCInfo(lcApp) << "snapshot ->" << full
+                                  << w->width() << "x" << w->height();
+                    w->resize(w->width(), clamped);   // 复位，免得污染下一张
+                }
                 w->hide();
             };
             shot(g_trayPopup, QStringLiteral("tray"));
