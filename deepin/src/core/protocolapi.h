@@ -32,6 +32,21 @@ inline constexpr std::uint8_t kIdentify = 0x10;
 inline constexpr std::uint8_t kIdentifyRes = 0x11;
 } // namespace frametype
 
+// ── 错误码 §12.2（协议层）：与 protocol/errors.go 一致 ────────────────
+// 只镜像协议层这一档：传输层与 HAL 的错误码归未来客户端的传输实现，会话层
+// 不会拿它们做判断。镜像的理由同帧类型——UI 要按原因分档展示（对端拒绝、
+// 校验不符、超时），而 cgo 只能取到字符串，取不出「是哪种失败」。
+namespace errorcode {
+inline constexpr int kHmacMismatch = 0x10;
+inline constexpr int kUnknownFrameType = 0x11;
+inline constexpr int kInvalidPayload = 0x12;
+inline constexpr int kVersionMismatch = 0x13;
+inline constexpr int kIdentifyRejected = 0x14;
+inline constexpr int kTransferTimeout = 0x15;
+inline constexpr int kTransferRejected = 0x16;
+inline constexpr int kSequenceGap = 0x20;
+} // namespace errorcode
+
 // cgo 返回的缓冲区所有权持有者：析构时恰好释放一次。
 class GoBuffer {
 public:

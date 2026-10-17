@@ -320,7 +320,8 @@ int main(int argc, char *argv[])
     // 别让「界面上写着 Ctrl+Q」被当成已经能用。
     qCInfo(lcApp) << "托盘快捷键提示为设计稿占位，尚未注册全局热键（Ctrl+1/2/3、K、,、Q 均未生效）";
 
-    // 截图模式：依次渲染八块界面并退出，供无头环境验收。
+    // 截图模式：依次渲染八块界面并退出，供无头环境验收（文件传输屏多出一张
+    // 轮询后的画面，理由见下面那张 shot）。
     if (parser.isSet(snapshotOpt)) {
         const QString base = parser.value(snapshotOpt);
         QTimer::singleShot(600, &app, [&app, base, syncTrayCounts] {
@@ -400,7 +401,22 @@ int main(int argc, char *argv[])
                     qCInfo(lcApp) << "snapshot ->" << toastPath
                                   << t->width() << "x" << t->height();
                 }
-                app.quit();
+                // 文件传输屏再拍一张：它的会话轮询每 500ms 就按 Go 侧报的数字改写
+                // 已播种的条目（进度、终态、大小）。只拍唤出瞬间那一张的话，
+                // 「轮询把状态改坏」这类问题在无头环境里根本看不见——实测漏过
+                // 「空闲轮询把那条 4.2 GB 的记录刷成 0 B」。
+                QTimer::singleShot(700, &app, [&app, base] {
+                    if (QWidget *w = g_files) {
+                        w->setAttribute(Qt::WA_DontShowOnScreen, true);
+                        showPanel(w);
+                        w->ensurePolished();
+                        const QString p = QStringLiteral("%1-files-polled.png").arg(base);
+                        w->grab().save(p);
+                        qCInfo(lcApp) << "snapshot ->" << p
+                                      << w->width() << "x" << w->height();
+                    }
+                    app.quit();
+                });
             });
         });
     } else {

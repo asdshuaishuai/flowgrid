@@ -109,6 +109,15 @@ QLabel *xferIcon(const QString &name, const StatusColor &c, QWidget *parent)
     return box;
 }
 
+// 「还在进行中」只有一种定义：没到终态，也没被上限挡下。超限条目根本没上线
+// （offerFile 直接记进传输记录），它若算进行中，胶囊与托盘徽标会永远显示一条
+// 在跑、而「进行中」列表空空如也；更糟的是轮询会把它当成正在传的那一路，把
+// 真正的传输进度全写到这条看不见的条目上。
+bool isActive(const XferEntry &e)
+{
+    return !e.done && !e.failed && !e.rejected && !e.oversize;
+}
+
 } // namespace
 
 // ── DropZone ──────────────────────────────────────────────────────────
@@ -244,7 +253,7 @@ void FilesPanel::refreshPill()
     const bool on = Settings::instance().fileTransfer();
     int active = 0;
     for (const XferEntry &e : entries_) {
-        if (!e.done && !e.failed && !e.rejected) {
+        if (isActive(e)) {
             ++active;
         }
     }
@@ -544,6 +553,8 @@ void FilesPanel::seedForSnapshot()
             break;
         case 3:
             e.failed = true;
+            // 设计稿这一档是「SHA-256 不符」，对应协议的载荷/校验错误码。
+            e.errCode = proto::errorcode::kInvalidPayload;
             break;
         case 4:
             e.oversize = true;
@@ -565,7 +576,7 @@ int FilesPanel::activeCount() const
 {
     int n = 0;
     for (const XferEntry &e : entries_) {
-        if (!e.done && !e.failed && !e.rejected && !e.oversize) {
+        if (isActive(e)) {
             ++n;
         }
     }
@@ -659,21 +670,38 @@ void FilesPanel::pollSessions()
     int code = 0;
     if (sender_.poll(&state, &sent, &total, &code)) {
         for (XferEntry &e : entries_) {
-            if (e.inbound || e.done || e.failed) {
+            if (e.inbound || !isActive(e)) {
                 continue;
             }
-            e.sentBytes = sent;
-            e.totalBytes = total;
+            // 没有传输时 Go 侧一样是「成功」返回，报的就是 0/0（只有句柄失效才
+            // 返回失败）。照单全收的话，每 500ms 就把条目的大小刷成「0 B」、
+            // 进度条清零，还白重建一次列表——实测那条 4.2 GB 的记录会变成
+            // 「0 B · 超出单文件上限」。
+            const bool finished = state == proto::FileSender::State::Done
+                                  || state == proto::FileSender::State::Failed;
+            if (!finished && total <= 0) {
+                break;
+            }
+            if (total > 0) {
+                dirty = dirty || e.totalBytes != total || e.sentBytes != sent;
+                e.totalBytes = total;
+                e.sentBytes = sent;
+            }
             if (state == proto::FileSender::State::Done) {
                 e.done = true;
                 e.verified = true;   // Go 侧在交付前已做 SHA-256
                 e.finishedAtMs = QDateTime::currentMSecsSinceEpoch();
+                dirty = true;
             } else if (state == proto::FileSender::State::Failed) {
-                e.failed = true;
+                // 对端拒绝（0x16）是「对端的决定」，不是数据坏了。协议用 errCode
+                // 把两者分开了，记录里也该分档。
+                e.errCode = code;
+                e.rejected = code == proto::errorcode::kTransferRejected;
+                e.failed = !e.rejected;
                 e.finishedAtMs = QDateTime::currentMSecsSinceEpoch();
                 qCWarning(lcFiles) << "传输失败，错误码" << code;
+                dirty = true;
             }
-            dirty = true;
             break;
         }
     }
@@ -704,15 +732,23 @@ void FilesPanel::pollSessions()
     int err = 0;
     if (receiver_.takeComplete(&name, &data, &err)) {
         for (XferEntry &e : entries_) {
-            if (e.inbound && e.name == name && !e.done && !e.failed) {
+            if (e.inbound && e.name == name && isActive(e)) {
+                e.errCode = err;
                 e.done = err == 0;
                 e.verified = err == 0;
-                e.totalBytes = data.size();
-                e.finishedAtMs = QDateTime::currentMSecsSinceEpoch();
-                if (err != 0) {
+                if (err == 0) {
+                    e.totalBytes = data.size();
+                } else if (err == proto::errorcode::kTransferRejected) {
+                    // 中途 abort 走 0x16，与「校验失败」不是一回事。
+                    e.rejected = true;
+                    qCWarning(lcFiles) << "接收被中止" << name << "错误码" << err;
+                } else {
+                    // 失败时 Go 侧不带数据回来（data 为空），这里保留 offer 里的
+                    // 文件大小：写成 0 B 等于说这个文件是空的。
                     e.failed = true;
                     qCWarning(lcFiles) << "接收失败" << name << "错误码" << err;
                 }
+                e.finishedAtMs = QDateTime::currentMSecsSinceEpoch();
                 dirty = true;
                 break;
             }
@@ -738,7 +774,7 @@ void FilesPanel::rebuildTransfers()
 
     int active = 0;
     for (const XferEntry &e : entries_) {
-        if (e.done || e.failed || e.rejected || e.oversize) {
+        if (!isActive(e)) {
             continue;   // 终态条目归入「传输记录」
         }
         ++active;
@@ -852,12 +888,16 @@ void FilesPanel::rebuildRecords()
     // 最新的在前：设计稿第一条是 3m、第二条 12m。
     for (int i = entries_.size() - 1; i >= 0; --i) {
         const XferEntry &e = entries_.at(i);
-        if (!e.done && !e.failed && !e.rejected && !e.oversize) {
+        if (isActive(e)) {
             continue;
         }
         ++shown;
 
         const bool ok = e.done && !e.failed && !e.rejected && !e.oversize;
+        // 「校验失败」只留给校验/载荷类错误（0x12）。超时、未连接、发送失败
+        // 也一律写成「SHA-256 不符，未交付」，是在替文件喊冤。
+        const bool checksumFail =
+            e.failed && e.errCode == proto::errorcode::kInvalidPayload;
         // 三种失败各有各的图标与配色：拒绝是对端的决定、校验失败是数据损坏、
         // 超限是根本没上线。对不上号只会让用户以为是同一种问题。
         const StatusColor tone =
@@ -881,8 +921,10 @@ void FilesPanel::rebuildRecords()
                 hint += tr(" · SHA-256 已校验");
             } else if (e.rejected) {
                 hint += tr(" · 对端已拒绝");
-            } else {
+            } else if (checksumFail) {
                 hint += tr(" · SHA-256 不符，未交付");
+            } else {
+                hint += tr(" · 传输中断，未交付");
             }
         }
 
@@ -896,7 +938,10 @@ void FilesPanel::rebuildRecords()
         tl->setSpacing(tokens::kS1);
         auto *badge = new Badge(
             ok ? tr("完成")
-               : (e.oversize ? tr("超限") : (e.rejected ? tr("已拒绝") : tr("校验失败"))),
+               : (e.oversize ? tr("超限")
+                             : (e.rejected ? tr("已拒绝")
+                                           : (checksumFail ? tr("校验失败")
+                                                           : tr("传输失败")))),
             ok ? Badge::Variant::Ok : (e.rejected ? Badge::Variant::Warn
                                                   : Badge::Variant::Danger),
             trailing);

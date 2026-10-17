@@ -41,6 +41,10 @@ struct XferEntry {
     bool failed = false;
     bool rejected = false;    // 对端主动拒绝（与「失败」区分，徽章不同）
     bool verified = false;    // SHA-256 已校验
+    // 失败原因（协议 errCode §12.2，0 = 没有错误码）。徽章与说明按它分档：
+    // 只有 0x12 才是校验/载荷问题，把超时、对端拒绝都说成「SHA-256 不符，
+    // 未交付」，等于告诉用户文件坏了。
+    int errCode = 0;
     qint64 finishedAtMs = 0;  // QDateTime::currentMSecsSinceEpoch
 };
 
