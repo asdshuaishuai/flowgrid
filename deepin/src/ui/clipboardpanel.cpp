@@ -269,7 +269,16 @@ QWidget *ClipboardPanel::buildCurrent()
         }
         const ClipEntry &e = current_;
         // 真实发送：交给 Go 的 ClipboardSession 分段，UI 不碰帧结构。
-        session_.send(e.mime.toUtf8(), e.raw);
+        //
+        // send 的返回值必须检查：超 63,240 B 的载荷在 Go 侧 SegmentClipboard
+        // 就被拒了（ErrInvalidPayload），一个字节都不会发出。早先这里丢掉返回
+        // 值、无条件报「已推送」——用户看到成功提示，对端却什么都没收到，比
+        // 报错更难查。
+        const int err = session_.send(e.mime.toUtf8(), e.raw);
+        if (err != 0) {
+            toast(proto::errorString(err), ToastKind::Danger);
+            return;
+        }
         Q_EMIT pushRequested(e);
         toast(tr("已推送"), ToastKind::Ok);
     });
