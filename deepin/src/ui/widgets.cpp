@@ -14,6 +14,7 @@
 #include <QActionGroup>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
 #include <QRandomGenerator>
@@ -794,7 +795,10 @@ void IconButton::paintEvent(QPaintEvent *)
 DeviceCard::DeviceCard(const Device &device, QWidget *parent) : QFrame(parent)
 {
     auto *grid = new QGridLayout(this);
-    grid->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
+    // 底部 margin 多让出 kShadowLiftBand：控件底部那条空带属于悬停投影，内容
+    // 要居中于上方的卡片本体而不是整个控件矩形。
+    grid->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3,
+                              tokens::kS3 + tokens::kShadowLiftBand);
     grid->setHorizontalSpacing(tokens::kS3);
     grid->setVerticalSpacing(0);
     grid->setColumnStretch(1, 1);
@@ -928,19 +932,46 @@ void DeviceCard::paintEvent(QPaintEvent *)
     QPainter pt(this);
     pt.setRenderHint(QPainter::Antialiasing, true);
 
+    // .device:hover 带一条 --shadow-lift（0 2px 10px）。之前这里只把描边提亮到
+    // line-3，投影那一半没做——Palette::shadowLift 与 kShadowLiftY/R 都是照
+    // 设计稿备好的，却一次也没用上。
+    //
+    // Web 的 box-shadow 画在控件矩形之外，而 Qt 画不出界外的像素：直接照搬
+    // 几何把渐变带画在本体下方，会被随后铺满整个 rect 的不透明本体整个盖掉。所以
+    // 本体收到控件上方、底部预留 kShadowLiftBand 的空带（构造函数把底部
+    // margin 也加了同样的量，内容仍居中于本体），影子就落在这条带里。用一条
+    // 向下淡出的渐变代替模糊阴影：QGraphicsDropShadowEffect 会把整棵子树重绘
+    // 一遍，而这里只要 4px 内一圈很淡的浮起。
+    const QRectF body = QRectF(rect()).adjusted(0.0, 0.0, 0.0,
+                                                -tokens::kShadowLiftBand);
+    if (hovered_ && !active_) {
+        QPainterPath sh;
+        sh.addRoundedRect(body.adjusted(0.0, 0.0, 0.0, tokens::kShadowLiftBand),
+                          tokens::kRadiusCard, tokens::kRadiusCard);
+        QLinearGradient g(body.left(), body.bottom(), body.left(),
+                          body.bottom() + tokens::kShadowLiftBand);
+        g.setColorAt(0.0, p.shadowLift);
+        g.setColorAt(1.0, QColor(p.shadowLift.red(), p.shadowLift.green(),
+                                 p.shadowLift.blue(), 0));
+        pt.setPen(Qt::NoPen);
+        pt.setBrush(g);
+        pt.drawPath(sh);
+    }
+
     QColor bg = active_ ? p.accentSoft : p.surface;
     if (hovered_ && !active_) {
         bg = p.surface;
     }
     pt.setPen(Qt::NoPen);
     pt.setBrush(bg);
-    pt.drawRoundedRect(rect().adjusted(0, 0, -1, -1), tokens::kRadiusCard, tokens::kRadiusCard);
+    pt.drawRoundedRect(body.adjusted(0.0, 0.0, -1.0, -1.0), tokens::kRadiusCard,
+                       tokens::kRadiusCard);
 
     QPen border(active_ ? p.accentLine : (hovered_ ? p.line3 : p.line2));
     border.setWidthF(1.0);
     pt.setPen(border);
     pt.setBrush(Qt::NoBrush);
-    pt.drawRoundedRect(rect().adjusted(0.5, 0.5, -0.5, -0.5), tokens::kRadiusCard,
+    pt.drawRoundedRect(body.adjusted(0.5, 0.5, -0.5, -0.5), tokens::kRadiusCard,
                        tokens::kRadiusCard);
 
     if (!online_) {
@@ -1112,7 +1143,8 @@ ClipRow::ClipRow(const QString &iconName, const QString &text, const QString &hi
         iconLabel->setPixmap(icons::icon(iconName, 12, p.text2).pixmap(12, 12));
         tl->addWidget(iconLabel);
         applyBoxStyle(leading_,
-                      QStringLiteral("border-radius:4px;background:%1").arg(cssColor(p.surface3)));
+                      QStringLiteral("border-radius:%1px;background:%2")
+                          .arg(QString::number(tokens::kRadiusChip), cssColor(p.surface3)));
     } else {
         leading_->setParent(this);
     }
@@ -1426,11 +1458,12 @@ EmptyState::EmptyState(const QString &iconName, const QString &title, const QStr
     if (!iconName.isEmpty()) {
         // .empty__icon：40px 圆形 / surface-3 底 / text-3 图标（.ic 默认 16px）
         auto *icon = new QLabel(this);
-        icon->setFixedSize(40, 40);
+        icon->setFixedSize(tokens::kEmptyIconSize, tokens::kEmptyIconSize);
         icon->setAlignment(Qt::AlignCenter);
         icon->setPixmap(icons::icon(iconName, 16, p.text3).pixmap(16, 16));
-        applyBoxStyle(icon, QStringLiteral("border-radius:20px;background:%1")
-                                  .arg(cssColor(p.surface3)));
+        applyBoxStyle(icon, QStringLiteral("border-radius:%1px;background:%2")
+                                  .arg(QString::number(tokens::pillRadius(tokens::kEmptyIconSize)),
+                                       cssColor(p.surface3)));
         vl->addWidget(icon, 0, Qt::AlignHCenter);
     }
 
@@ -1684,7 +1717,9 @@ void SegmentedControl::paintEvent(QPaintEvent *)
         if (i == current_) {
             // 选中档「浮」在外框之上：先铺 surface，再压一层 shadow-bar。
             QPainterPath lifted;
-            lifted.addRoundedRect(cell.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4);
+            // .seg button 的 border-radius: 4px——控件里那块「浮起来」的选中档。
+            lifted.addRoundedRect(cell.adjusted(0.5, 0.5, -0.5, -0.5), tokens::kRadiusChip,
+                                  tokens::kRadiusChip);
             pt.fillPath(lifted, p.shadowBar);
             pt.fillPath(lifted, p.surface);
         }

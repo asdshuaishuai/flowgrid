@@ -101,7 +101,7 @@ QWidget *PairingPanel::buildSteps()
         const bool done = (i < 1);
         const bool active = (i == 1);   // 本屏停在第 2 步
         auto *num = new QLabel(step);
-        num->setFixedSize(22, 22);
+        num->setFixedSize(tokens::kStepBadgeSize, tokens::kStepBadgeSize);
         num->setAlignment(Qt::AlignCenter);
         if (done) {
             num->setPixmap(icons::icon(QStringLiteral("check"), 12, p.ok.text).pixmap(12, 12));
@@ -126,10 +126,11 @@ QWidget *PairingPanel::buildSteps()
             fg = p.ok.text;
         }
         num->setStyleSheet(
-            QStringLiteral("background:%1;color:%2;border:1px solid %3;border-radius:11px")
+            QStringLiteral("background:%1;color:%2;border:1px solid %3;border-radius:%4px")
                 .arg(background)
                 .arg(css(fg))
-                .arg(css(line)));
+                .arg(css(line))
+                .arg(QString::number(tokens::pillRadius(tokens::kStepBadgeSize))));
 
         auto *text = new QLabel(labels.at(i), step);
         text->setAlignment(Qt::AlignCenter);

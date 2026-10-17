@@ -288,6 +288,7 @@ QWidget *TrayPopup::buildHead()
     hl->addStretch(1);
 
     auto *pill = new QWidget(head);
+    pill->setFixedHeight(tokens::kStatusPillHeight);  // 圆角取高的一半
     auto *pl = new QHBoxLayout(pill);
     pl->setContentsMargins(8, 0, 8, 0);
     pl->setSpacing(6);
@@ -296,8 +297,8 @@ QWidget *TrayPopup::buildHead()
     headLatency_->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
     pl->addWidget(dot);
     pl->addWidget(headLatency_);
-    pill->setStyleSheet(
-        QStringLiteral("background:%1;border-radius:10px").arg(css(p.ok.soft)));
+    pill->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
+                        .arg(css(p.ok.soft), QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
     hl->addWidget(pill);
     return head;
 }

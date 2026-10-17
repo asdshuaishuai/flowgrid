@@ -45,6 +45,7 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
     // ── 标题栏右侧状态胶囊 ──
     {
         auto *pill = new QWidget(this);
+        pill->setFixedHeight(tokens::kStatusPillHeight);  // 圆角取高的一半
         auto *pl = new QHBoxLayout(pill);
         pl->setContentsMargins(8, 0, 8, 0);
         pl->setSpacing(6);
@@ -53,8 +54,9 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         titleLatency_->setFixedHeight(tokens::kStatusPillHeight);
         pl->addWidget(titleDot_);
         pl->addWidget(titleLatency_);
-        pill->setStyleSheet(QStringLiteral("background:%1;border-radius:10px")
-                                .arg(css(Theme::instance().palette().ok.soft)));
+        pill->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
+                                .arg(css(Theme::instance().palette().ok.soft),
+                                     QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
         setTitleBarWidget(pill);
     }
 

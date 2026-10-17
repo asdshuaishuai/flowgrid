@@ -122,6 +122,7 @@ ConnectionsPanel::ConnectionsPanel(QWidget *parent) : Panel(tr("设备与连接"
         hl->setSpacing(tokens::kS3);
 
         auto *pill = new QWidget(row);
+        pill->setFixedHeight(tokens::kStatusPillHeight);  // 圆角取高的一半
         auto *pl = new QHBoxLayout(pill);
         pl->setContentsMargins(8, 0, 8, 0);
         pl->setSpacing(6);
@@ -130,8 +131,9 @@ ConnectionsPanel::ConnectionsPanel(QWidget *parent) : Panel(tr("设备与连接"
         statusLabel_->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
         pl->addWidget(statusDot_);
         pl->addWidget(statusLabel_);
-        pill->setStyleSheet(QStringLiteral("background:%1;border-radius:10px")
-                                .arg(css(Theme::instance().palette().ok.soft)));
+        pill->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
+                                .arg(css(Theme::instance().palette().ok.soft),
+                                     QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
         hl->addWidget(pill);
         hl->addStretch(1);
 

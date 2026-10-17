@@ -147,6 +147,7 @@ ClipboardPanel::ClipboardPanel(QWidget *parent) : Panel(tr("剪贴板"), parent)
     // 标题栏右侧：同步状态胶囊
     {
         auto *pill = new QWidget(this);
+        pill->setFixedHeight(tokens::kStatusPillHeight);  // 圆角取高的一半，高度得先定
         auto *pl = new QHBoxLayout(pill);
         pl->setContentsMargins(tokens::kStatusPillHoriPad, 0, tokens::kStatusPillHoriPad, 0);
         pl->setSpacing(6);
@@ -156,8 +157,9 @@ ClipboardPanel::ClipboardPanel(QWidget *parent) : Panel(tr("剪贴板"), parent)
         label->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
         pl->addWidget(dot);
         pl->addWidget(label);
-        pill->setStyleSheet(QStringLiteral("background:%1;border-radius:10px")
-                                .arg(css(Theme::instance().palette().ok.soft)));
+        pill->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
+                                .arg(css(Theme::instance().palette().ok.soft),
+                                     QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
         setTitleBarWidget(pill);
         pill_ = pill;
         pillDot_ = dot;
@@ -200,7 +202,8 @@ QWidget *ClipboardPanel::buildCurrent()
     typeIcon->setAlignment(Qt::AlignCenter);
     typeIcon->setPixmap(icons::icon(QStringLiteral("type"), 12, p.text2).pixmap(12, 12));
     applyBoxStyle(typeIcon,
-                  QStringLiteral("border-radius:4px;background:%1").arg(css(p.surface3)));
+                  QStringLiteral("border-radius:%1px;background:%2")
+                      .arg(QString::number(tokens::kRadiusChip), css(p.surface3)));
     auto *title = new QLabel(tr("当前剪贴板"), head);
     title->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
     auto *mimeBadge = new Badge(QStringLiteral("text/plain"), Badge::Variant::Neutral, head);
@@ -441,8 +444,9 @@ void ClipboardPanel::refreshSyncState()
     pillLabel_->setText(on ? tr("同步中") : tr("已关闭"));
     pillDot_->setPulsing(on);
     pillDot_->setQuality(on ? Quality::Good : Quality::Idle);
-    pill_->setStyleSheet(QStringLiteral("background:%1;border-radius:10px")
-                             .arg(css(on ? p.ok.soft : p.idle.soft)));
+    pill_->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
+                             .arg(css(on ? p.ok.soft : p.idle.soft),
+                                  QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
 }
 
 void ClipboardPanel::clearHistory()

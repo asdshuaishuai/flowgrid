@@ -201,6 +201,8 @@ FilesPanel::FilesPanel(QWidget *parent) : Panel(tr("文件传输"), parent)
 
     {
         auto *pill = new QWidget(this);
+        // 钉死高度：药丸的圆角是「高的一半」，高度不定就没法算。
+        pill->setFixedHeight(tokens::kStatusPillHeight);
         auto *pl = new QHBoxLayout(pill);
         pl->setContentsMargins(tokens::kStatusPillHoriPad, 0, tokens::kStatusPillHoriPad, 0);
         pl->setSpacing(6);
@@ -250,8 +252,9 @@ void FilesPanel::refreshPill()
     pillLabel_->setText(active == 0 ? tr("空闲") : tr("%1 项进行中").arg(active));
     pillDot_->setPulsing(on && active > 0);
     pillDot_->setQuality(on && active > 0 ? Quality::Good : Quality::Idle);
-    pill_->setStyleSheet(QStringLiteral("background:%1;border-radius:10px")
-                             .arg(css(on && active > 0 ? p.ok.soft : p.idle.soft)));
+    pill_->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
+                             .arg(css(on && active > 0 ? p.ok.soft : p.idle.soft),
+                                  QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
 }
 
 QWidget *FilesPanel::buildTransferList()

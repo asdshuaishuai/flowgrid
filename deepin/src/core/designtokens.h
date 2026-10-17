@@ -45,10 +45,21 @@ inline constexpr int kS4 = 16;
 inline constexpr int kS5 = 20;
 inline constexpr int kS6 = 24;
 
-// ── 3. 圆角：收敛为 3 级 + pill ───────────────────────────────────────
+// ── 3. 圆角：收敛为 4 级 + pill ───────────────────────────────────────
 inline constexpr int kRadiusCtl     = 6;
 inline constexpr int kRadiusCard    = 10;
 inline constexpr int kRadiusSurface = 12;
+// 4 来自设计稿 .seg button 与 .clip__type：控件内的小方块，以及承载一枚小
+// 图标的方片。它不在 6/10/12 那条阶梯上，但同样是反复出现的固定形态。
+inline constexpr int kRadiusChip    = 4;
+
+// 「药丸」= 高的一半。
+//
+// 设计稿写的是 --r-pill: 999px，Qt 的样式表不认这个写法：超过半高的值会被
+// 引擎夹断，22px 的序号圆传 999 只画出约 2px 的圆角，整个圆直接变成方块
+// （角部像素填充从 0.00 变 1.00，肉眼一眼能看出）。所以令牌给的是按高度
+// 求值的函数而不是常量：调用点传高度，「药丸」这件事在令牌层就定死了。
+constexpr int pillRadius(int height) { return height / 2; }
 
 // ── 4. 排版阶梯：11/12/13/15/20/28，不再出现 10px 以下字号 ─────────────
 inline constexpr int kFont11 = 11;
@@ -72,6 +83,8 @@ inline constexpr int kStatusDotSize  = 7;    // .dot
 inline constexpr int kLatChipMinWidth = 56;  // .lat
 inline constexpr int kDeviceIconSize = 42;   // .device__icon
 inline constexpr int kSwitchBtnSize  = 28;   // .switch-btn__icon
+inline constexpr int kStepBadgeSize  = 22;   // 配对流程的序号圆
+inline constexpr int kEmptyIconSize  = 40;   // .empty__icon 圆形底
 
 // ── 6. 阴影 ───────────────────────────────────────────────────────────
 // 设计稿为 rgba 色值；Qt 侧给 QColor，由 theme 在明暗两套下取值。
@@ -81,6 +94,9 @@ inline constexpr int kShadowTrayY  = 16;   // 0 16px 32px
 inline constexpr int kShadowTrayR  = 32;
 inline constexpr int kShadowLiftY  = 2;    // 卡片浮起：0 2px 10px
 inline constexpr int kShadowLiftR  = 10;
+// 影子带的高度。Web 的 box-shadow 画在控件矩形之外，Qt 画不出界外的像素——
+// 所以卡片本体要收到控件上方，下方留这条空带来承接悬停投影。
+inline constexpr int kShadowLiftBand = kShadowLiftY + 2;
 
 } // namespace fg::tokens
 
