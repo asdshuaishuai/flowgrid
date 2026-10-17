@@ -383,9 +383,9 @@ double attrNum(const QString &tag, const QString &name, double fallback)
 
 } // namespace
 
-QPainterPath parse(const QString &fragment)
+Icon parse(const QString &fragment)
 {
-    QPainterPath out;
+    Icon out;
 
     // 逐个标签扫描。图标片段是我们自己写的静态表，不含 CDATA / 注释，
     // 所以朴素扫描足够，也不值得为此引入 XML 解析器。
@@ -402,8 +402,18 @@ QPainterPath parse(const QString &fragment)
         const QString tag = fragment.mid(lt + 1, gt - lt - 1);
         i = gt + 1;
 
+        // fill="1" 是「底衬」层（屏幕内容、卡片面板这类大面积形体），
+        // fill="2" 是「实体」层（三角形、圆点这类形体本身就是内容的元素）。
+        // 两者必须分开：纯形体按 18% 铺出来等于没画，浅色主题下直接消失。
+        // 取不到属性时按描边处理——图标表里绝大多数元素确实是描边。
+        const QString fillAttr = attr(tag, QStringLiteral("fill"));
+        const int layer = fillAttr == QLatin1String("2")   ? 2
+                          : fillAttr == QLatin1String("1") ? 1
+                                                           : 0;
+        QPainterPath &target = layer == 2 ? out.solid : (layer == 1 ? out.fill : out.stroke);
+
         if (tag.startsWith(QLatin1String("path"))) {
-            out.addPath(parsePathData(attr(tag, QStringLiteral("d"))));
+            target.addPath(parsePathData(attr(tag, QStringLiteral("d"))));
         } else if (tag.startsWith(QLatin1String("rect"))) {
             const double x = attrNum(tag, QStringLiteral("x"), 0.0);
             const double y = attrNum(tag, QStringLiteral("y"), 0.0);
@@ -414,16 +424,16 @@ QPainterPath parse(const QString &fragment)
                 continue;
             }
             if (rx > 0.0) {
-                out.addRoundedRect(QRectF(x, y, w, h), rx, rx);
+                target.addRoundedRect(QRectF(x, y, w, h), rx, rx);
             } else {
-                out.addRect(QRectF(x, y, w, h));
+                target.addRect(QRectF(x, y, w, h));
             }
         } else if (tag.startsWith(QLatin1String("circle"))) {
             const double cx = attrNum(tag, QStringLiteral("cx"), 0.0);
             const double cy = attrNum(tag, QStringLiteral("cy"), 0.0);
             const double r = attrNum(tag, QStringLiteral("r"), 0.0);
             if (r > 0.0) {
-                out.addEllipse(QPointF(cx, cy), r, r);
+                target.addEllipse(QPointF(cx, cy), r, r);
             }
         } else if (tag.startsWith(QLatin1String("ellipse"))) {
             const double cx = attrNum(tag, QStringLiteral("cx"), 0.0);
@@ -431,11 +441,9 @@ QPainterPath parse(const QString &fragment)
             const double rx = attrNum(tag, QStringLiteral("rx"), 0.0);
             const double ry = attrNum(tag, QStringLiteral("ry"), 0.0);
             if (rx > 0.0 && ry > 0.0) {
-                out.addEllipse(QPointF(cx, cy), rx, ry);
+                target.addEllipse(QPointF(cx, cy), rx, ry);
             }
         }
-        // fill="currentColor" 的填充型图标（如 app.js 的 auto）不在当前图标表里，
-        // 出现时按描边处理即可——不会画错，只是少填一块。
     }
     return out;
 }

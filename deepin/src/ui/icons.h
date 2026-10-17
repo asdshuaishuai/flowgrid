@@ -1,14 +1,15 @@
-// 图标集：直接取自 design/unified/app.js 的 P 表，逐条照搬，不重画。
+// 图标集：DDE 风格自绘的一枚一套 SVG path。
 //
-// 设计稿把图标从上一版的 emoji/字符统一成「24 网格 + 1.75 描边 + 圆头圆角」
-// 的一套 SVG，并要求四个平台同一套。因此这里不做重绘，只把 path 数据搬进
-// C++，运行时包成 QIcon——这样 deepin 端的图标与设计稿逐像素一致，
-// 也不会引入 DTK 主题图标里另一套风格。
+// 造型规矩写在 icons.cpp 的表头上，简短版：圆角优先、「淡色块打底 + 实描边
+// 压住」两层、内部从简（有几枚会缩到 12px）。不取 DTK 主题图标——那是另一套
+// 视觉语言，和本项目的圆角卡片语汇不搭；也不走通用 Web 图标库，那套纯线性
+// 在深色浮板上整排发虚。
 #ifndef FLOWGRID_ICONS_H
 #define FLOWGRID_ICONS_H
 
 #include <QIcon>
 #include <QString>
+#include <QStringList>
 
 namespace fg::icons {
 
@@ -16,8 +17,12 @@ namespace fg::icons {
 // 内部按 2x 渲染再交给 Qt 缩放，避免高分屏下描边发虚。
 QIcon icon(const QString &name, int size, const QColor &color);
 
-// 只取本轮三块界面用到的图标；其余（pairing/keymap/files 等屏）后续按需补。
+// 图标是否存在。调用方给的图标名不在表里时它会静默返回空 QIcon，界面上就
+// 是一块什么都没有的方块——排查这类问题时先查这里。
 bool exists(const QString &name);
+
+// 全部图标名，按字母序。给 --snapshot 的图标总览图用。
+QStringList names();
 
 } // namespace fg::icons
 

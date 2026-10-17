@@ -20,13 +20,18 @@
 #include "ui/pairingpanel.h"
 #include "ui/settingspanel.h"
 #include "ui/traypopup.h"
+#include "ui/icons.h"
 #include "ui/widgets.h"
 
 #include <DApplication>
 #include <DGuiApplicationHelper>
 #include <DPlatformTheme>
 
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QVBoxLayout>
 #include <QCommandLineOption>
+#include <QGridLayout>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFileDialog>
@@ -125,6 +130,8 @@ QIcon appIcon()
 }
 
 } // namespace
+
+static QWidget *buildIconSheet();
 
 int main(int argc, char *argv[])
 {
@@ -333,6 +340,19 @@ int main(int argc, char *argv[])
             shot(g_clipboard, QStringLiteral("clipboard"));
             shot(g_files, QStringLiteral("files"));
 
+            // 图标总览：图标集是一整套造型语言，靠逐屏截图是审不完的——
+            // 一屏里往往只出现三五枚，其余的错了也没人看得见。这里把所有图标
+            // 按 16 / 13 / 10px 三个实际使用尺寸排成一张，明暗各出一张。
+            if (QWidget *sheet = buildIconSheet()) {
+                sheet->setAttribute(Qt::WA_DontShowOnScreen, true);
+                sheet->ensurePolished();
+                const QString sheetPath = QStringLiteral("%1-icons.png").arg(base);
+                sheet->grab().save(sheetPath);
+                qCInfo(lcApp) << "snapshot ->" << sheetPath
+                              << sheet->width() << "x" << sheet->height();
+                sheet->deleteLater();
+            }
+
             // Toast 是独立顶层窗，上面的 shot(g_*) 全都抓不到它。它自己出过一次
             // 「药丸被阴影内缩压没」的版（底色等于没画、文字被裁半截），浮板截图
             // 又照不到，所以单独出一张。
@@ -362,4 +382,71 @@ int main(int argc, char *argv[])
     }
 
     return app.exec();
+}
+
+// 图标总览图：每行一枚图标，同一枚按 16 / 13 / 10px 排三遍，外加名字。
+// 三个尺寸都取自真实调用点——列表行首 16、折叠区头 16、键位映射 13、页脚 14、
+// 空态 12、提示条 14 的下限落在 10 附近，再小就只剩形状没有细节了。
+static QWidget *buildIconSheet()
+{
+    const fg::Palette &p = fg::Theme::instance().palette();
+    auto *sheet = new QWidget;
+    // 必须是不透明底：透明 widget 上 grab 出来的文字会被次像素抗锯齿糊成
+    // 满屏横条（第一版就把整张总览图毁在这上面）。
+    sheet->setAutoFillBackground(true);
+    QPalette qp = sheet->palette();
+    qp.setColor(QPalette::Window, p.surface);
+    qp.setColor(QPalette::WindowText, p.text2);
+    sheet->setPalette(qp);
+
+    auto *root = new QVBoxLayout(sheet);
+    root->setContentsMargins(16, 16, 16, 16);
+    root->setSpacing(8);
+
+    const QStringList list = fg::icons::names();
+    constexpr int kCols = 6;
+    for (int i = 0; i < list.size(); i += kCols) {
+        auto *row = new QHBoxLayout;
+        row->setSpacing(12);
+        for (int c = 0; c < kCols; ++c) {
+            const int idx = i + c;
+            if (idx >= list.size()) {
+                break;
+            }
+            auto *cell = new QWidget(sheet);
+            auto *col = new QVBoxLayout(cell);
+            col->setContentsMargins(0, 0, 0, 0);
+            col->setSpacing(2);
+            auto *icons = new QHBoxLayout;
+            icons->setSpacing(6);
+            icons->setContentsMargins(0, 0, 0, 0);
+            for (int s : {16, 13, 10}) {
+                auto *box = new QWidget(cell);
+                auto *bl = new QHBoxLayout(box);
+                bl->setContentsMargins(0, 0, 0, 0);
+                bl->setAlignment(Qt::AlignCenter);
+                auto *lab = new QLabel(box);
+                lab->setFixedSize(s, s);
+                lab->setPixmap(fg::icons::icon(list.at(idx), s, p.text2).pixmap(s, s));
+                bl->addWidget(lab);
+                icons->addWidget(box);
+            }
+            col->addLayout(icons);
+            auto *name = new QLabel(list.at(idx), cell);
+            QFont nf = QApplication::font();
+            nf.setPixelSize(10);
+            name->setFont(nf);
+            {
+                QColor c = p.text3;
+                name->setStyleSheet(QStringLiteral("color:%1")
+                                        .arg(c.alpha() == 255 ? c.name(QColor::HexRgb)
+                                                              : c.name(QColor::HexArgb)));
+            }
+            name->setAlignment(Qt::AlignCenter);
+            col->addWidget(name);
+            row->addWidget(cell);
+        }
+        root->addLayout(row);
+    }
+    return sheet;
 }
