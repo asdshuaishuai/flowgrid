@@ -22,7 +22,7 @@
           "name": "切换热键", "description": "按住后按数字键直切（1=Ctrl，2=Alt）" },
 
         { "key": "sync/clipboard_enabled", "type": "b", "default": true,
-          "name": "剪贴板同步", "description": "文本与图片，单条上限 8 MB" },
+          "name": "剪贴板同步", "description": "文本与图片，单条上限 63,240 B（协议 §5.3）" },
         { "key": "sync/clipboard_history", "type": "i", "default": 50,
           "name": "历史条数", "description": "超出后按时间淘汰" },
         { "key": "sync/clipboard_images", "type": "b", "default": true,

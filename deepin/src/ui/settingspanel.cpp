@@ -259,7 +259,7 @@ QWidget *SettingsPanel::buildSyncGroup()
     });
 
     return groupBox(tr("跨端同步"),
-           {new ListRow(tr("跨端同步"), tr("文本与图片，单条上限 8 MB"), clipSync_, this),
+           {new ListRow(tr("跨端同步"), tr("文本与图片，单条上限 63,240 B"), clipSync_, this),
             new ListRow(tr("历史条数"), tr("超出后按时间淘汰"), clipHistory_, this),
             new ListRow(tr("排除应用"), tr("密码管理器等窗口内不采集"),
                         unwiredButton(tr("3 个"), tr("排除应用列表"), this), this),
