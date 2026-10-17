@@ -274,6 +274,13 @@ int main(int argc, char *argv[])
         qCWarning(lcApp) << "系统托盘不可用，托盘浮层无法唤出";
     }
 
+    // 托盘底部那几行快捷键提示（Ctrl+1/2/3 切设备、Ctrl+K 键位映射、Ctrl+,
+    // 设置、Ctrl+Q 退出）是设计稿 ui.css .tray__kbd 的一部分，界面照设计留着；
+    // 但客户端一处全局快捷键都还没注册，这些提示目前按下去不会有反应。
+    // 全局热键要 X11 抓键或独立热键服务，不在 UI 范围内，先把边界写清楚，
+    // 别让「界面上写着 Ctrl+Q」被当成已经能用。
+    qCInfo(lcApp) << "托盘快捷键提示为设计稿占位，尚未注册全局热键（Ctrl+1/2/3、K、,、Q 均未生效）";
+
     // 截图模式：依次渲染八块界面并退出，供无头环境验收。
     if (parser.isSet(snapshotOpt)) {
         const QString base = parser.value(snapshotOpt);

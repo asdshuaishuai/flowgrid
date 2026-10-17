@@ -278,14 +278,22 @@ void ToggleSwitch::paintEvent(QPaintEvent *)
 // ── LatencyChip ───────────────────────────────────────────────────────
 LatencyChip::LatencyChip(QWidget *parent) : QWidget(parent)
 {
-    setFixedHeight(tokens::kStatusPillHeight + 8);
+    // ui.css .lat 是 padding 4px 8px + t-12 行高，撑出来约 26px。之前按
+    // status-pill 的高度 +8 取成 28px，整排设备的芯片比稿子高一圈。
+    setFixedHeight(QFontMetrics(uiFont(tokens::kFont12, QFont::Bold)).height() + 8);
     connect(&Theme::instance(), &Theme::changed, this, [this] { update(); });
 }
 
 void LatencyChip::setLatency(double ms, bool online)
 {
     quality_ = Theme::qualityOf(ms, online);
-    text_ = online ? QStringLiteral("%1ms").arg(ms, 0, 'f', 1) : QStringLiteral("—");
+    const QString next = online ? QStringLiteral("%1ms").arg(ms, 0, 'f', 1)
+                                : QStringLiteral("—");
+    if (next == text_) {
+        return;
+    }
+    text_ = next;
+    updateGeometry();
     update();
 }
 
@@ -296,7 +304,13 @@ QString LatencyChip::text() const
 
 QSize LatencyChip::sizeHint() const
 {
-    return {tokens::kLatChipMinWidth, height()};
+    // .lat 是 min-width:56px + padding 0 8px，不是定宽：读数长一两位（「123.4ms」）
+    // 时芯片要跟着长，写死 56 会把数字裁掉半个。
+    const int w = qMax(tokens::kLatChipMinWidth,
+                       QFontMetrics(uiFont(tokens::kFont12, QFont::Bold))
+                           .horizontalAdvance(text_)
+                           + tokens::kS2 * 2);
+    return {w, height()};
 }
 
 void LatencyChip::paintEvent(QPaintEvent *)
