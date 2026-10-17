@@ -943,13 +943,34 @@ func fg_identify_response_encode(status C.uint8_t, platform C.uint8_t, caps C.ui
 // 自己的定时器里取。这既省掉了函数指针编组这层脆弱机制，也和客户端本来就要
 // 跑的采样定时器对齐。
 
-// clipSession 包装 ClipboardSession，并暂存一次重组完成的剪贴板，
-// 供 fg_clipboard_take_pending 取走。
+// clipInboxMax 是暂存上限。客户端「同步历史」最多留 200 条（设置里的档位是
+// 50/100/200），再多它也展示不出来；到顶时丢最旧的一条，保住「最近」。单条
+// 上限 63,240 B，最坏是十几 MB 的短时驻留，而 C 侧一开面板就会把队列取空。
+const clipInboxMax = 200
+
+// clipSession 包装 ClipboardSession，并把重组完成的剪贴板按到达顺序排队，
+// 供 fg_clipboard_take_pending 逐条取走——客户端那边是一个 while 循环。
+//
+// 早先这里只有一个槽位（新的直接盖掉旧的），于是面板没开着的时候，除最后一条
+// 以外全部的下行剪贴板都无声消失了，「同步历史」等于只留一条。
 type clipSession struct {
 	sess *protocol.ClipboardSession
 
 	mu      sync.Mutex
-	pending *protocol.Clipboard
+	pending []protocol.Clipboard
+}
+
+// popPending 取走最早的一条；调用方必须已持锁。取出后要清掉尾槽——只把切片
+// 前移的话，被取走的那个载荷还挂在下层数组里，内存收不回来。
+func (cs *clipSession) popPending() (protocol.Clipboard, bool) {
+	if len(cs.pending) == 0 {
+		return protocol.Clipboard{}, false
+	}
+	c := cs.pending[0]
+	copy(cs.pending, cs.pending[1:])
+	cs.pending[len(cs.pending)-1] = protocol.Clipboard{}
+	cs.pending = cs.pending[:len(cs.pending)-1]
+	return c, true
 }
 
 // send seam：会话层把「帧类型 + 载荷」交给 emitFrame，这里入队；C 侧用
@@ -1049,7 +1070,10 @@ func fg_clipboard_session_new() uintptr {
 	cs := &clipSession{sess: protocol.NewClipboardSession(emitFrame)}
 	cs.sess.OnClipboard = func(c protocol.Clipboard) {
 		cs.mu.Lock()
-		cs.pending = &c
+		if len(cs.pending) >= clipInboxMax {
+			cs.popPending() // 队列满：先腾掉最旧的一条
+		}
+		cs.pending = append(cs.pending, c)
 		cs.mu.Unlock()
 	}
 	return clipSessions.put(cs)
@@ -1096,22 +1120,35 @@ func fg_clipboard_handle_frame(handle uintptr, payload *C.uint8_t, n C.size_t) C
 //
 //export fg_clipboard_take_pending
 func fg_clipboard_take_pending(handle uintptr, outMime **C.uint8_t, outMimeLen *C.size_t, outData **C.uint8_t, outDataLen *C.size_t) C.int {
-	cs, ok := clipSessions.get(handle)
+	c, ok := takePendingClipboard(handle)
 	if !ok {
 		return 0
 	}
-	cs.mu.Lock()
-	c := cs.pending
-	cs.pending = nil
-	cs.mu.Unlock()
-	if c == nil {
-		return 0
-	}
-	*outMimeLen = 0
-	*outDataLen = 0
-	*outMime = cBuffer([]byte(c.MIMEType))
+	mime := []byte(c.MIMEType)
+	// 长度必须跟着缓冲一起交出去：只把 out*Len 留 0 的话，调用方拿到的指针
+	// 长度为零，每一份入站剪贴板都会被读成「空 MIME + 空数据」（C++ 侧 GoBuffer
+	// 就按这个长度切片），下面 fg_file_receiver_* 几个同款出参都是照 len 填的。
+	*outMimeLen = C.size_t(len(mime))
+	*outDataLen = C.size_t(len(c.Data))
+	*outMime = cBuffer(mime)
 	*outData = cBuffer(c.Data)
 	return 1
+}
+
+// takePendingClipboard 取走队首那条待取剪贴板，ok=false 表示队列已空。
+//
+// 抽成不碰 C 指针的普通函数（同 pollSessionOut 的理由）：cgo 包里的 _test.go
+// 不能再 import "C"，出参编组这一层在 Go 侧测不到，而「队列空 / 到达顺序 /
+// 满时丢最旧」这三条语义全在这里，得测得住。
+func takePendingClipboard(handle uintptr) (protocol.Clipboard, bool) {
+	cs, ok := clipSessions.get(handle)
+	if !ok {
+		return protocol.Clipboard{}, false
+	}
+	cs.mu.Lock()
+	c, ok := cs.popPending()
+	cs.mu.Unlock()
+	return c, ok
 }
 
 var (
