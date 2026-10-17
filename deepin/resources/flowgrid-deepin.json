@@ -25,6 +25,12 @@
           "name": "剪贴板同步", "description": "文本与图片，单条上限 8 MB" },
         { "key": "sync/clipboard_history", "type": "i", "default": 50,
           "name": "历史条数", "description": "超出后按时间淘汰" },
+        { "key": "sync/clipboard_images", "type": "b", "default": true,
+          "name": "同步图片", "description": "关闭后入站的 image/* 条目直接丢弃" },
+        { "key": "sync/clipboard_ignore_passwords", "type": "b", "default": true,
+          "name": "忽略密码管理器内容", "description": "需协议提供来源应用标识后才生效" },
+        { "key": "sync/clipboard_auto_write", "type": "b", "default": false,
+          "name": "接收后自动写入本地", "description": "入站后自动写入本机剪贴板" },
         { "key": "sync/file_transfer_enabled", "type": "b", "default": true,
           "name": "文件传输", "description": "拖放或选择文件发送" },
 

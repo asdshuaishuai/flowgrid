@@ -55,6 +55,16 @@ public:
     void setClipboardSync(bool on);
     int clipboardHistory() const;
     void setClipboardHistory(int count);
+    // 关闭后入站的 image/* 条目直接丢弃，不进历史（客户端侧过滤）。
+    bool clipboardImages() const;
+    void setClipboardImages(bool on);
+    // 协议帧不带来源应用标识（PROTOCOL.md §5.3 只有 MIME + 载荷），所以这一项
+    // 目前只落盘不生效；剪贴板屏那一行如实标注了「需协议支持」。
+    bool clipboardIgnorePasswords() const;
+    void setClipboardIgnorePasswords(bool on);
+    // 打开后入站条目自动写入本机剪贴板。
+    bool clipboardAutoWrite() const;
+    void setClipboardAutoWrite(bool on);
     bool fileTransfer() const;
     void setFileTransfer(bool on);
 

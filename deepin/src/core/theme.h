@@ -66,6 +66,7 @@ struct Palette {
     QColor shadowPanel;
     QColor shadowTray;
     QColor shadowLift;
+    QColor shadowBar;      // --shadow-bar：分段控件选中档等「压在面上」的浅浮起
 
     bool isDark = false;
 };

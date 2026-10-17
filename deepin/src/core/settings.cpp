@@ -20,6 +20,9 @@ constexpr auto kKeyEdgeThreshold = "input/edge_threshold";
 constexpr auto kKeySwitchHotkey  = "input/switch_hotkey";
 constexpr auto kKeyClipSync      = "sync/clipboard_enabled";
 constexpr auto kKeyClipHistory   = "sync/clipboard_history";
+constexpr auto kKeyClipImages    = "sync/clipboard_images";
+constexpr auto kKeyClipIgnorePwd = "sync/clipboard_ignore_passwords";
+constexpr auto kKeyClipAutoWrite = "sync/clipboard_auto_write";
 constexpr auto kKeyFileTransfer  = "sync/file_transfer_enabled";
 constexpr auto kKeyE2E           = "security/e2e_encryption";
 constexpr auto kKeyConfirm       = "security/require_confirmation";
@@ -178,6 +181,36 @@ int Settings::clipboardHistory() const
 void Settings::setClipboardHistory(int count)
 {
     write(QLatin1String(kKeyClipHistory), count);
+}
+
+bool Settings::clipboardImages() const
+{
+    return read(QLatin1String(kKeyClipImages), true).toBool();
+}
+
+void Settings::setClipboardImages(bool on)
+{
+    write(QLatin1String(kKeyClipImages), on);
+}
+
+bool Settings::clipboardIgnorePasswords() const
+{
+    return read(QLatin1String(kKeyClipIgnorePwd), true).toBool();
+}
+
+void Settings::setClipboardIgnorePasswords(bool on)
+{
+    write(QLatin1String(kKeyClipIgnorePwd), on);
+}
+
+bool Settings::clipboardAutoWrite() const
+{
+    return read(QLatin1String(kKeyClipAutoWrite), false).toBool();
+}
+
+void Settings::setClipboardAutoWrite(bool on)
+{
+    write(QLatin1String(kKeyClipAutoWrite), on);
 }
 
 bool Settings::fileTransfer() const

@@ -31,33 +31,6 @@ QString css(const QColor &c)
     return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
 }
 
-// 设计稿 ui.css .banner（warn 变体）：warn-soft 底 + warn 文字 + 同族描边。
-QWidget *warnBanner(const QString &text, QWidget *parent)
-{
-    const Palette &p = Theme::instance().palette();
-    QColor line = p.warn.solid;
-    line.setAlphaF(0.45);
-    auto *w = new QWidget(parent);
-    auto *hl = new QHBoxLayout(w);
-    hl->setContentsMargins(10, tokens::kS3, tokens::kS3, 10);
-    hl->setSpacing(tokens::kS2);
-    auto *icon = new QLabel(w);
-    icon->setFixedSize(14, 14);
-    icon->setPixmap(icons::icon(QStringLiteral("warn"), 14, p.warn.text).pixmap(14, 14));
-    auto *label = new QLabel(text, w);
-    label->setWordWrap(true);
-    label->setFont(uiFont(tokens::kFont12));
-    label->setStyleSheet(QStringLiteral("color:%1").arg(css(p.warn.text)));
-    hl->addWidget(icon, 0, Qt::AlignTop);
-    hl->addWidget(label, 1);
-    applyBoxStyle(w,
-                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(line))
-                      .arg(tokens::kRadiusCard)
-                      .arg(css(p.warn.soft)));
-    return w;
-}
-
 // 规则编辑器未接通的动作统一记一条日志，不做成点了没反应的按钮。
 FgButton *unwiredButton(const QString &text, const QString &iconName, const QString &what,
                         QWidget *parent, bool accent, const std::function<void()> &onClick)
@@ -69,7 +42,7 @@ FgButton *unwiredButton(const QString &text, const QString &iconName, const QStr
         btn->setIcon(iconName);
     }
     QObject::connect(btn, &FgButton::clicked, parent, [what, onClick] {
-        qCInfo(lcKeymap) << what << QLatin1String("尚未接通，规则表仍由 YAML 提供");
+        qCInfo(lcKeymap) << what << QStringLiteral("尚未接通，规则表仍由 YAML 提供");
         if (onClick) {
             onClick();
         }
@@ -125,8 +98,8 @@ KeymapPanel::KeymapPanel(QWidget *parent) : Panel(tr("键位映射"), parent)
 
     body->addWidget(buildGlobalSection());
     body->addWidget(buildAppSection());
-    body->addWidget(warnBanner(tr("「Win → ⌥」与系统聚焦快捷键冲突，仅在非全屏窗口下生效。"),
-                               this));
+    body->addWidget(banner(tr("「Win → ⌥」与系统聚焦快捷键冲突，仅在非全屏窗口下生效。"), this,
+                           BannerVariant::Warn));
     body->addWidget(buildAdvancedSection());
     setFooterWidget(buildFooter());
 
@@ -239,14 +212,14 @@ QWidget *KeymapPanel::buildFooter()
     auto *reset = new FgButton(tr("恢复默认"), FgButton::Variant::Secondary, true, foot);
     QObject::connect(reset, &FgButton::clicked, this, [this] {
         // 规则编辑器未接通，恢复默认要连带写回 YAML，先把边界说清楚。
-        qCInfo(lcKeymap) << tr("恢复默认映射") << QLatin1String("尚未接通");
+        qCInfo(lcKeymap) << tr("恢复默认映射") << QStringLiteral("尚未接通");
         Q_EMIT editRequested();
     });
     hl->addWidget(reset);
 
     auto *save = new FgButton(tr("保存"), FgButton::Variant::Accent, true, foot);
     QObject::connect(save, &FgButton::clicked, this, [this] {
-        qCInfo(lcKeymap) << tr("保存映射") << QLatin1String("尚未接通");
+        qCInfo(lcKeymap) << tr("保存映射") << QStringLiteral("尚未接通");
         Q_EMIT editRequested();
         hide();
     });
@@ -271,13 +244,7 @@ void KeymapPanel::rebuildRows()
     if (mappingLayout_ == nullptr) {
         return;
     }
-    while (mappingLayout_->count() > 0) {
-        QLayoutItem *item = mappingLayout_->takeAt(0);
-        if (QWidget *w = item->widget()) {
-            w->deleteLater();
-        }
-        delete item;
-    }
+    clearLayout(mappingLayout_);
     if (rules_.isEmpty()) {
         const Palette &p = Theme::instance().palette();
         auto *empty = new QLabel(tr("尚无规则"), this);

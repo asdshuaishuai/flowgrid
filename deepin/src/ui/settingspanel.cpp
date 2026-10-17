@@ -83,46 +83,6 @@ QWidget *groupBox(const QString &title, const QList<QWidget *> &rows, QWidget *p
     return box;
 }
 
-// 设计稿 ui.css .banner：padding 10/12、1px 描边、r-card 圆角、浅底 + 同族文字色。
-// info 用 accent 那一族（accentLine / accentSoft / accentText 三个角色都有）；
-// warn 那一族 Palette 里只有 solid / soft / text，没有 line，描边按 solid 压一档
-// 透明度派生——宁可从语义角色派生，也不写死主题色。
-QWidget *banner(const QString &text, bool warning, QWidget *parent)
-{
-    const Palette &p = Theme::instance().palette();
-    QColor line = p.accentLine;
-    QColor bg = p.accentSoft;
-    QColor fg = p.accentText;
-    QString iconName = QStringLiteral("info");
-    if (warning) {
-        line = p.warn.solid;
-        line.setAlphaF(0.45);
-        bg = p.warn.soft;
-        fg = p.warn.text;
-        iconName = QStringLiteral("warn");
-    }
-
-    auto *w = new QWidget(parent);
-    auto *hl = new QHBoxLayout(w);
-    hl->setContentsMargins(10, tokens::kS3, tokens::kS3, 10);
-    hl->setSpacing(tokens::kS2);
-    auto *icon = new QLabel(w);
-    icon->setFixedSize(14, 14);
-    icon->setPixmap(icons::icon(iconName, 14, fg).pixmap(14, 14));
-    auto *label = new QLabel(text, w);
-    label->setWordWrap(true);
-    label->setFont(uiFont(tokens::kFont12));
-    label->setStyleSheet(QStringLiteral("color:%1").arg(css(fg)));
-    hl->addWidget(icon, 0, Qt::AlignTop);
-    hl->addWidget(label, 1);
-    applyBoxStyle(w,
-                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(line))
-                      .arg(tokens::kRadiusCard)
-                      .arg(css(bg)));
-    return w;
-}
-
 // ListRow 的 trailing 是单个控件，但有两行的右侧是「输入 + 单位」或
 // 「键帽 + 输入」这种组合，ListRow 装不下整个行，只能另包一层当控件用。
 QWidget *makeControlRow(QWidget *parent, const QList<QWidget *> &parts)
@@ -150,7 +110,7 @@ FgButton *unwiredButton(const QString &text, const QString &what, QWidget *paren
 {
     auto *btn = new FgButton(text, FgButton::Variant::Secondary, true, parent);
     QObject::connect(btn, &FgButton::clicked, parent, [what] {
-        qCInfo(lcSettingsPanel) << what << QLatin1String("尚未接通");
+        qCInfo(lcSettingsPanel) << what << QStringLiteral("尚未接通");
     });
     return btn;
 }
@@ -163,7 +123,8 @@ SettingsPanel::SettingsPanel(QWidget *parent) : Panel(tr("设置"), parent)
     auto &settings = Settings::instance();
 
     body->addWidget(
-        banner(tr("设置即时生效并同步到全部已配对设备，无需重启。"), false, this));
+        banner(tr("设置即时生效并同步到全部已配对设备，无需重启。"), this,
+               BannerVariant::Info));
     body->addWidget(buildConnectionGroup());
     body->addWidget(buildInputGroup());
     body->addWidget(buildSyncGroup());
@@ -171,7 +132,7 @@ SettingsPanel::SettingsPanel(QWidget *parent) : Panel(tr("设置"), parent)
     // 设计稿把这条警告放在安全组之后：它解释的正是上一行开关的后果。
     body->addWidget(banner(tr("关闭「新设备需确认」会让同一网络内的任意设备发起配对请求，"
                               "仅在可信网络中临时使用。"),
-                           true, this));
+                           this, BannerVariant::Warn));
     setFooterWidget(buildFooter());
 
     QObject::connect(&settings, &Settings::changed, this, &SettingsPanel::reload);

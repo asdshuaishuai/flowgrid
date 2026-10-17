@@ -38,32 +38,6 @@ QString signalText(int level)
     }
 }
 
-// 设计稿 ui.css .banner：padding 10/12、1px accent-line 描边、r-card 圆角、
-// accent-soft 浅底 + accent-text 文字。
-QWidget *banner(const QString &text, QWidget *parent)
-{
-    const Palette &p = Theme::instance().palette();
-    auto *w = new QWidget(parent);
-    auto *hl = new QHBoxLayout(w);
-    hl->setContentsMargins(10, tokens::kS3, tokens::kS3, 10);
-    hl->setSpacing(tokens::kS2);
-    auto *icon = new QLabel(w);
-    icon->setFixedSize(14, 14);
-    icon->setPixmap(icons::icon(QStringLiteral("info"), 14, p.accentText).pixmap(14, 14));
-    auto *label = new QLabel(text, w);
-    label->setWordWrap(true);
-    label->setFont(uiFont(tokens::kFont12));
-    label->setStyleSheet(QStringLiteral("color:%1").arg(css(p.accentText)));
-    hl->addWidget(icon, 0, Qt::AlignTop);
-    hl->addWidget(label, 1);
-    applyBoxStyle(w,
-                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(p.accentLine))
-                      .arg(tokens::kRadiusCard)
-                      .arg(css(p.accentSoft)));
-    return w;
-}
-
 // 还没接通的动作一律明确记日志，不做成点了没反应的按钮。
 FgButton *unwiredButton(const QString &text, const QString &iconName, const QString &what,
                         QWidget *parent, bool accent)
@@ -75,7 +49,7 @@ FgButton *unwiredButton(const QString &text, const QString &iconName, const QStr
         btn->setIcon(iconName);
     }
     QObject::connect(btn, &FgButton::clicked, parent, [what] {
-        qCInfo(lcPairing) << what << QLatin1String("尚未接通");
+        qCInfo(lcPairing) << what << QStringLiteral("尚未接通");
     });
     return btn;
 }
@@ -88,7 +62,8 @@ PairingPanel::PairingPanel(QWidget *parent) : Panel(tr("添加设备"), parent)
 
     body->addWidget(buildSteps());
     body->addWidget(
-        banner(tr("在新设备上打开 FlowGrid → 添加设备，输入下面的一次性配对码。"), this));
+        banner(tr("在新设备上打开 FlowGrid → 添加设备，输入下面的一次性配对码。"), this,
+             BannerVariant::Info));
     body->addWidget(buildPairCode());
     body->addWidget(buildDeviceList());
     body->addWidget(buildManualSection());
@@ -334,13 +309,7 @@ void PairingPanel::rebuildDevices()
     if (listLayout_ == nullptr) {
         return;
     }
-    while (listLayout_->count() > 0) {
-        QLayoutItem *item = listLayout_->takeAt(0);
-        if (QWidget *w = item->widget()) {
-            w->deleteLater();
-        }
-        delete item;
-    }
+    clearLayout(listLayout_);
     const Palette &p = Theme::instance().palette();
     auto *host = listLayout_->parentWidget();
 

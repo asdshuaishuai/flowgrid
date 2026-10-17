@@ -5,10 +5,15 @@
 #include "icons.h"
 #include "widgets.h"
 
+#include <QLoggingCategory>
+
 #include <QApplication>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QVBoxLayout>
+
+Q_LOGGING_CATEGORY(lcClipboard, "flowgrid.clipboard")
 
 namespace fg {
 namespace {
@@ -30,28 +35,50 @@ QString css(const QColor &c)
     return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
 }
 
-QString mimeIcon(const QString &mime)
+// 条目归类：分段控件的五个档位就是靠它过滤的。协议帧只给 MIME + 载荷
+// （PROTOCOL.md §5.3），所以分类只能从这两样推，推不出就归「文本」，
+// 不去猜来源应用的语义。
+QString kindOf(const QString &mime, const QByteArray &raw)
 {
     if (mime.startsWith(QLatin1String("image/"))) {
         return QStringLiteral("image");
     }
+    if (mime == QLatin1String("text/uri-list")) {
+        return QStringLiteral("link");
+    }
     if (mime.contains(QLatin1String("html"))) {
         return QStringLiteral("code");
     }
-    if (mime.startsWith(QLatin1String("text/"))) {
-        return QStringLiteral("type");
+    const QString text = QString::fromUtf8(raw).trimmed();
+    if (text.startsWith(QLatin1String("http://"))
+        || text.startsWith(QLatin1String("https://"))) {
+        return QStringLiteral("link");
+    }
+    return QStringLiteral("text");
+}
+
+QString iconOfKind(const QString &kind)
+{
+    if (kind == QLatin1String("image")) {
+        return QStringLiteral("image");
+    }
+    if (kind == QLatin1String("code")) {
+        return QStringLiteral("code");
+    }
+    if (kind == QLatin1String("link")) {
+        return QStringLiteral("link");
     }
     return QStringLiteral("type");
 }
 
-QString previewOf(const QByteArray &raw)
+// 列表主文本压成一行：换行会让 ClipRow 的双行结构失效。
+QString oneLine(const QString &text)
 {
-    QString text = QString::fromUtf8(raw);
-    text.replace(QLatin1Char('\n'), QLatin1Char(' '));
-    if (text.size() > 80) {
-        text = text.left(78) + QStringLiteral("…");
-    }
-    return text;
+    QString s = text;
+    s.replace(QLatin1Char('\n'), QLatin1Char(' '));
+    s.replace(QLatin1Char('\t'), QLatin1Char(' '));
+    s = s.simplified();
+    return s;
 }
 
 QString agoText(int secs)
@@ -65,6 +92,45 @@ QString agoText(int secs)
     return QStringLiteral("%1h").arg(secs / 3600);
 }
 
+QString humanSize(qint64 bytes)
+{
+    if (bytes < 1024) {
+        return QStringLiteral("%1 B").arg(bytes);
+    }
+    if (bytes < 1024 * 1024) {
+        return QStringLiteral("%1 KB").arg(bytes / 1024.0, 0, 'f', bytes % 1024 == 0 ? 0 : 1);
+    }
+    return QStringLiteral("%1 MB").arg(bytes / (1024.0 * 1024.0), 0, 'f', 1);
+}
+
+// 「标签 + 开关」一行：ui.css .row.between + .switch。
+QWidget *switchRow(const QString &label, bool checked, const QString &hint, QWidget *parent)
+{
+    const Palette &p = Theme::instance().palette();
+    auto *w = new QWidget(parent);
+    auto *hl = new QHBoxLayout(w);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->setSpacing(tokens::kS2);
+    auto *col = new QVBoxLayout;
+    col->setContentsMargins(0, 0, 0, 0);
+    col->setSpacing(2);
+    auto *text = new QLabel(label, w);
+    text->setFont(uiFont(tokens::kFont12));
+    col->addWidget(text);
+    if (!hint.isEmpty()) {
+        auto *hintLabel = new QLabel(hint, w);
+        hintLabel->setFont(uiFont(tokens::kFont11));
+        hintLabel->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        hintLabel->setWordWrap(true);
+        col->addWidget(hintLabel);
+    }
+    hl->addLayout(col, 1);
+    auto *toggle = new ToggleSwitch(w);
+    toggle->setChecked(checked);
+    hl->addWidget(toggle, 0, Qt::AlignVCenter);
+    return w;
+}
+
 } // namespace
 
 ClipboardPanel::ClipboardPanel(QWidget *parent) : Panel(tr("剪贴板"), parent)
@@ -76,10 +142,10 @@ ClipboardPanel::ClipboardPanel(QWidget *parent) : Panel(tr("剪贴板"), parent)
     {
         auto *pill = new QWidget(this);
         auto *pl = new QHBoxLayout(pill);
-        pl->setContentsMargins(8, 0, 8, 0);
+        pl->setContentsMargins(tokens::kStatusPillHoriPad, 0, tokens::kStatusPillHoriPad, 0);
         pl->setSpacing(6);
         auto *dot = new StatusDot(pill);
-        dot->setPulsing(true);
+        dot->setPulsing(settings.clipboardSync());
         auto *label = new QLabel(settings.clipboardSync() ? tr("同步中") : tr("已关闭"), pill);
         label->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
         pl->addWidget(dot);
@@ -87,144 +153,252 @@ ClipboardPanel::ClipboardPanel(QWidget *parent) : Panel(tr("剪贴板"), parent)
         pill->setStyleSheet(QStringLiteral("background:%1;border-radius:10px")
                                 .arg(css(Theme::instance().palette().ok.soft)));
         setTitleBarWidget(pill);
+        pill_ = pill;
+        pillDot_ = dot;
+        pillLabel_ = label;
     }
 
     body->addWidget(buildCurrent());
+    body->addWidget(buildFilterRow());
     body->addWidget(buildHistory());
     body->addWidget(buildSettings());
     setFooterWidget(buildFooter());
 
+    QObject::connect(&settings, &Settings::changed, this, [this](const QString &key) {
+        if (key.startsWith(QLatin1String("sync/"))) {
+            refreshSyncState();
+        }
+    });
+    // 胶囊是本屏唯一直接写样式表的地方，明暗切换后不重刷就会留一个旧底色。
+    QObject::connect(&Theme::instance(), &Theme::changed, this, &ClipboardPanel::refreshSyncState);
+    refreshSyncState();
     reloadHistory();
 }
 
+// ── 当前剪贴板（设计稿 .preview：head / body / foot 三段）────────────────
 QWidget *ClipboardPanel::buildCurrent()
 {
     const Palette &p = Theme::instance().palette();
-    auto *box = new QWidget(this);
-    auto *vl = new QVBoxLayout(box);
+    auto *card = new QWidget(this);
+    auto *vl = new QVBoxLayout(card);
     vl->setContentsMargins(0, 0, 0, 0);
-    vl->setSpacing(tokens::kS2);
+    vl->setSpacing(0);
 
-    auto *title = new QLabel(tr("当前剪贴板"), box);
-    title->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-    title->setStyleSheet(
-        QStringLiteral("color:%1;text-transform:uppercase;letter-spacing:0.4px").arg(css(p.text3)));
-    vl->addWidget(title);
-
-    auto *card = new QWidget(box);
-    auto *hl = new QHBoxLayout(card);
-    hl->setContentsMargins(tokens::kS3, tokens::kS2, tokens::kS3, tokens::kS2);
+    // __head：surface 底 + 下 hairline，与 body 的 surface-2 底形成一条缝。
+    auto *head = new QWidget(card);
+    auto *hl = new QHBoxLayout(head);
+    hl->setContentsMargins(7, tokens::kS3, tokens::kS3, 7);
     hl->setSpacing(tokens::kS2);
-
-    auto *typeIcon = new QLabel(card);
-    typeIcon->setFixedSize(18, 18);
+    auto *typeIcon = new QLabel(head);
+    typeIcon->setFixedSize(tokens::kBadgeHeight, tokens::kBadgeHeight);
     typeIcon->setAlignment(Qt::AlignCenter);
     typeIcon->setPixmap(icons::icon(QStringLiteral("type"), 12, p.text2).pixmap(12, 12));
-    typeIcon->setStyleSheet(QStringLiteral("background:%1;border-radius:4px")
-                                .arg(css(p.surface3)));
-
-    auto *col = new QVBoxLayout;
-    col->setContentsMargins(0, 0, 0, 0);
-    col->setSpacing(2);
-    auto *mime = new QLabel(QStringLiteral("text/plain"), card);
-    mime->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-    auto *from = new QLabel(tr("来自 本机"), card);
+    applyBoxStyle(typeIcon,
+                  QStringLiteral("border-radius:4px;background:%1").arg(css(p.surface3)));
+    auto *title = new QLabel(tr("当前剪贴板"), head);
+    title->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
+    auto *mimeBadge = new Badge(QStringLiteral("text/plain"), Badge::Variant::Neutral, head);
+    hl->addWidget(typeIcon);
+    hl->addWidget(title);
+    hl->addWidget(mimeBadge);
+    hl->addStretch(1);
+    auto *from = new QLabel(tr("来自 本机"), head);
     from->setFont(uiFont(tokens::kFont11));
     from->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-    col->addWidget(mime);
-    col->addWidget(from);
+    hl->addWidget(from);
+    applyBoxStyle(head,
+                  QStringLiteral("background:%1;border-bottom:1px solid %2;"
+                                 "border-top-left-radius:%3px;border-top-right-radius:%3px")
+                      .arg(css(p.surface), css(p.hairline))
+                      .arg(tokens::kRadiusCard));
+    vl->addWidget(head);
 
-    hl->addWidget(typeIcon);
-    hl->addLayout(col);
-    hl->addStretch(1);
+    // __body：等宽字体原文，最多 3 行，超出省略——设计稿给的是 max-height 92
+    // 加滚动，浮板里再套一个滚动区会把整屏高度算错，所以改成按行截断。
+    auto *bodyBox = new QWidget(card);
+    auto *bl = new QVBoxLayout(bodyBox);
+    bl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
+    preview_ = new QLabel(tr("暂无剪贴板内容"), bodyBox);
+    preview_->setWordWrap(true);
+    preview_->setFont(uiMonoFont(tokens::kFont12));
+    preview_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
+    preview_->setMinimumHeight(3 * 16);
+    bl->addWidget(preview_);
+    applyBoxStyle(bodyBox, QStringLiteral("background:%1").arg(css(p.surface2)));
+    vl->addWidget(bodyBox);
 
-    auto *size = new QLabel(QStringLiteral("--"), card);
-    size->setFont(uiFont(tokens::kFont11));
-    size->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-    hl->addWidget(size);
-
-    applyBoxStyle(card,
-                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.surface)));
-    vl->addWidget(card);
-
-    auto *actions = new QWidget(box);
-    auto *al = new QHBoxLayout(actions);
-    al->setContentsMargins(0, 0, 0, 0);
-    al->setSpacing(tokens::kS2);
-    auto *write = new FgButton(tr("写入本地"), FgButton::Variant::Secondary, true, actions);
-    QObject::connect(write, &FgButton::clicked, this, [this] {
-        if (!history_.isEmpty()) {
-            Q_EMIT localWriteRequested(history_.first());
-        }
-    });
-    auto *push = new FgButton(tr("推送"), FgButton::Variant::Accent, true, actions);
-    QObject::connect(push, &FgButton::clicked, this, [this] {
-        if (history_.isEmpty()) {
+    // __foot：surface 底 + 上 hairline，左边讲这条载荷的规格，右边两个动作。
+    auto *foot = new QWidget(card);
+    auto *fl = new QHBoxLayout(foot);
+    fl->setContentsMargins(6, tokens::kS3, tokens::kS3, 6);
+    fl->setSpacing(tokens::kS2);
+    auto *info = new QLabel(foot);
+    info->setFixedSize(14, 14);
+    info->setPixmap(icons::icon(QStringLiteral("info"), 14, p.text3).pixmap(14, 14));
+    spec_ = new QLabel(tr("--"), foot);
+    spec_->setFont(uiFont(tokens::kFont11));
+    spec_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    fl->addWidget(info);
+    fl->addWidget(spec_);
+    fl->addStretch(1);
+    auto *write = new FgButton(tr("写入本地"), FgButton::Variant::Ghost, true, foot);
+    write->setIcon(QStringLiteral("copy"));
+    connect(write, &FgButton::clicked, this, [this] {
+        if (current_.raw.isEmpty()) {
             return;
         }
-        const ClipEntry &e = history_.first();
+        Q_EMIT localWriteRequested(current_);
+    });
+    auto *push = new FgButton(tr("推送"), FgButton::Variant::Secondary, true, foot);
+    push->setIcon(QStringLiteral("arrowRight"));
+    connect(push, &FgButton::clicked, this, [this] {
+        if (current_.raw.isEmpty()) {
+            return;
+        }
+        const ClipEntry &e = current_;
         // 真实发送：交给 Go 的 ClipboardSession 分段，UI 不碰帧结构。
         session_.send(e.mime.toUtf8(), e.raw);
         Q_EMIT pushRequested(e);
     });
-    al->addWidget(write);
-    al->addWidget(push);
-    al->addStretch(1);
-    vl->addWidget(actions);
+    fl->addWidget(write);
+    fl->addWidget(push);
+    applyBoxStyle(foot,
+                  QStringLiteral("background:%1;border-top:1px solid %2;"
+                                 "border-bottom-left-radius:%3px;border-bottom-right-radius:%3px")
+                      .arg(css(p.surface), css(p.hairline))
+                      .arg(tokens::kRadiusCard));
+    vl->addWidget(foot);
 
-    currentLayout_ = vl;
-    return box;
+    // 外框只补左右两侧：上下两段自带 hairline 与圆角，外框再画一圈会叠成 2px。
+    applyBoxStyle(card,
+                  QStringLiteral("border-left:1px solid %1;border-right:1px solid %1")
+                      .arg(css(p.line1)));
+    return card;
+}
+
+// ── 过滤 + 搜索（设计稿 .row.between：.seg + 150px .input）───────────────
+QWidget *ClipboardPanel::buildFilterRow()
+{
+    auto *row = new QWidget(this);
+    auto *hl = new QHBoxLayout(row);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->setSpacing(tokens::kS2);
+
+    filter_ = new SegmentedControl({tr("全部"), tr("文本"), tr("代码"), tr("链接"), tr("图片")},
+                                   row);
+    connect(filter_, &SegmentedControl::currentIndexChanged, this,
+            [this](int) { rebuildHistory(); });
+    hl->addWidget(filter_, 0, Qt::AlignVCenter);
+
+    hl->addStretch(1);
+
+    search_ = new QLineEdit(row);
+    search_->setPlaceholderText(tr("搜索历史"));
+    search_->setFixedWidth(150);
+    search_->setFixedHeight(tokens::kControlHeight);
+    search_->setFont(uiFont(tokens::kFont12));
+    applyInputStyle(search_);
+    connect(search_, &QLineEdit::textChanged, this, [this](const QString &) { rebuildHistory(); });
+    hl->addWidget(search_, 0, Qt::AlignVCenter);
+    return row;
 }
 
 QWidget *ClipboardPanel::buildHistory()
 {
-    const Palette &p = Theme::instance().palette();
-    auto *box = new QWidget(this);
-    auto *vl = new QVBoxLayout(box);
-    vl->setContentsMargins(0, 0, 0, 0);
-    vl->setSpacing(tokens::kS2);
-
-    auto *title = new QLabel(tr("同步历史 · 保留最近 %1 条")
-                                 .arg(Settings::instance().clipboardHistory()),
-                             box);
-    title->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-    title->setStyleSheet(
-        QStringLiteral("color:%1;text-transform:uppercase;letter-spacing:0.4px").arg(css(p.text3)));
-    vl->addWidget(title);
-
-    auto *list = new QWidget(box);
+    auto *list = new QWidget(this);
     historyLayout_ = new QVBoxLayout(list);
     historyLayout_->setContentsMargins(0, 0, 0, 0);
     historyLayout_->setSpacing(0);
+
+    // 设计稿的 .list__group-title 是在 .list 卡片**里面**的头一行，不是浮在
+    // 卡片外的小标题：surface-2 底 + 下 hairline，跟着列表一起滚动。
+    auto *groupTitle = new QLabel(tr("同步历史 · 保留最近 %1 条")
+                                      .arg(Settings::instance().clipboardHistory()),
+                                  list);
+    groupTitle->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
+    const Palette &p = Theme::instance().palette();
+    groupTitle->setStyleSheet(
+        QStringLiteral("color:%1;background:%2;padding:8px %3px 6px %3px;"
+                       "border-bottom:1px solid %4")
+            .arg(css(p.text3), css(p.surface2))
+            .arg(tokens::kS3)
+            .arg(css(p.hairline)));
+    historyLayout_->addWidget(groupTitle);
+
+    rowsLayout_ = new QVBoxLayout;
+    rowsLayout_->setContentsMargins(0, 0, 0, 0);
+    rowsLayout_->setSpacing(0);
+    historyLayout_->addLayout(rowsLayout_);
+
     applyBoxStyle(list,
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.surface)));
-    vl->addWidget(list);
-    return box;
+                      .arg(css(p.line2))
+                      .arg(tokens::kRadiusCard)
+                      .arg(css(p.surface)));
+    return list;
 }
 
+// ── 同步设置（4 个真开关 + 一条协议边界说明）────────────────────────────
 QWidget *ClipboardPanel::buildSettings()
 {
-    // 设计稿的折叠说明区：把协议层的真实边界值直接展示给用户
-    const Palette &p = Theme::instance().palette();
+    auto &s = Settings::instance();
+
     auto *body = new QWidget(this);
     auto *vl = new QVBoxLayout(body);
     vl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
-    vl->setSpacing(tokens::kS1);
-    vl->addWidget(new ListRow(tr("单条上限"), tr("%1 B，超限不入库").arg(kClipSegLimit), nullptr, this));
-    vl->addWidget(new ListRow(tr("重组超时"), tr("5 秒无进展丢弃整份"), nullptr, this));
-    vl->addWidget(new ListRow(tr("并发"), tr("同刻仅一路传输"), nullptr, this));
-    for (int i = 0; i < 3; ++i) {
-        // ListRow 的 hint 是 label，补上前景色使其与其它行一致
-        auto *row = vl->itemAt(i)->widget();
-        for (QLabel *l : row->findChildren<QLabel *>()) {
-            if (l->font().pixelSize() == tokens::kFont11) {
-                l->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-            }
-        }
-    }
-    return new Collapsible(tr("同步设置"), QStringLiteral("settings"), body, nullptr);
+    vl->setSpacing(tokens::kS2);
+
+    auto *sync = switchRow(tr("跨端同步"), s.clipboardSync(), QString(), body);
+    auto *syncToggle = sync->findChild<ToggleSwitch *>();
+    connect(syncToggle, &ToggleSwitch::clicked, this, [this, syncToggle] {
+        Settings::instance().setClipboardSync(syncToggle->isChecked());
+    });
+    vl->addWidget(sync);
+
+    auto *images = switchRow(tr("同步图片"), s.clipboardImages(), QString(), body);
+    auto *imagesToggle = images->findChild<ToggleSwitch *>();
+    connect(imagesToggle, &ToggleSwitch::clicked, this, [this, imagesToggle] {
+        Settings::instance().setClipboardImages(imagesToggle->isChecked());
+    });
+    vl->addWidget(images);
+
+    // 这一项协议给不出依据：CLIPBOARD 帧只有 MIME + 载荷（PROTOCOL.md §5.3），
+    // 没有来源应用，客户端无从判断「这条是不是密码管理器复制出来的」。开关照
+    // 设计稿摆上并落盘，但如实标注它当前不生效，也不假装已经在过滤。
+    auto *ignore = switchRow(tr("忽略密码管理器内容"), s.clipboardIgnorePasswords(),
+                             tr("协议帧不含来源应用标识，待协议补充后生效"), body);
+    auto *ignoreToggle = ignore->findChild<ToggleSwitch *>();
+    connect(ignoreToggle, &ToggleSwitch::clicked, this, [this, ignoreToggle] {
+        Settings::instance().setClipboardIgnorePasswords(ignoreToggle->isChecked());
+        qCInfo(lcClipboard) << "忽略密码管理器内容" << (ignoreToggle->isChecked() ? "已开启" : "已关闭")
+                            << QStringLiteral("但协议帧不含来源应用标识，当前不产生过滤效果");
+    });
+    vl->addWidget(ignore);
+
+    auto *autoWrite = switchRow(tr("接收后自动写入本地"), s.clipboardAutoWrite(), QString(),
+                                body);
+    auto *autoWriteToggle = autoWrite->findChild<ToggleSwitch *>();
+    connect(autoWriteToggle, &ToggleSwitch::clicked, this, [this, autoWriteToggle] {
+        Settings::instance().setClipboardAutoWrite(autoWriteToggle->isChecked());
+    });
+    vl->addWidget(autoWrite);
+
+    // 设计稿把三个协议常量收在一条 neutral banner 里，比逐行摆成三行说明更
+    // 紧凑，而且值只有一个出处——要改就改这里，不会和代码里的判断漂开。
+    vl->addWidget(banner(tr("单条上限 %1 B（协议 §5.3 分段上限），超出不同步；"
+                            "5 秒内未收齐则整份丢弃；同一时刻仅允许一路传输。")
+                             .arg(kClipSegLimit),
+                         body, BannerVariant::Neutral));
+    return new Collapsible(tr("同步设置"), QStringLiteral("settings"), body, badgeHost(), this);
+}
+
+QWidget *ClipboardPanel::badgeHost()
+{
+    auto *host = new QWidget(this);
+    auto *hl = new QHBoxLayout(host);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->addWidget(new Badge(tr("4 项"), Badge::Variant::Neutral, host));
+    return host;
 }
 
 QWidget *ClipboardPanel::buildFooter()
@@ -246,25 +420,36 @@ QWidget *ClipboardPanel::buildFooter()
 
     auto *clear = new FgButton(tr("清空历史"), FgButton::Variant::Secondary, true, foot);
     clear->setIcon(QStringLiteral("trash"));
-    QObject::connect(clear, &FgButton::clicked, this, &ClipboardPanel::clearHistory);
+    connect(clear, &FgButton::clicked, this, &ClipboardPanel::clearHistory);
     hl->addWidget(clear);
 
     auto *close = new FgButton(tr("关闭"), FgButton::Variant::Ghost, true, foot);
-    QObject::connect(close, &FgButton::clicked, this, &Panel::hide);
+    connect(close, &FgButton::clicked, this, &Panel::hide);
     hl->addWidget(close);
     return foot;
+}
+
+void ClipboardPanel::refreshSyncState()
+{
+    const Palette &p = Theme::instance().palette();
+    const bool on = Settings::instance().clipboardSync();
+    pillLabel_->setText(on ? tr("同步中") : tr("已关闭"));
+    pillDot_->setPulsing(on);
+    pillDot_->setQuality(on ? Quality::Good : Quality::Idle);
+    pill_->setStyleSheet(QStringLiteral("background:%1;border-radius:10px")
+                             .arg(css(on ? p.ok.soft : p.idle.soft)));
 }
 
 void ClipboardPanel::clearHistory()
 {
     history_.clear();
+    current_ = ClipEntry();
     rebuildHistory();
     Q_EMIT clearHistoryRequested();
 }
 
 void ClipboardPanel::reloadHistory()
 {
-    history_.clear();
     // 会话可用时，先把已经在 Go 侧重组完成、但还没被取走的剪贴板收进来。
     QString mime;
     QByteArray data;
@@ -272,56 +457,113 @@ void ClipboardPanel::reloadHistory()
         ClipEntry e;
         e.mime = mime;
         e.raw = data;
-        e.text = previewOf(data);
+        e.text = oneLine(QString::fromUtf8(data));
+        e.kind = kindOf(mime, data);
         e.source = tr("对端");
         e.agoSecs = 0;
         e.oversize = data.size() > kClipSegLimit;
-        if (!e.oversize) {
-            history_.append(e);
+        if (e.oversize) {
+            // 超限的条目协议侧已经不会送进来，这里再挡一道只是兜底；
+            // 真收到就记一笔，不往历史里塞一条永远不会同步成功的假记录。
+            qCInfo(lcClipboard) << "剪贴板条目超单条上限" << data.size() << QStringLiteral("B，已丢弃");
+            continue;
         }
+        history_.append(e);
+    }
+    rebuildHistory();
+}
+
+void ClipboardPanel::seedForSnapshot()
+{
+    struct Seed {
+        const char *mime;
+        const char *text;
+        const char *source;
+        int ago;
+    };
+    // 条目取自 clipboard.html 的 .list，使截图与设计稿可以逐行对照。
+    const Seed seeds[] = {
+        {"text/plain", "cargo build --release --target x86_64-unknown-linux-gnu", "MacBook Pro", 12},
+        {"text/html", "fn handle_frame(buf: &[u8]) -> Result<()>", "Windows 11 Desktop", 60},
+        {"text/uri-list", "https://example.internal/review/4821", "Linux Workstation", 240},
+        {"image/png", "screenshot-2026-10-16.png", "Windows 11 Desktop", 540},
+    };
+    for (const Seed &s : seeds) {
+        ClipEntry e;
+        e.mime = QString::fromLatin1(s.mime);
+        e.raw = QByteArray(s.text);
+        e.text = QString::fromLatin1(s.text);
+        e.kind = kindOf(e.mime, e.raw);
+        e.source = QString::fromUtf8(s.source);
+        e.agoSecs = s.ago;
+        history_.append(e);
     }
     rebuildHistory();
 }
 
 void ClipboardPanel::rebuildHistory()
 {
-    if (historyLayout_ == nullptr) {
+    if (rowsLayout_ == nullptr) {
         return;
     }
-    while (historyLayout_->count() > 0) {
-        QLayoutItem *item = historyLayout_->takeAt(0);
-        if (QWidget *w = item->widget()) {
-            w->deleteLater();
-        }
-        delete item;
-    }
+    clearLayout(rowsLayout_);
     const Palette &p = Theme::instance().palette();
-    auto *host = historyLayout_->parentWidget();
+    auto *host = rowsLayout_->parentWidget();
 
-    if (history_.isEmpty()) {
-        // .list 卡片在设计稿里是靠 .list__row 的内边距撑出留白的；空列表没有行，
-        // 直接 addWidget 会让文字贴着卡片左边框。这里给一层上下留白 + 居中。
-        auto *empty = new QLabel(tr("暂无历史条目"), host);
+    // 当前预览取历史首条，也就是最新一条——Go 侧只给「刚到的那条」，没有
+    // 「本机现在的剪贴板是什么」的查询口，所以这里和历史首条同源。
+    current_ = history_.isEmpty() ? ClipEntry() : history_.first();
+    preview_->setText(current_.raw.isEmpty() ? tr("暂无剪贴板内容") : current_.text);
+    spec_->setText(current_.raw.isEmpty()
+                       ? QStringLiteral("--")
+                       : tr("%1 · 单帧发送 · 未分段").arg(humanSize(current_.raw.size())));
+
+    const QString kind = filter_ != nullptr ? filter_->currentData().toString()
+                                            : QStringLiteral("全部");
+    const QString query = search_ != nullptr ? search_->text().trimmed() : QString();
+    const bool allKinds = kind.isEmpty() || kind == QStringLiteral("全部");
+
+    QList<ClipEntry> shown;
+    for (const ClipEntry &e : history_) {
+        if (!allKinds && e.kind != kind) {
+            continue;
+        }
+        if (!query.isEmpty() && !e.text.contains(query, Qt::CaseInsensitive)) {
+            continue;
+        }
+        shown.append(e);
+    }
+
+    if (shown.isEmpty()) {
+        auto *empty = new QLabel(
+            history_.isEmpty() ? tr("暂无历史条目") : tr("没有匹配的条目"), host);
         empty->setFont(uiFont(tokens::kFont12));
         empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
         empty->setAlignment(Qt::AlignCenter);
         empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
-        historyLayout_->addWidget(empty);
+        rowsLayout_->addWidget(empty);
         return;
     }
 
-    for (const ClipEntry &e : history_) {
-        auto *ago = new QLabel(agoText(e.agoSecs), host);
+    for (const ClipEntry &e : shown) {
+        auto *trailing = new QWidget(host);
+        auto *tl = new QHBoxLayout(trailing);
+        tl->setContentsMargins(0, 0, 0, 0);
+        tl->setSpacing(tokens::kS1);
+        auto *ago = new QLabel(agoText(e.agoSecs), trailing);
         ago->setFont(uiFont(tokens::kFont11));
         ago->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-        auto *hint = new QLabel(tr("%1 · %2 B").arg(e.source).arg(e.raw.size()), host);
-        hint->setFont(uiFont(tokens::kFont11));
-        hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-        auto *row = new NavRow(mimeIcon(e.mime), e.text, ago, host);
-        QObject::connect(row, &NavRow::clicked, this,
-                         [this, e] { Q_EMIT localWriteRequested(e); });
-        historyLayout_->addWidget(row);
-        Q_UNUSED(hint);
+        tl->addWidget(ago, 0, Qt::AlignVCenter);
+        auto *copy = new IconButton(QStringLiteral("copy"), tr("写入本地"), trailing);
+        connect(copy, &IconButton::clicked, this, [this, e] { Q_EMIT localWriteRequested(e); });
+        tl->addWidget(copy, 0, Qt::AlignVCenter);
+
+        auto *row = new ClipRow(iconOfKind(e.kind), e.text,
+                                tr("%1 → 本机 · %2 · %3").arg(e.source, humanSize(e.raw.size()),
+                                                             e.mime),
+                                trailing, host);
+        connect(row, &ClipRow::clicked, this, [this, e] { Q_EMIT localWriteRequested(e); });
+        rowsLayout_->addWidget(row);
     }
 }
 

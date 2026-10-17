@@ -441,13 +441,7 @@ void FilesPanel::rebuildTransfers()
     if (transferLayout_ == nullptr) {
         return;
     }
-    while (transferLayout_->count() > 0) {
-        QLayoutItem *item = transferLayout_->takeAt(0);
-        if (QWidget *w = item->widget()) {
-            w->deleteLater();
-        }
-        delete item;
-    }
+    clearLayout(transferLayout_);
     const Palette &p = Theme::instance().palette();
     auto *host = transferLayout_->parentWidget();
 
@@ -532,13 +526,7 @@ void FilesPanel::rebuildRecords()
     if (recordsLayout_ == nullptr) {
         return;
     }
-    while (recordsLayout_->count() > 0) {
-        QLayoutItem *item = recordsLayout_->takeAt(0);
-        if (QWidget *w = item->widget()) {
-            w->deleteLater();
-        }
-        delete item;
-    }
+    clearLayout(recordsLayout_);
     const Palette &p = Theme::instance().palette();
     auto *host = recordsLayout_->parentWidget();
 

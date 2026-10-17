@@ -275,13 +275,7 @@ void ConnectionsPanel::rebuildDeviceCards()
     if (deviceListLayout_ == nullptr) {
         return;
     }
-    while (deviceListLayout_->count() > 0) {
-        QLayoutItem *item = deviceListLayout_->takeAt(0);
-        if (QWidget *w = item->widget()) {
-            w->deleteLater();
-        }
-        delete item;
-    }
+    clearLayout(deviceListLayout_);
     const QList<Device> &devices = DeviceManager::instance().devices();
     if (devices.isEmpty()) {
         auto *empty = new QLabel(tr("尚未发现设备"), deviceList_);

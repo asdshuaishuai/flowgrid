@@ -13,12 +13,16 @@
 #include "core/theme.h"
 
 #include <QAbstractButton>
+#include <QFont>
 #include <QFrame>
+#include <QStringList>
+#include <QVariant>
 #include <QWidget>
 
 #include <vector>
 
 class QLabel;
+class QLayout;
 class QLineEdit;
 class QHBoxLayout;
 class QVBoxLayout;
@@ -27,12 +31,25 @@ class QPropertyAnimation;
 
 namespace fg {
 
-// 给「带子控件的容器」加边框 / 底色时必须走这里。
-//
+// 给「带子控件的容器」加边框 / 底色时必须走这里。//
 // 原因：Qt 样式表里一条**不带选择器**的声明会级联到该控件的所有子孙，典型
 // 症状是容器里的每个 QLabel 各自长出一圈同样的边框（拖放区一度画成三条虚线框）。
 // 这里统一生成 #objectName 限定的选择器，语义不再外溢到子控件。
 void applyBoxStyle(QWidget *w, const QString &declarations);
+
+// 清空一个布局里的全部控件，供各屏重建列表用。
+//
+// 光 takeAt + deleteLater 是不够的：控件脱离布局后仍然是父控件的子控件、
+// 保留着上一轮的旧几何，要等事件循环转一圈才被真正销毁。这中间它照常绘制，
+// 于是「一次事件循环内重建两次」就会在旧位置上叠出一层残影——剪贴板屏的
+// 历史列表每敲一个搜索键就重建一次，正是这个场景，残影肉眼可见。
+// 先 hide 再 deleteLater，那段窗口期就没有了。
+void clearLayout(QLayout *layout);
+
+// 设计稿 tokens.css 的 --font-mono 在 deepin 档是 "Noto Sans Mono"。等宽用在
+// 剪贴板原文、延迟大数字、传输百分比、键位表格的标识符这几处，字号跨度大，
+// 收成一个函数免得每处各写一遍 QFontFamilies 的兜底顺序。
+QFont uiMonoFont(int px, int weight = QFont::Normal);
 
 // ── 状态点：7px 圆点，2s 呼吸 ────────────────────────────────────────
 class StatusDot : public QWidget {
@@ -332,6 +349,98 @@ protected:
 
 private:
     QLabel *hint_ = nullptr;
+};
+
+// ── 剪贴板历史行：18px 类型块 + 双行文字 + 时间 + 写入按钮 ───────────────
+//
+// 设计稿 ui.css .list__row + .clip__type + .list__label/.list__hint。
+// 单行 NavRow 装不下第二行 hint，尾部的「时间 + 图标按钮」又是一组而不是一个
+// 控件，所以单开一个组件；行高、hover 底色、hairline 分隔与 .list__row 一致。
+class ClipRow : public QWidget {
+    Q_OBJECT
+public:
+    // iconName 取 types 图标名；trailing 由调用方给出（本屏给「时间 + 写入」）。
+    ClipRow(const QString &iconName, const QString &text, const QString &hint,
+            QWidget *trailing, QWidget *parent = nullptr);
+
+Q_SIGNALS:
+    void clicked();
+
+protected:
+    void mousePressEvent(QMouseEvent *) override;
+    void mouseReleaseEvent(QMouseEvent *) override;
+    void enterEvent(QEnterEvent *) override;
+    void leaveEvent(QEvent *) override;
+    void paintEvent(QPaintEvent *) override;
+    void resizeEvent(QResizeEvent *) override;
+
+private:
+    void relayoutText();
+
+    QLabel *iconLabel_ = nullptr;
+    QLabel *title_ = nullptr;
+    QLabel *hintWidget_ = nullptr;
+    QString titleText_;
+    QString hintText_;
+    QWidget *trailing_ = nullptr;
+    bool hovered_ = false;
+    bool pressed_ = false;
+};
+
+// ── 提示条：设计稿 ui.css .banner ───────────────────────────────────────
+//
+// 四屏都要用（设置 / 配对 / 键位映射 / 剪贴板），此前每屏各抄一份，三份的
+// padding、圆角、图标尺寸已经开始漂。这里收成一处：三档变体只决定取哪一族
+// 语义色，几何完全一致。
+//
+// 六档变体与 ui.css 的 .banner / .banner--{warn,danger,ok,neutral} 一一对应。
+// info 走 accent 族（accentLine / accentSoft / accentText 三个角色齐全），
+// neutral 走中性面（line-2 描边 + surface-2 底 + text-2），warn / danger /
+// ok 三族 Palette 里只有 solid / soft / text，没有 line，描边按 solid 压一档
+// 透明度派生——宁可从语义角色派生，也不写死主题色。
+enum class BannerVariant { Info, Warn, Danger, Ok, Neutral };
+
+QWidget *banner(const QString &text, QWidget *parent, BannerVariant variant);
+
+// ── 分段控件：设计稿 ui.css .seg ────────────────────────────────────────
+//
+// 外框 padding 2 / gap 2 / r-ctl 圆角 / surface-3 底；每档 24px 高、
+// 左右 10px 内边距，选中档换成 surface 底 + shadow-bar。
+// 剪贴板屏的类型过滤用它，设计控制条同款。
+class SegmentedControl : public QWidget {
+    Q_OBJECT
+public:
+    // items 的 text 是显示文字，data 是数据（选中后由 currentData() 给出）。
+    explicit SegmentedControl(const QStringList &items, QWidget *parent = nullptr);
+
+    int currentIndex() const { return current_; }
+    QVariant currentData() const;
+    void setCurrentIndex(int index);
+
+    QSize sizeHint() const override;
+
+Q_SIGNALS:
+    void currentIndexChanged(int index);
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+    void mousePressEvent(QMouseEvent *) override;
+    void enterEvent(QEnterEvent *) override;
+    void leaveEvent(QEvent *) override;
+
+private:
+    struct Segment {
+        QString text;
+        QVariant data;
+        QSize size;
+    };
+
+    int hitTest(int x) const;
+
+    QStringList labels_;
+    QList<Segment> segments_;
+    int current_ = 0;
+    int hover_ = -1;
 };
 
 // ── 输入类控件：按设计稿 .input / .select 的规格上样式 ─────────────────

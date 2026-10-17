@@ -7,6 +7,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLayout>
 #include <QLineEdit>
 #include <QActionGroup>
 #include <QMenu>
@@ -15,6 +16,7 @@
 #include <QPainterPath>
 #include <QRandomGenerator>
 #include <QPropertyAnimation>
+#include <QResizeEvent>
 #include <QVBoxLayout>
 
 namespace fg {
@@ -31,6 +33,7 @@ void applyBoxStyle(QWidget *w, const QString &declarations)
     }
     w->setStyleSheet(QStringLiteral("#%1 { %2 }").arg(w->objectName(), declarations));
 }
+
 
 namespace {
 
@@ -49,6 +52,33 @@ QString cssColor(const QColor &c)
 }
 
 } // namespace
+
+void clearLayout(QLayout *layout)
+{
+    if (layout == nullptr) {
+        return;
+    }
+    while (layout->count() > 0) {
+        QLayoutItem *item = layout->takeAt(0);
+        if (QWidget *w = item->widget()) {
+            w->hide();
+            w->deleteLater();
+        }
+        if (QLayout *child = item->layout()) {
+            clearLayout(child);
+        }
+        delete item;
+    }
+}
+
+QFont uiMonoFont(int px, int weight)
+{
+    QFont f = uiFont(px, weight);
+    f.setFamilies({QStringLiteral("Noto Sans Mono"), QStringLiteral("DejaVu Sans Mono"),
+                   QStringLiteral("monospace")});
+    f.setFixedPitch(true);
+    return f;
+}
 
 // ── StatusDot ─────────────────────────────────────────────────────────
 StatusDot::StatusDot(QWidget *parent) : QWidget(parent)
@@ -849,6 +879,128 @@ void NavRow::paintEvent(QPaintEvent *)
     pt.drawRect(rect());
 }
 
+// ── ClipRow ───────────────────────────────────────────────────────────
+ClipRow::ClipRow(const QString &iconName, const QString &text, const QString &hint,
+                 QWidget *trailing, QWidget *parent)
+    : QWidget(parent), trailing_(trailing)
+{
+    setCursor(Qt::PointingHandCursor);
+    const Palette &p = Theme::instance().palette();
+
+    // ui.css .list__row：padding 10px var(--s-3)、gap var(--s-3)；
+    // .list__label：竖排 gap 2；.list__hint：t-11 / text-3。
+    auto *hl = new QHBoxLayout(this);
+    hl->setContentsMargins(tokens::kS3, 10, tokens::kS3, 10);
+    hl->setSpacing(tokens::kS3);
+
+    // .clip__type：18×18 / r 4 / surface-3 底 / text-2 图标。
+    auto *typeBox = new QWidget(this);
+    auto *tl = new QHBoxLayout(typeBox);
+    tl->setContentsMargins(0, 0, 0, 0);
+    iconLabel_ = new QLabel(typeBox);
+    iconLabel_->setFixedSize(tokens::kBadgeHeight, tokens::kBadgeHeight);
+    iconLabel_->setAlignment(Qt::AlignCenter);
+    iconLabel_->setPixmap(icons::icon(iconName, 12, p.text2).pixmap(12, 12));
+    tl->addWidget(iconLabel_);
+    applyBoxStyle(typeBox, QStringLiteral("border-radius:4px;background:%1").arg(cssColor(p.surface3)));
+    hl->addWidget(typeBox, 0, Qt::AlignVCenter);
+
+    auto *col = new QVBoxLayout;
+    col->setContentsMargins(0, 0, 0, 0);
+    col->setSpacing(2);
+    auto *title = new QLabel(text, this);
+    // 主文本单行省略（.list__row 里的 .ellipsis）。QLabel 自己不会画省略号，
+    // 这里按 label 自己的实际宽度手算；宽度取 label 自身而不是整行，
+    // 这样布局怎么分配就由布局说了算，不必在这里把间距再复算一遍。
+    // 横向 sizePolicy 给 Ignored 是必须的：否则 label 的 sizeHint 来自
+    // 未截断的全文，会反过来把整行撑宽，省略号永远轮不到生效。
+    title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    title->setFont(uiFont(tokens::kFont12));
+    title->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
+    col->addWidget(title);
+    auto *hintLabel = new QLabel(hint, this);
+    hintLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    hintLabel->setFont(uiFont(tokens::kFont11));
+    hintLabel->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
+    col->addWidget(hintLabel);
+    hl->addLayout(col, 1);
+
+    if (trailing_ != nullptr) {
+        hl->addWidget(trailing_, 0, Qt::AlignVCenter);
+    }
+    title_ = title;
+    hintWidget_ = hintLabel;
+    titleText_ = text;
+    hintText_ = hint;
+}
+
+void ClipRow::relayoutText()
+{
+    if (title_ == nullptr || hintWidget_ == nullptr) {
+        return;
+    }
+    auto elide = [](QLabel *label, const QString &full) {
+        if (label->width() <= 0) {
+            return;
+        }
+        label->setText(
+            QFontMetricsF(label->font()).elidedText(full, Qt::ElideRight, label->width()));
+    };
+    elide(title_, titleText_);
+    elide(hintWidget_, hintText_);
+}
+
+void ClipRow::mousePressEvent(QMouseEvent *)
+{
+    pressed_ = true;
+    update();
+}
+
+void ClipRow::mouseReleaseEvent(QMouseEvent *e)
+{
+    if (pressed_ && rect().contains(e->position().toPoint())) {
+        Q_EMIT clicked();
+    }
+    pressed_ = false;
+    update();
+}
+
+void ClipRow::enterEvent(QEnterEvent *e)
+{
+    hovered_ = true;
+    update();
+    QWidget::enterEvent(e);
+}
+
+void ClipRow::leaveEvent(QEvent *e)
+{
+    hovered_ = false;
+    pressed_ = false;
+    update();
+    QWidget::leaveEvent(e);
+}
+
+void ClipRow::resizeEvent(QResizeEvent *e)
+{
+    QWidget::resizeEvent(e);
+    relayoutText();
+}
+
+void ClipRow::paintEvent(QPaintEvent *)
+{
+    const Palette &p = Theme::instance().palette();
+    QPainter pt(this);
+    if (hovered_ || pressed_) {
+        pt.setPen(Qt::NoPen);
+        pt.setBrush(pressed_ ? p.surfacePress : p.surfaceHi);
+        pt.drawRect(rect());
+    }
+    // .list__row 的行间分隔：1px hairline。整组最后一行不画由调用方决定，
+    // 这里统一画满宽，末行多一道线比少一道更难看出差别。
+    pt.setPen(p.hairline);
+    pt.drawLine(0, height() - 1, width() - 1, height() - 1);
+}
+
 // ── ListRow ───────────────────────────────────────────────────────────
 ListRow::ListRow(const QString &label, const QString &hint, QWidget *control, QWidget *parent,
                  QWidget *titleWidget)
@@ -984,6 +1136,189 @@ void FgKeycap::paintEvent(QPaintEvent *)
     pt.setPen(ghost_ ? p.text3 : p.text1);
     pt.setFont(uiFont(tokens::kFont11, QFont::DemiBold));
     pt.drawText(rect(), Qt::AlignCenter, text_);
+}
+
+// ── banner ───────────────────────────────────────────────────────────
+// ui.css .banner 的六档变体一一对应：info 走 accent 族（accentLine /
+// accentSoft / accentText 三个角色齐全），neutral 走中性面（line-2 描边 +
+// surface-2 底 + text-2），warn / danger / ok 三族 Palette 里只有 solid /
+// soft / text，没有 line，描边按 solid 压一档透明度派生——宁可从语义角色
+// 派生，也不写死主题色。
+QWidget *banner(const QString &text, QWidget *parent, BannerVariant variant)
+{
+    const Palette &p = Theme::instance().palette();
+    QColor line;
+    QColor bg;
+    QColor fg;
+    QString iconName = QStringLiteral("info");
+    switch (variant) {
+    case BannerVariant::Warn:
+        line = p.warn.solid;
+        line.setAlphaF(0.45);
+        bg = p.warn.soft;
+        fg = p.warn.text;
+        iconName = QStringLiteral("warn");
+        break;
+    case BannerVariant::Danger:
+        line = p.danger.solid;
+        line.setAlphaF(0.45);
+        bg = p.danger.soft;
+        fg = p.danger.text;
+        iconName = QStringLiteral("warn");
+        break;
+    case BannerVariant::Ok:
+        line = p.ok.solid;
+        line.setAlphaF(0.45);
+        bg = p.ok.soft;
+        fg = p.ok.text;
+        iconName = QStringLiteral("check");
+        break;
+    case BannerVariant::Neutral:
+        line = p.line2;
+        bg = p.surface2;
+        fg = p.text2;
+        break;
+    case BannerVariant::Info:
+    default:
+        line = p.accentLine;
+        bg = p.accentSoft;
+        fg = p.accentText;
+        break;
+    }
+
+    auto *w = new QWidget(parent);
+    auto *hl = new QHBoxLayout(w);
+    hl->setContentsMargins(10, tokens::kS3, tokens::kS3, 10);
+    hl->setSpacing(tokens::kS2);
+    auto *icon = new QLabel(w);
+    icon->setFixedSize(14, 14);
+    icon->setPixmap(icons::icon(iconName, 14, fg).pixmap(14, 14));
+    auto *label = new QLabel(text, w);
+    label->setWordWrap(true);
+    label->setFont(uiFont(tokens::kFont12));
+    label->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(fg)));
+    hl->addWidget(icon, 0, Qt::AlignTop);
+    hl->addWidget(label, 1);
+    applyBoxStyle(w,
+                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                      .arg(cssColor(line))
+                      .arg(tokens::kRadiusCard)
+                      .arg(cssColor(bg)));
+    return w;
+}
+
+// ── SegmentedControl ─────────────────────────────────────────────────
+// ui.css .seg：外框 padding 2 / gap 2 / r-ctl 圆角 / surface-3 底；每档
+// height 24、padding 0 10px、r 为 4；选中档换 surface 底 + shadow-bar。
+// 一档就是一个几何，不是子控件——用 QPushButton + 布局的话 hover 底色、
+// 选中浮起都要逐个贴样式表，加一档就多一份样式声明。
+SegmentedControl::SegmentedControl(const QStringList &items, QWidget *parent)
+    : QWidget(parent), labels_(items)
+{
+    setCursor(Qt::PointingHandCursor);
+    setMouseTracking(true);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+
+    const QFont f = uiFont(tokens::kFont11, QFont::DemiBold);
+    const QFontMetrics fm(f);
+    for (const QString &t : items) {
+        Segment s;
+        s.text = t;
+        s.data = t;
+        // 文字宽度 + 左右各 10px（ui.css .seg button 的 padding: 0 10px）。
+        s.size = QSize(fm.horizontalAdvance(t) + 20, 24);
+        segments_.append(s);
+    }
+}
+
+QVariant SegmentedControl::currentData() const
+{
+    return current_ >= 0 && current_ < segments_.size() ? segments_.at(current_).data
+                                                        : QVariant();
+}
+
+void SegmentedControl::setCurrentIndex(int index)
+{
+    if (index < 0 || index >= segments_.size() || index == current_) {
+        return;
+    }
+    current_ = index;
+    update();
+    Q_EMIT currentIndexChanged(current_);
+}
+
+QSize SegmentedControl::sizeHint() const
+{
+    int w = 4;  // 外框左右各 2px padding
+    for (const Segment &s : segments_) {
+        w += s.size.width();
+    }
+    w += qMax(0, segments_.size() - 1) * 2;  // gap 2
+    return {w, 24 + 4};
+}
+
+int SegmentedControl::hitTest(int x) const
+{
+    int cursor = 2;
+    for (int i = 0; i < segments_.size(); ++i) {
+        const int w = segments_.at(i).size.width();
+        if (x < cursor + w) {
+            return i;
+        }
+        cursor += w + 2;
+    }
+    return -1;
+}
+
+void SegmentedControl::paintEvent(QPaintEvent *)
+{
+    const Palette &p = Theme::instance().palette();
+    QPainter pt(this);
+    pt.setRenderHint(QPainter::Antialiasing, true);
+
+    QPainterPath frame;
+    frame.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), tokens::kRadiusCtl,
+                         tokens::kRadiusCtl);
+    pt.fillPath(frame, p.surface3);
+
+    int cursor = 2;
+    for (int i = 0; i < segments_.size(); ++i) {
+        const Segment &s = segments_.at(i);
+        const QRectF cell(cursor, 2, s.size.width(), s.size.height());
+        if (i == current_) {
+            // 选中档「浮」在外框之上：先铺 surface，再压一层 shadow-bar。
+            QPainterPath lifted;
+            lifted.addRoundedRect(cell.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4);
+            pt.fillPath(lifted, p.shadowBar);
+            pt.fillPath(lifted, p.surface);
+        }
+        pt.setPen((i == current_ || i == hover_) ? p.text1 : p.text2);
+        pt.setFont(uiFont(tokens::kFont11, QFont::DemiBold));
+        pt.drawText(cell, Qt::AlignCenter, s.text);
+        cursor += s.size.width() + 2;
+    }
+}
+
+void SegmentedControl::mousePressEvent(QMouseEvent *event)
+{
+    const int i = hitTest(event->position().toPoint().x());
+    if (i >= 0) {
+        setCurrentIndex(i);
+    }
+}
+
+void SegmentedControl::enterEvent(QEnterEvent *event)
+{
+    hover_ = hitTest(event->position().toPoint().x());
+    update();
+    QWidget::enterEvent(event);
+}
+
+void SegmentedControl::leaveEvent(QEvent *event)
+{
+    hover_ = -1;
+    update();
+    QWidget::leaveEvent(event);
 }
 
 // ── buildMappingGrid ──────────────────────────────────────────────────

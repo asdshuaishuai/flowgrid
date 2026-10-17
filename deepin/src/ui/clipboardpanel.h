@@ -7,16 +7,22 @@
 #include "core/protocolapi.h"
 #include "ui/panel.h"
 
+class QLabel;
+class QLineEdit;
 class QVBoxLayout;
-class Badge;
 
 namespace fg {
 
+class Badge;
+class SegmentedControl;
+class StatusDot;
+
 struct ClipEntry {
     QString mime = QStringLiteral("text/plain");
-    QString text;        // 预览用，超长截断
-    QByteArray raw;      // 原始载荷，推送时用
-    QString source;      // 「MacBook Pro」
+    QString kind;         // text / code / link / image：分段控件的过滤依据
+    QString text;         // 单行预览
+    QByteArray raw;       // 原始载荷，推送时用
+    QString source;       // 「MacBook Pro」
     int agoSecs = 0;
     bool oversize = false;   // 超 63,240 B 上限，不入库（设计稿的「超限」）
 };
@@ -27,6 +33,12 @@ public:
     explicit ClipboardPanel(QWidget *parent = nullptr);
 
     void reloadHistory();
+
+    // 仅 --snapshot 用：无头环境没有对端设备，历史永远是空的，ClipRow 的双行
+    // 排版、分段控件的过滤、搜索框的匹配这三条路径一条都跑不到。种一批与
+    // clipboard.html 同款的数据进去，截图才能和设计稿逐项对照。正常运行
+    // 永远不会调它。
+    void seedForSnapshot();
 
 public Q_SLOTS:
     void clearHistory();
@@ -44,15 +56,28 @@ Q_SIGNALS:
 
 private:
     QWidget *buildCurrent();
+    QWidget *buildFilterRow();
     QWidget *buildHistory();
     QWidget *buildSettings();
+    QWidget *badgeHost();
     QWidget *buildFooter();
     void rebuildHistory();
+    // 标题栏胶囊跟着 sync/clipboard_enabled 走：设置屏关掉同步后，这一屏
+    // 顶上不能还写着「同步中」。
+    void refreshSyncState();
 
     proto::ClipboardSession session_;
-    QVBoxLayout *currentLayout_ = nullptr;
     QVBoxLayout *historyLayout_ = nullptr;
+    QVBoxLayout *rowsLayout_ = nullptr;
+    SegmentedControl *filter_ = nullptr;
+    QLineEdit *search_ = nullptr;
+    QLabel *preview_ = nullptr;
+    QLabel *spec_ = nullptr;
+    QWidget *pill_ = nullptr;
+    QLabel *pillLabel_ = nullptr;
+    StatusDot *pillDot_ = nullptr;
     QList<ClipEntry> history_;
+    ClipEntry current_;      // .preview 显示的那条，即历史首条
 };
 
 } // namespace fg

@@ -404,13 +404,7 @@ void TrayPopup::refresh()
     // 快速切换按钮：每次重建而不是做增量 diff——设备是个位数，重建成本可忽略，
     // 而增量同步要处理的边界（上线、下线、热键变更）远比重建麻烦。
     if (quickRow_ != nullptr) {
-        while (quickRow_->count() > 0) {
-            QLayoutItem *item = quickRow_->takeAt(0);
-            if (QWidget *w = item->widget()) {
-                w->deleteLater();
-            }
-            delete item;
-        }
+        clearLayout(quickRow_);
         for (const Device &d : manager_.devices()) {
             if (!d.online || d.hotkeyIndex <= 0) {
                 continue;

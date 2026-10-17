@@ -302,13 +302,7 @@ void LatencyPanel::refresh()
 
     // 分设备列表
     if (deviceListLayout_ != nullptr) {
-        while (deviceListLayout_->count() > 0) {
-            QLayoutItem *item = deviceListLayout_->takeAt(0);
-            if (QWidget *w = item->widget()) {
-                w->deleteLater();
-            }
-            delete item;
-        }
+        clearLayout(deviceListLayout_);
         const QList<Device> &devices = manager.devices();
         auto *groupTitle = new QLabel(tr("分设备"), this);
         groupTitle->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
