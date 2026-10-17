@@ -381,9 +381,15 @@ QWidget *TrayPopup::buildCurrentDevice()
     row->setAttribute(Qt::WA_StyledBackground, true);
     const auto styleActiveRow = [row] {
         const Palette &pal = Theme::instance().palette();
+        // 三个占位符要三个实参：此前只 arg 了两个，且把 accent-soft 填进了
+        // `border-radius:%2px` 的位置、`background:%3` 原样留着——Qt 解析不了
+        // 这条声明（报 parseHexColor: Unknown color name '#...ffpx'），整条规则
+        // 连同描边一起被丢掉，上面刚补的「当前设备」卡片其实一直没画出来。
         applyBoxStyle(row,
                       QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                          .arg(css(pal.accentLine), css(pal.accentSoft)));
+                          .arg(css(pal.accentLine))
+                          .arg(QString::number(tokens::kRadiusCard))
+                          .arg(css(pal.accentSoft)));
     };
     connect(&Theme::instance(), &Theme::changed, row, styleActiveRow);
     styleActiveRow();
