@@ -268,20 +268,25 @@ void Panel::restyle()
         // margin，Qt 的滚动条样式引擎会把整根条判成无效直接不画（实测滑块连轨道
         // 一起消失，右边缘只剩面板描边）。改用等价的 background-clip:content-box
         // + 透明 border，视觉效果一致且引擎认。
+        //
+        // 圆角是 --r-pill：对 kScrollbarWidth 宽的条即「宽的一半」。这里原先写死
+        // 5px，而宽度是另一处字面量 10——两者是「10÷2」的两半，宽度一改圆角就不
+        // 跟着变，药丸直接破形。交给 pillRadius() 从宽度推导。
         scroll_->setStyleSheet(
             QStringLiteral("QScrollArea{background:transparent;}"
                            "QScrollArea QScrollBar:vertical{width:%1px;background:transparent;"
                            "margin:0px;border:none;}"
                            "QScrollArea QScrollBar::handle:vertical{background:%2;"
                            "background-clip:content-box;border:3px solid transparent;"
-                           "border-radius:5px;min-height:32px;}"
+                           "border-radius:%3px;min-height:32px;}"
                            "QScrollArea QScrollBar::add-line:vertical,"
                            "QScrollArea QScrollBar::sub-line:vertical{height:0px;"
                            "border:none;background:transparent;}"
                            "QScrollArea QScrollBar::add-page:vertical,"
                            "QScrollArea QScrollBar::sub-page:vertical{background:transparent;}")
-                .arg(10)
-                .arg(colorHex(p.line3)));
+                .arg(tokens::kScrollbarWidth)
+                .arg(colorHex(p.line3))
+                .arg(tokens::pillRadius(tokens::kScrollbarWidth)));
     }
     update();
 }

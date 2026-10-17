@@ -432,7 +432,7 @@ void ConnectionsPanel::rebuildFileRows()
         pct->setFont(uiMonoFont(tokens::kFont11, QFont::DemiBold));
         pct->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text2)));
         pct->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        pct->setFixedWidth(34);
+        pct->setFixedWidth(tokens::kXferPctWidth);
         top->addWidget(pct, 0, Qt::AlignTop);
         vl->addLayout(top);
 

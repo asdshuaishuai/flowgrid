@@ -773,7 +773,7 @@ void FilesPanel::rebuildTransfers()
         pctLabel->setFont(uiMonoFont(tokens::kFont11, QFont::DemiBold));
         pctLabel->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text2)));
         pctLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        pctLabel->setFixedWidth(34);   // ui.css .xfer__pct 的 min-width
+        pctLabel->setFixedWidth(tokens::kXferPctWidth);   // ui.css .xfer__pct 的 min-width
         top->addWidget(name, 1);
         top->addWidget(pctLabel, 0, Qt::AlignTop);
         vl->addLayout(top);
@@ -904,6 +904,8 @@ void FilesPanel::rebuildRecords()
         auto *ago = new QLabel(agoText(now - e.finishedAtMs), trailing);
         ago->setFont(uiFont(tokens::kFont11));
         ago->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        // 34 是「装得下「2分钟前」」的实用宽度，与 .xfer__pct 的 34 无血缘——
+        // 那个是设计稿 min-width，这个是 Qt 侧按内容定的，别合并成一个令牌。
         ago->setFixedWidth(34);
         ago->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         tl->addWidget(ago, 0, Qt::AlignVCenter);
