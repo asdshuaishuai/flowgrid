@@ -14,9 +14,11 @@
 #include <QList>
 #include <QStringList>
 
+class QLabel;
 class QVBoxLayout;
 
 namespace fg {
+class StatusDot;
 
 // 设计稿的边界值：1 B – 16 MiB，超限条目标「超限」而不发送
 constexpr qint64 kMaxFileSize = 16LL * 1024 * 1024;
@@ -26,9 +28,14 @@ struct XferEntry {
     QString name;
     QString peer;
     bool inbound = false;
-    // 传输中
-    int sentBytes = 0;
-    int totalBytes = 0;
+    // 传输中。刻意用 qint64 而不是 int：超限判定要在读完全部字节之后做，
+    // >2 GiB 的文件若按 int 存会静默截断，记录里的大小就成了错的数
+    // （设计稿传输记录里那条 4.2 GB 的 ISO 就是这一档）。
+    qint64 sentBytes = 0;
+    qint64 totalBytes = 0;
+    qint64 startedAtMs = 0;   // 算平均速率与剩余时间用；0 表示刚创建还没起跑
+    // 收到过 FILE_ABORT / 提议被拒，与 failed 分开：徽章与文案不同。
+    bool oversize = false;
     // 终态
     bool done = false;
     bool failed = false;
@@ -74,6 +81,10 @@ public:
     // 送出一个本地文件；走 Go 的 FileSender，UI 不碰帧结构。
     int offerFile(const QString &path);
 
+    // 仅 --snapshot 用。理由同 ClipboardPanel::seedForSnapshot()：无头环境没有
+    // 对端设备，.xfer 的进度条/速率/剩余、三种失败徽章一条都跑不到。
+    void seedForSnapshot();
+
 Q_SIGNALS:
     void fileChosen();
 
@@ -81,16 +92,29 @@ private:
     QWidget *buildTransferList();
     QWidget *buildDropZone();
     QWidget *buildRecords();
+    QWidget *buildSettings();
     QWidget *buildFooter();
+    // 「进行中 / 传输记录」两个分组标题：设计稿把它们放在 .list 卡片**里面**
+    // 的头一行（surface-2 底 + 下 hairline），不是浮在卡片外的小标题。
+    QLabel *buildGroupTitle(const QString &text, QWidget *host, QVBoxLayout *layout);
+    // 标题栏胶囊写着「N 项进行中」，条目状态一变就要跟着改。
+    void refreshPill();
     void rebuildTransfers();
     void rebuildRecords();
 
     proto::FileSender sender_;
     proto::FileReceiver receiver_;
 
+    // 外层装分组标题，内层装条目行：重建只清内层，标题留在原位
+    // （设计稿的 .list__group-title 是卡片里的固定头一行）。
     QVBoxLayout *transferLayout_ = nullptr;
+    QVBoxLayout *transferRows_ = nullptr;
     QVBoxLayout *recordsLayout_ = nullptr;
+    QVBoxLayout *recordRows_ = nullptr;
     QList<XferEntry> entries_;
+    QWidget *pill_ = nullptr;
+    QLabel *pillLabel_ = nullptr;
+    StatusDot *pillDot_ = nullptr;
 };
 
 } // namespace fg

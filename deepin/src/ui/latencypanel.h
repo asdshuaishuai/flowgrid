@@ -33,6 +33,8 @@ private:
 
     QVBoxLayout *contentLayout_ = nullptr;
     QVBoxLayout *deviceListLayout_ = nullptr;
+    // 外层装分组标题、内层装行：重建只清内层，标题留在原位。
+    QVBoxLayout *deviceRows_ = nullptr;
 
     StatusDot *titleDot_ = nullptr;
     LatencyChip *titleLatency_ = nullptr;

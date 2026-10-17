@@ -28,6 +28,10 @@ struct Device {
     QString name;
     QString abbrev;          // 设备卡方块里的两字标识，设计稿里由设备自带
     QString platformLabel;   // 「macOS 15」「Windows 11」…
+    // 行首类型图标名：laptop / monitor / tablet。与配对屏的 DiscoveredDevice::icon
+    // 同一套取值，由数据源给出——设备种类是发现层的信息，界面从 platformLabel
+    // 反推只会把「KDE Plasma 6」这类字符串猜成桌面的概率和规则写死在 UI 里。
+    QString icon;
     Link link = Link::Offline;
     bool isLocal = false;
     bool isActive = false;

@@ -19,6 +19,7 @@ class QLabel;
 
 namespace fg {
 
+class Badge;
 class LatencyChip;
 class ToggleSwitch;
 
@@ -66,6 +67,8 @@ private:
     QLabel *deviceIcon_ = nullptr;
     QLabel *deviceName_ = nullptr;
     QLabel *deviceMeta_ = nullptr;
+    // 「设备与连接」右侧的在线台数徽标，跟随 DeviceManager 实时更新。
+    Badge *deviceCount_ = nullptr;
 
     // 快捷开关：refresh() 拿它们跟随 Settings::changed（「恢复默认」改了配置后，
     // 托盘这几个开关要跟着回到默认值，否则两处状态会不一致）。

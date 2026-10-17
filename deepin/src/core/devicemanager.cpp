@@ -159,16 +159,16 @@ public:
         QList<Device> list;
         list.append(makeDevice(QStringLiteral("local"), QStringLiteral("deepin 工作站"),
                                QStringLiteral("DP"), QStringLiteral("deepin 25"),
-                               Link::IntelligentLink, true, true, 2));
+                               QStringLiteral("laptop"), Link::IntelligentLink, true, true, 2));
         list.append(makeDevice(QStringLiteral("win"), QStringLiteral("Windows 11 Desktop"),
                                QStringLiteral("PC"), QStringLiteral("Windows 11"),
-                               Link::IntelligentLink, false, true, 1));
+                               QStringLiteral("monitor"), Link::IntelligentLink, false, true, 1));
         list.append(makeDevice(QStringLiteral("lx"), QStringLiteral("Linux Workstation"),
                                QStringLiteral("LX"), QStringLiteral("KDE Plasma 6"),
-                               Link::DirectLink, false, true, 3));
+                               QStringLiteral("monitor"), Link::DirectLink, false, true, 3));
         list.append(makeDevice(QStringLiteral("tablet"), QStringLiteral("deepin Tablet"),
                                QStringLiteral("TP"), QStringLiteral("deepin 25"),
-                               Link::Offline, false, false, 0));
+                               QStringLiteral("tablet"), Link::Offline, false, false, 0));
         return list;
     }
 
@@ -206,14 +206,15 @@ public:
 
 private:
     static Device makeDevice(const QString &id, const QString &name, const QString &abbrev,
-                             const QString &platform, Link link, bool isLocal, bool online,
-                             int hotkey)
+                             const QString &platform, const QString &icon, Link link,
+                             bool isLocal, bool online, int hotkey)
     {
         Device d;
         d.id = id;
         d.name = name;
         d.abbrev = abbrev;
         d.platformLabel = platform;
+        d.icon = icon;
         d.link = link;
         d.isLocal = isLocal;
         d.online = online;

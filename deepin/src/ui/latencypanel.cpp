@@ -74,7 +74,8 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
             QStringLiteral("color:%1;text-transform:uppercase;letter-spacing:0.3px")
                 .arg(css(Theme::instance().palette().text3)));
         bigValue_ = new QLabel(QStringLiteral("--"), row);
-        bigValue_->setFont(uiFont(tokens::kFont28, QFont::Bold));
+        // 设计稿写死 .t-28 w-bold mono：读数每 2 秒跳一次，不等宽整行会左右抖。
+        bigValue_->setFont(uiMonoFont(tokens::kFont28, QFont::Bold));
         col->addWidget(caption);
         col->addWidget(bigValue_);
 
@@ -151,11 +152,35 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
 
     // ── 分设备 ──
     {
-        auto *body = new QWidget(this);
-        deviceListLayout_ = new QVBoxLayout(body);
+        const Palette &p = Theme::instance().palette();
+        auto *card = new QWidget(this);
+        deviceListLayout_ = new QVBoxLayout(card);
         deviceListLayout_->setContentsMargins(0, 0, 0, 0);
         deviceListLayout_->setSpacing(0);
-        contentLayout_->addWidget(body);
+
+        // 设计稿的 .list__group-title 是卡片里的头一行（surface-2 底 + 下
+        // hairline），不是浮在卡片外的小标题；重建只清内层，标题留在原位。
+        auto *groupTitle = new QLabel(tr("分设备"), card);
+        groupTitle->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
+        groupTitle->setStyleSheet(
+            QStringLiteral("color:%1;background:%2;padding:8px %3px 6px %3px;"
+                           "border-bottom:1px solid %4")
+                .arg(css(p.text3), css(p.surface2))
+                .arg(tokens::kS3)
+                .arg(css(p.hairline)));
+        deviceListLayout_->addWidget(groupTitle);
+
+        deviceRows_ = new QVBoxLayout;
+        deviceRows_->setContentsMargins(0, 0, 0, 0);
+        deviceRows_->setSpacing(0);
+        deviceListLayout_->addLayout(deviceRows_);
+
+        applyBoxStyle(card,
+                      QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                          .arg(css(p.line2))
+                          .arg(tokens::kRadiusCard)
+                          .arg(css(p.surface)));
+        contentLayout_->addWidget(card);
     }
 
     contentLayout_->addWidget(buildThresholdSection());
@@ -170,6 +195,11 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
     // 占位样本，全推同一个 seed 会让 12 根柱子齐平，既不像设计稿的 22~44px
     // 起伏，也看不出「采样在动」。首次 sampled() 到达后即被真实数据顶掉。
     chart_->prime(manager.activeLatencyMs());
+    // 徽章初值跟着 prime 的种子走：否则首屏要等第一个 2 秒采样才变，
+    // 展开图表区先看到的是一个「均值 --」的空徽章。
+    if (chartBadge_ != nullptr && manager.activeLatencyMs() >= 0.0) {
+        chartBadge_->setText(tr("均值 %1ms").arg(manager.activeLatencyMs(), 0, 'f', 1));
+    }
 }
 
 QWidget *LatencyPanel::buildThresholdSection()
@@ -301,16 +331,18 @@ void LatencyPanel::refresh()
     }
 
     // 分设备列表
-    if (deviceListLayout_ != nullptr) {
-        clearLayout(deviceListLayout_);
+    if (deviceRows_ != nullptr) {
+        clearLayout(deviceRows_);
+        const Palette &p = Theme::instance().palette();
         const QList<Device> &devices = manager.devices();
-        auto *groupTitle = new QLabel(tr("分设备"), this);
-        groupTitle->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-        groupTitle->setContentsMargins(0, tokens::kS1, 0, tokens::kS2);
-        groupTitle->setStyleSheet(
-            QStringLiteral("color:%1;text-transform:uppercase;letter-spacing:0.4px")
-                .arg(css(Theme::instance().palette().text3)));
-        deviceListLayout_->addWidget(groupTitle);
+        if (devices.isEmpty()) {
+            auto *empty = new QLabel(tr("暂无设备"), this);
+            empty->setFont(uiFont(tokens::kFont12));
+            empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+            empty->setAlignment(Qt::AlignCenter);
+            empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
+            deviceRows_->addWidget(empty);
+        }
 
         for (const Device &d : devices) {
             QString hint = tr("离线");
@@ -321,8 +353,22 @@ void LatencyPanel::refresh()
             }
             auto *lat = new LatencyChip();
             lat->setLatency(d.latencyMs, d.online);
-            deviceListLayout_->addWidget(
-                new ListRow(d.name, hint, lat, this));
+
+            // 设计稿每行名字前面带设备类型图标（笔记本 / 台式机 / 平板）。
+            auto *title = new QWidget(this);
+            auto *tl = new QHBoxLayout(title);
+            tl->setContentsMargins(0, 0, 0, 0);
+            tl->setSpacing(tokens::kS2);
+            auto *icon = new QLabel(title);
+            icon->setFixedSize(14, 14);
+            icon->setPixmap(icons::icon(d.icon, 14, d.online ? p.text2 : p.text3).pixmap(14, 14));
+            tl->addWidget(icon);
+            auto *name = new QLabel(d.name, title);
+            name->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
+            name->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
+            tl->addWidget(name);
+
+            deviceRows_->addWidget(new ListRow(QString(), hint, lat, this, title));
         }
     }
 }

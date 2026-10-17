@@ -307,6 +307,7 @@ int main(int argc, char *argv[])
             shot(g_pairing, QStringLiteral("pairing"));
             g_clipboard->seedForSnapshot();
             shot(g_clipboard, QStringLiteral("clipboard"));
+            g_files->seedForSnapshot();
             shot(g_files, QStringLiteral("files"));
             app.quit();
         });

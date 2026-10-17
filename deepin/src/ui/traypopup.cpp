@@ -115,7 +115,11 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
         trayLatency_ = lat;
         QList<QWidget *> rows{
             buildNavRow(QStringLiteral("devices"), tr("设备与连接"),
-                        new Badge(QStringLiteral("—"), Badge::Variant::Neutral),
+                        // 设备数是这一行最有用的信息，写死一个数会让人以为托盘
+                        // 知道设备列表——它其实有 DeviceManager。记下指针由
+                        // refresh() 跟着真实在线数更新。
+                        deviceCount_ = new Badge(QStringLiteral("—"), Badge::Variant::Neutral,
+                                                 this),
                         QStringLiteral("connections")),
             buildNavRow(QStringLiteral("activity"), tr("网络延迟"), lat,
                         QStringLiteral("latency")),
@@ -383,6 +387,19 @@ void TrayPopup::refresh()
     }
     if (trayLatency_ != nullptr) {
         trayLatency_->setLatency(ms, online);
+    }
+
+    if (deviceCount_ != nullptr) {
+        // 在线设备数（不含离线）。设计稿写的是「3 台」，而这台机器上没有对端，
+        // 如实显示真实在线数——托盘常驻，给一个假的数字比显示 0 更糟。
+        int online = 0;
+        for (const Device &d : manager_.devices()) {
+            if (d.online) {
+                ++online;
+            }
+        }
+        deviceCount_->setText(online == 0 ? tr("0 台在线") : tr("%1 台在线").arg(online));
+        deviceCount_->setVariant(online > 0 ? Badge::Variant::Ok : Badge::Variant::Idle);
     }
 
     if (deviceName_ != nullptr) {

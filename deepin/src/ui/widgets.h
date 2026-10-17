@@ -351,6 +351,35 @@ private:
     QLabel *hint_ = nullptr;
 };
 
+// ── 单行省略标签：设计稿的 .ellipsis ───────────────────────────────────
+//
+// QLabel 自己不画省略号，长文件名 / 长 mime / 长对端名会把整行撑破，浮板
+// 又是定宽 520px，多出来的部分直接被裁掉。
+//
+// 关键在于横向要配 QSizePolicy::Ignored：QLayout 算最小宽度时看的是
+// minimumSizeHint，只对 Ignored 才会算成 0。写成 setMinimumWidth(0) 是压不住的
+// ——QWidgetItem 取的是 max(minimumSizeHint, minimumSize)，hint 仍然按全文算。
+// 只设 Ignored 不设省略号也不行，文字会直接被裁掉半截。
+class ElidedLabel : public QWidget {
+    Q_OBJECT
+public:
+    explicit ElidedLabel(const QString &text, QWidget *parent = nullptr);
+
+    void setFullText(const QString &text);
+    QString fullText() const { return full_; }
+    void setAlignmentFlag(Qt::Alignment a);
+
+    QSize sizeHint() const override;
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+    void resizeEvent(QResizeEvent *) override;
+
+private:
+    QString full_;
+    Qt::Alignment align_ = Qt::AlignLeft | Qt::AlignVCenter;
+};
+
 // ── 剪贴板历史行：18px 类型块 + 双行文字 + 时间 + 写入按钮 ───────────────
 //
 // 设计稿 ui.css .list__row + .clip__type + .list__label/.list__hint。
@@ -359,9 +388,11 @@ private:
 class ClipRow : public QWidget {
     Q_OBJECT
 public:
-    // iconName 取 types 图标名；trailing 由调用方给出（本屏给「时间 + 写入」）。
+    // leading 非空时用它顶替默认的 18px 类型块（文件传输屏要的是 28px 状态色
+    // 图标，由调用方按 ok/warn/danger 取好色再传进来）；为空则按 iconName
+    // 生成类型块。trailing 由调用方给出。
     ClipRow(const QString &iconName, const QString &text, const QString &hint,
-            QWidget *trailing, QWidget *parent = nullptr);
+            QWidget *trailing, QWidget *parent = nullptr, QWidget *leading = nullptr);
 
 Q_SIGNALS:
     void clicked();
@@ -372,16 +403,9 @@ protected:
     void enterEvent(QEnterEvent *) override;
     void leaveEvent(QEvent *) override;
     void paintEvent(QPaintEvent *) override;
-    void resizeEvent(QResizeEvent *) override;
 
 private:
-    void relayoutText();
-
-    QLabel *iconLabel_ = nullptr;
-    QLabel *title_ = nullptr;
-    QLabel *hintWidget_ = nullptr;
-    QString titleText_;
-    QString hintText_;
+    QWidget *leading_ = nullptr;
     QWidget *trailing_ = nullptr;
     bool hovered_ = false;
     bool pressed_ = false;

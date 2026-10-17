@@ -879,10 +879,60 @@ void NavRow::paintEvent(QPaintEvent *)
     pt.drawRect(rect());
 }
 
+// ── ElidedLabel ──────────────────────────────────────────────────────
+ElidedLabel::ElidedLabel(const QString &text, QWidget *parent) : QWidget(parent), full_(text)
+{
+    // 横向 Ignored 是这个控件能用的前提，见 widgets.h 的说明。
+    setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    setAttribute(Qt::WA_TranslucentBackground);
+    QFont f = uiFont(tokens::kFont12);
+    f.setPixelSize(tokens::kFont12);
+    setFont(f);
+}
+
+void ElidedLabel::setFullText(const QString &text)
+{
+    if (full_ == text) {
+        return;
+    }
+    full_ = text;
+    update();
+}
+
+void ElidedLabel::setAlignmentFlag(Qt::Alignment a)
+{
+    align_ = a;
+    update();
+}
+
+QSize ElidedLabel::sizeHint() const
+{
+    const QFontMetricsF fm(font());
+    return {qCeil(fm.horizontalAdvance(full_)), qCeil(fm.height())};
+}
+
+void ElidedLabel::resizeEvent(QResizeEvent *e)
+{
+    QWidget::resizeEvent(e);
+    update();
+}
+
+void ElidedLabel::paintEvent(QPaintEvent *)
+{
+    QPainter pt(this);
+    pt.setPen(palette().color(QPalette::WindowText));
+    pt.setFont(font());
+    // 宽度为负会抛断言，构造期与隐藏态都可能拿到 0，直接跳过。
+    if (width() <= 0) {
+        return;
+    }
+    pt.drawText(rect(), int(align_), fontMetrics().elidedText(full_, Qt::ElideRight, width()));
+}
+
 // ── ClipRow ───────────────────────────────────────────────────────────
 ClipRow::ClipRow(const QString &iconName, const QString &text, const QString &hint,
-                 QWidget *trailing, QWidget *parent)
-    : QWidget(parent), trailing_(trailing)
+                 QWidget *trailing, QWidget *parent, QWidget *leading)
+    : QWidget(parent), leading_(leading), trailing_(trailing)
 {
     setCursor(Qt::PointingHandCursor);
     const Palette &p = Theme::instance().palette();
@@ -893,33 +943,31 @@ ClipRow::ClipRow(const QString &iconName, const QString &text, const QString &hi
     hl->setContentsMargins(tokens::kS3, 10, tokens::kS3, 10);
     hl->setSpacing(tokens::kS3);
 
-    // .clip__type：18×18 / r 4 / surface-3 底 / text-2 图标。
-    auto *typeBox = new QWidget(this);
-    auto *tl = new QHBoxLayout(typeBox);
-    tl->setContentsMargins(0, 0, 0, 0);
-    iconLabel_ = new QLabel(typeBox);
-    iconLabel_->setFixedSize(tokens::kBadgeHeight, tokens::kBadgeHeight);
-    iconLabel_->setAlignment(Qt::AlignCenter);
-    iconLabel_->setPixmap(icons::icon(iconName, 12, p.text2).pixmap(12, 12));
-    tl->addWidget(iconLabel_);
-    applyBoxStyle(typeBox, QStringLiteral("border-radius:4px;background:%1").arg(cssColor(p.surface3)));
-    hl->addWidget(typeBox, 0, Qt::AlignVCenter);
+    if (leading_ == nullptr) {
+        // .clip__type：18×18 / r 4 / surface-3 底 / text-2 图标。
+        leading_ = new QWidget(this);
+        auto *tl = new QHBoxLayout(leading_);
+        tl->setContentsMargins(0, 0, 0, 0);
+        auto *iconLabel = new QLabel(leading_);
+        iconLabel->setFixedSize(tokens::kBadgeHeight, tokens::kBadgeHeight);
+        iconLabel->setAlignment(Qt::AlignCenter);
+        iconLabel->setPixmap(icons::icon(iconName, 12, p.text2).pixmap(12, 12));
+        tl->addWidget(iconLabel);
+        applyBoxStyle(leading_,
+                      QStringLiteral("border-radius:4px;background:%1").arg(cssColor(p.surface3)));
+    } else {
+        leading_->setParent(this);
+    }
+    hl->addWidget(leading_, 0, Qt::AlignVCenter);
 
     auto *col = new QVBoxLayout;
     col->setContentsMargins(0, 0, 0, 0);
     col->setSpacing(2);
-    auto *title = new QLabel(text, this);
-    // 主文本单行省略（.list__row 里的 .ellipsis）。QLabel 自己不会画省略号，
-    // 这里按 label 自己的实际宽度手算；宽度取 label 自身而不是整行，
-    // 这样布局怎么分配就由布局说了算，不必在这里把间距再复算一遍。
-    // 横向 sizePolicy 给 Ignored 是必须的：否则 label 的 sizeHint 来自
-    // 未截断的全文，会反过来把整行撑宽，省略号永远轮不到生效。
-    title->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    auto *title = new ElidedLabel(text, this);
     title->setFont(uiFont(tokens::kFont12));
     title->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
     col->addWidget(title);
-    auto *hintLabel = new QLabel(hint, this);
-    hintLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    auto *hintLabel = new ElidedLabel(hint, this);
     hintLabel->setFont(uiFont(tokens::kFont11));
     hintLabel->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     col->addWidget(hintLabel);
@@ -928,26 +976,6 @@ ClipRow::ClipRow(const QString &iconName, const QString &text, const QString &hi
     if (trailing_ != nullptr) {
         hl->addWidget(trailing_, 0, Qt::AlignVCenter);
     }
-    title_ = title;
-    hintWidget_ = hintLabel;
-    titleText_ = text;
-    hintText_ = hint;
-}
-
-void ClipRow::relayoutText()
-{
-    if (title_ == nullptr || hintWidget_ == nullptr) {
-        return;
-    }
-    auto elide = [](QLabel *label, const QString &full) {
-        if (label->width() <= 0) {
-            return;
-        }
-        label->setText(
-            QFontMetricsF(label->font()).elidedText(full, Qt::ElideRight, label->width()));
-    };
-    elide(title_, titleText_);
-    elide(hintWidget_, hintText_);
 }
 
 void ClipRow::mousePressEvent(QMouseEvent *)
@@ -980,12 +1008,6 @@ void ClipRow::leaveEvent(QEvent *e)
     QWidget::leaveEvent(e);
 }
 
-void ClipRow::resizeEvent(QResizeEvent *e)
-{
-    QWidget::resizeEvent(e);
-    relayoutText();
-}
-
 void ClipRow::paintEvent(QPaintEvent *)
 {
     const Palette &p = Theme::instance().palette();
@@ -995,8 +1017,8 @@ void ClipRow::paintEvent(QPaintEvent *)
         pt.setBrush(pressed_ ? p.surfacePress : p.surfaceHi);
         pt.drawRect(rect());
     }
-    // .list__row 的行间分隔：1px hairline。整组最后一行不画由调用方决定，
-    // 这里统一画满宽，末行多一道线比少一道更难看出差别。
+    // .list__row 的行间分隔：1px hairline。末行多一道线比少一道更难看出差别，
+    // 这里统一画满宽，不去为「是不是最后一行」再存一个状态。
     pt.setPen(p.hairline);
     pt.drawLine(0, height() - 1, width() - 1, height() - 1);
 }
