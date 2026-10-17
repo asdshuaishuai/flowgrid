@@ -336,6 +336,13 @@ Collapsible::Collapsible(const QString &title, const QString &iconName, QWidget 
     auto *hl = new QHBoxLayout(head_);
     hl->setContentsMargins(tokens::kS3, 9, tokens::kS3, 9);
     hl->setSpacing(tokens::kS2);
+    // ui.css .section__head 的 cursor:pointer。指针不在手上时，头部跟正文长得
+    // 一模一样，用户不知道这里能点。
+    head_->setCursor(Qt::PointingHandCursor);
+    // 悬停判定写在 Collapsible::mouseMoveEvent 里（要判断指针是不是落在头上），
+    // 所以本控件必须收得到 move 事件。
+    setMouseTracking(true);
+    setFocusPolicy(Qt::StrongFocus);
     connect(&Theme::instance(), &Theme::changed, this, [this] {
         const Palette &p = Theme::instance().palette();
         applyBoxStyle(this,
@@ -395,7 +402,93 @@ void Collapsible::mouseReleaseEvent(QMouseEvent *e)
     if (head_->geometry().contains(e->position().toPoint())) {
         setCollapsed(!collapsed_);
     }
+    head_->setFocus(Qt::MouseFocusReason);
     QFrame::mouseReleaseEvent(e);
+}
+
+void Collapsible::mouseMoveEvent(QMouseEvent *e)
+{
+    const bool over = head_->geometry().contains(e->position().toPoint());
+    if (over != headHovered_) {
+        headHovered_ = over;
+        refreshHeadState();
+    }
+    QFrame::mouseMoveEvent(e);
+}
+
+void Collapsible::leaveEvent(QEvent *e)
+{
+    if (headHovered_) {
+        headHovered_ = false;
+        refreshHeadState();
+    }
+    QFrame::leaveEvent(e);
+}
+
+void Collapsible::keyPressEvent(QKeyEvent *e)
+{
+    // 头是 QWidget，Tab 走不到它，所以键盘可达性挂在本控件上：
+    // 浮板拿到焦点后用 ↑↓ 在折叠区之间走，回车/空格展开收起。
+    switch (e->key()) {
+    case Qt::Key_Space:
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+        setCollapsed(!collapsed_);
+        e->accept();
+        return;
+    case Qt::Key_Up:
+    case Qt::Key_Down: {
+        const QList<Collapsible *> all =
+            findChildren<Collapsible *>(QString(), Qt::FindChildrenRecursively);
+        const int n = all.size();
+        if (n == 0) {
+            break;
+        }
+        const int cur = all.indexOf(this);
+        const int next = (cur + (e->key() == Qt::Key_Down ? 1 : n - 1)) % n;
+        all.at(next)->setFocus(Qt::TabFocusReason);
+        e->accept();
+        return;
+    }
+    default:
+        break;
+    }
+    QFrame::keyPressEvent(e);
+}
+
+void Collapsible::paintFocusRing(QPainter &p)
+{
+    if (!hasFocus()) {
+        return;
+    }
+    // ui.css .section__head:focus-visible —— 2px 主色、offset -2px，即贴着头的
+    // 内侧画一圈，不外扩到卡外。pen 画在路径上会往外渗半像素，所以路径本身
+    // 再往里收 1px。
+    p.setPen(QPen(Theme::instance().palette().accent, 2));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(QRectF(head_->geometry()).adjusted(2.0, 2.0, -2.0, -2.0),
+                      tokens::kRadiusCard - 2, tokens::kRadiusCard - 2);
+}
+
+void Collapsible::paintEvent(QPaintEvent *)
+{
+    QPainter p(this);
+    // .section__head:hover —— surface-hi 底。头本身是透明 QWidget，父控件先把
+    // 这块底铺上，再由子控件画图标与标题。
+    if (headHovered_ && head_ != nullptr) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(Theme::instance().palette().surfaceHi);
+        p.drawRoundedRect(QRectF(head_->geometry()), tokens::kRadiusCard,
+                          tokens::kRadiusCard);
+    }
+    paintFocusRing(p);
+}
+
+void Collapsible::refreshHeadState()
+{
+    if (head_ != nullptr) {
+        head_->update();
+    }
 }
 
 // ── BarChart ──────────────────────────────────────────────────────────
@@ -1105,6 +1198,7 @@ ListRow::ListRow(const QString &label, const QString &hint, QWidget *control, QW
     hint_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text3)));
     col->addWidget(title);
     col->addWidget(hint_);
+    connect(&Theme::instance(), &Theme::changed, this, [this] { update(); });
 
     hl->addLayout(col);
     hl->addStretch(1);
@@ -1118,11 +1212,33 @@ void ListRow::setHint(const QString &hint)
     hint_->setText(hint);
 }
 
+void ListRow::enterEvent(QEnterEvent *e)
+{
+    hovered_ = true;
+    update();
+    QFrame::enterEvent(e);
+}
+
+void ListRow::leaveEvent(QEvent *e)
+{
+    hovered_ = false;
+    update();
+    QFrame::leaveEvent(e);
+}
+
 void ListRow::paintEvent(QPaintEvent *)
 {
-    // 列表行之间用 hairline 分隔：设计稿是「分隔线 + 留白」而非整块描边。
+    const Palette &pal = Theme::instance().palette();
     QPainter p(this);
-    p.setPen(Theme::instance().palette().hairline);
+    // ui.css .list__row:hover —— surface-hi 底。行内都是开关、下拉、按钮，
+    // 没有这层反馈时鼠标划过整块列表像是在读静态文字。
+    if (hovered_) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(pal.surfaceHi);
+        p.drawRect(rect());
+    }
+    // 列表行之间用 hairline 分隔：设计稿是「分隔线 + 留白」而非整块描边。
+    p.setPen(pal.hairline);
     p.drawLine(0, 0, width(), 0);
 }
 

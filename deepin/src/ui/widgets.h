@@ -152,14 +152,22 @@ public:
 
 protected:
     void mouseReleaseEvent(QMouseEvent *) override;
+    void mouseMoveEvent(QMouseEvent *) override;
+    void leaveEvent(QEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
+    void paintEvent(QPaintEvent *) override;
 
 private:
-    void relayout();
+    // 设计稿 .section__head:hover 是 surface-hi 底、:focus-visible 是 2px 主色
+    // 内描边。头是唯一能点的区域，所以悬停判定要落在头上而不是整个折叠区。
+    void refreshHeadState();
+    void paintFocusRing(QPainter &p);
 
     QWidget *body_ = nullptr;
     QWidget *head_ = nullptr;
     QLabel *chevron_ = nullptr;
     bool collapsed_ = false;
+    bool headHovered_ = false;
 };
 
 // ── 柱状图：70px 高 / 12 根 / 最近一根用主色 ──────────────────────────
@@ -346,9 +354,12 @@ public:
 
 protected:
     void paintEvent(QPaintEvent *) override;
+    void enterEvent(QEnterEvent *) override;
+    void leaveEvent(QEvent *) override;
 
 private:
     QLabel *hint_ = nullptr;
+    bool hovered_ = false;
 };
 
 // ── 单行省略标签：设计稿的 .ellipsis ───────────────────────────────────
