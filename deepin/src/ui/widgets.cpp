@@ -1229,6 +1229,19 @@ QWidget *banner(const QString &text, QWidget *parent, BannerVariant variant)
     return w;
 }
 
+QLabel *groupTitle(const QString &text, QWidget *parent)
+{
+    const Palette &p = Theme::instance().palette();
+    auto *label = new QLabel(text, parent);
+    label->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
+    label->setStyleSheet(QStringLiteral("color:%1;background:%2;padding:8px %3px 6px %3px;"
+                                        "border-bottom:1px solid %4")
+                             .arg(cssColor(p.text3), cssColor(p.surface2))
+                             .arg(QString::number(tokens::kS3))
+                             .arg(cssColor(p.hairline)));
+    return label;
+}
+
 // ── SegmentedControl ─────────────────────────────────────────────────
 // ui.css .seg：外框 padding 2 / gap 2 / r-ctl 圆角 / surface-3 底；每档
 // height 24、padding 0 10px、r 为 4；选中档换 surface 底 + shadow-bar。

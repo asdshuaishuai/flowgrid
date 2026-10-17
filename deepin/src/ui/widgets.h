@@ -426,6 +426,14 @@ enum class BannerVariant { Info, Warn, Danger, Ok, Neutral };
 
 QWidget *banner(const QString &text, QWidget *parent, BannerVariant variant);
 
+// ── 列表分组标题：设计稿 ui.css .list__group-title ──────────────────────
+//
+// 它是 .list 卡片**里面**的头一行（surface-2 底 + 下 hairline），不是浮在卡片
+// 外的小标题——后者没有底色也没有那条分隔线，一眼看过去像另一个层级。
+// 五屏都要用（设置 / 连接 / 延迟 / 剪贴板 / 文件），此前每屏各写一份，padding
+// 与底色已经开始漂，这里收成一处。
+QLabel *groupTitle(const QString &text, QWidget *parent);
+
 // ── 分段控件：设计稿 ui.css .seg ────────────────────────────────────────
 //
 // 外框 padding 2 / gap 2 / r-ctl 圆角 / surface-3 底；每档 24px 高、

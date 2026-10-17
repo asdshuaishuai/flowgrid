@@ -158,17 +158,7 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         deviceListLayout_->setContentsMargins(0, 0, 0, 0);
         deviceListLayout_->setSpacing(0);
 
-        // 设计稿的 .list__group-title 是卡片里的头一行（surface-2 底 + 下
-        // hairline），不是浮在卡片外的小标题；重建只清内层，标题留在原位。
-        auto *groupTitle = new QLabel(tr("分设备"), card);
-        groupTitle->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-        groupTitle->setStyleSheet(
-            QStringLiteral("color:%1;background:%2;padding:8px %3px 6px %3px;"
-                           "border-bottom:1px solid %4")
-                .arg(css(p.text3), css(p.surface2))
-                .arg(tokens::kS3)
-                .arg(css(p.hairline)));
-        deviceListLayout_->addWidget(groupTitle);
+        deviceListLayout_->addWidget(groupTitle(tr("分设备"), card));
 
         deviceRows_ = new QVBoxLayout;
         deviceRows_->setContentsMargins(0, 0, 0, 0);

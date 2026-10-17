@@ -44,18 +44,6 @@ int historyCountIndex(int count)
     return 0;
 }
 
-// 分组标题：设计稿 .list__group-title，全大写 + 字距 + text-3
-QLabel *groupTitle(const QString &text, QWidget *parent)
-{
-    auto *label = new QLabel(text, parent);
-    label->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-    label->setContentsMargins(0, tokens::kS2, 0, tokens::kS1);
-    label->setStyleSheet(
-        QStringLiteral("color:%1;text-transform:uppercase;letter-spacing:0.4px")
-            .arg(css(Theme::instance().palette().text3)));
-    return label;
-}
-
 // 组容器：hairline 包裹的列表，替代整块描边（设计稿的「线 + 留白」层级）
 QWidget *groupBox(const QString &title, const QList<QWidget *> &rows, QWidget *parent)
 {
@@ -64,13 +52,15 @@ QWidget *groupBox(const QString &title, const QList<QWidget *> &rows, QWidget *p
     auto *vl = new QVBoxLayout(box);
     vl->setContentsMargins(0, 0, 0, 0);
     vl->setSpacing(0);
-    if (!title.isEmpty()) {
-        vl->addWidget(groupTitle(title, box));
-    }
     auto *list = new QWidget(box);
     auto *ll = new QVBoxLayout(list);
     ll->setContentsMargins(0, 0, 0, 0);
     ll->setSpacing(0);
+    // 分组标题在卡片**里面**的头一行（设计稿 .list__group-title），不是浮在卡片
+    // 外的小标题——后者没有底色也没有那条 hairline，一眼看过去像另一个层级。
+    if (!title.isEmpty()) {
+        ll->addWidget(groupTitle(title, list));
+    }
     applyBoxStyle(list,
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
                       .arg(css(p.line2))

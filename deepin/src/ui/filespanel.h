@@ -115,9 +115,6 @@ private:
     QWidget *buildRecords();
     QWidget *buildSettings();
     QWidget *buildFooter();
-    // 「进行中 / 传输记录」两个分组标题：设计稿把它们放在 .list 卡片**里面**
-    // 的头一行（surface-2 底 + 下 hairline），不是浮在卡片外的小标题。
-    QLabel *buildGroupTitle(const QString &text, QWidget *host, QVBoxLayout *layout);
     // 标题栏胶囊写着「N 项进行中」，条目状态一变就要跟着改。
     void refreshPill();
     void rebuildTransfers();

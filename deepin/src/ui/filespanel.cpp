@@ -254,20 +254,6 @@ void FilesPanel::refreshPill()
                              .arg(css(on && active > 0 ? p.ok.soft : p.idle.soft)));
 }
 
-QLabel *FilesPanel::buildGroupTitle(const QString &text, QWidget *host, QVBoxLayout *layout)
-{
-    const Palette &p = Theme::instance().palette();
-    auto *label = new QLabel(text, host);
-    label->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-    label->setStyleSheet(QStringLiteral("color:%1;background:%2;padding:8px %3px 6px %3px;"
-                                        "border-bottom:1px solid %4")
-                             .arg(css(p.text3), css(p.surface2))
-                             .arg(tokens::kS3)
-                             .arg(css(p.hairline)));
-    layout->addWidget(label);
-    return label;
-}
-
 QWidget *FilesPanel::buildTransferList()
 {
     const Palette &p = Theme::instance().palette();
@@ -278,7 +264,7 @@ QWidget *FilesPanel::buildTransferList()
     // 设计稿里「进行中」和「传输记录」都是 .list 卡片（1px line-2 描边 + r-card
     // 圆角 + surface 底），和剪贴板屏的同步历史是同一个容器样式；分组标题也是
     // 卡片里的头一行，不是浮在卡片外的小标题。
-    buildGroupTitle(tr("进行中"), list, transferLayout_);
+    transferLayout_->addWidget(groupTitle(tr("进行中"), list));
     transferRows_ = new QVBoxLayout;
     transferRows_->setContentsMargins(0, 0, 0, 0);
     transferRows_->setSpacing(0);
@@ -338,7 +324,7 @@ QWidget *FilesPanel::buildRecords()
     recordsLayout_ = new QVBoxLayout(list);
     recordsLayout_->setContentsMargins(0, 0, 0, 0);
     recordsLayout_->setSpacing(0);
-    buildGroupTitle(tr("传输记录"), list, recordsLayout_);
+    recordsLayout_->addWidget(groupTitle(tr("传输记录"), list));
     recordRows_ = new QVBoxLayout;
     recordRows_->setContentsMargins(0, 0, 0, 0);
     recordRows_->setSpacing(0);

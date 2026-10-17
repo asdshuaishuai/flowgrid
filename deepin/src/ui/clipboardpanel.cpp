@@ -305,25 +305,17 @@ QWidget *ClipboardPanel::buildFilterRow()
 
 QWidget *ClipboardPanel::buildHistory()
 {
+    const Palette &p = Theme::instance().palette();
     auto *list = new QWidget(this);
     historyLayout_ = new QVBoxLayout(list);
     historyLayout_->setContentsMargins(0, 0, 0, 0);
     historyLayout_->setSpacing(0);
 
     // 设计稿的 .list__group-title 是在 .list 卡片**里面**的头一行，不是浮在
-    // 卡片外的小标题：surface-2 底 + 下 hairline，跟着列表一起滚动。
-    auto *groupTitle = new QLabel(tr("同步历史 · 保留最近 %1 条")
-                                      .arg(Settings::instance().clipboardHistory()),
-                                  list);
-    groupTitle->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-    const Palette &p = Theme::instance().palette();
-    groupTitle->setStyleSheet(
-        QStringLiteral("color:%1;background:%2;padding:8px %3px 6px %3px;"
-                       "border-bottom:1px solid %4")
-            .arg(css(p.text3), css(p.surface2))
-            .arg(tokens::kS3)
-            .arg(css(p.hairline)));
-    historyLayout_->addWidget(groupTitle);
+    // 卡片外的小标题：surface-2 底 + 下 hairline，跟着列表一起滚动。五屏共用
+    // widgets.cpp 的 groupTitle()，免得 padding 与底色各写一份、各漂一点。
+    historyLayout_->addWidget(groupTitle(
+        tr("同步历史 · 保留最近 %1 条").arg(Settings::instance().clipboardHistory()), list));
 
     rowsLayout_ = new QVBoxLayout;
     rowsLayout_->setContentsMargins(0, 0, 0, 0);
