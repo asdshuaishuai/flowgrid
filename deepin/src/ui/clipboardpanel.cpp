@@ -109,6 +109,28 @@ QString humanSize(qint64 bytes)
     return QStringLiteral("%1 MB").arg(bytes / (1024.0 * 1024.0), 0, 'f', 1);
 }
 
+// 页脚那行载荷规格。设计稿写的是「62 B · 单帧发送 · 未分段」——那是 62 字节
+// 示例数据下的结论，不是任何载荷的通用事实：单帧能装多少由 MIME 长度决定
+// （Go 侧 MaxClipboardChunk = 255 - 7 - len(mime)，§5.3），text/plain 时超过
+// 238 B 就必然多帧。这里按协议同一条公式算段数，不无条件宣称「未分段」。
+QString specText(const ClipEntry &e)
+{
+    if (e.raw.isEmpty()) {
+        return QStringLiteral("--");
+    }
+    const int perFrame = 248 - e.mime.toUtf8().size();
+    if (perFrame <= 0) {
+        return ClipboardPanel::tr("%1 · MIME 名过长，协议会拒绝发送")
+            .arg(humanSize(e.raw.size()));
+    }
+    const int frames = static_cast<int>((e.raw.size() + perFrame - 1) / perFrame);
+    return frames <= 1
+               ? ClipboardPanel::tr("%1 · 单帧发送 · 未分段").arg(humanSize(e.raw.size()))
+               : ClipboardPanel::tr("%1 · 分 %2 帧发送")
+                     .arg(humanSize(e.raw.size()))
+                     .arg(frames);
+}
+
 // 「标签 + 开关」一行：ui.css .row.between + .switch。
 QWidget *switchRow(const QString &label, bool checked, const QString &hint, QWidget *parent)
 {
@@ -206,7 +228,8 @@ QWidget *ClipboardPanel::buildCurrent()
                       .arg(QString::number(tokens::kRadiusChip), css(p.surface3)));
     auto *title = new QLabel(tr("当前剪贴板"), head);
     title->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
-    auto *mimeBadge = new Badge(QStringLiteral("text/plain"), Badge::Variant::Neutral, head);
+    auto *mimeBadge = new Badge(QStringLiteral("--"), Badge::Variant::Neutral, head);
+    mimeBadge_ = mimeBadge;
     hl->addWidget(typeIcon);
     hl->addWidget(title);
     hl->addWidget(mimeBadge);
@@ -492,7 +515,12 @@ void ClipboardPanel::reloadHistory()
             qCInfo(lcClipboard) << "剪贴板条目超单条上限" << data.size() << QStringLiteral("B，已丢弃");
             continue;
         }
-        history_.append(e);
+        // 历史的不变量是 history_[0] 最新：上方预览取 first()，下面的列表也按
+        // 原顺序渲染（设计稿 clipboard.html 的 .list 就是最新一条在最上）。
+        // 此前这里是 append——入站条目越晚到越靠后，于是「当前剪贴板」显示的是
+        // 历史里最旧的那条，列表也整个倒过来；而 trimHistory 又从头删，超上限
+        // 时被挤掉的恰恰是刚到的那条。
+        history_.prepend(e);
         // 「接收后自动写入本地」打开时，收一条就写回本机系统剪贴板一次。
         // 真正的 QClipboard 写入由 main 接 localWriteRequested 完成。
         if (Settings::instance().clipboardAutoWrite()) {
@@ -508,7 +536,8 @@ void ClipboardPanel::trimHistory()
 {
     const int keep = Settings::instance().clipboardHistory();
     while (history_.size() > keep) {
-        history_.removeFirst();
+        // 队尾是最旧的（见 reloadHistory 的不变量），要淘汰的是它。
+        history_.removeLast();
     }
 }
 
@@ -527,7 +556,10 @@ void ClipboardPanel::seedForSnapshot()
         {"text/uri-list", "https://example.internal/review/4821", "Linux Workstation", 240},
         {"image/png", "screenshot-2026-10-16.png", "Windows 11 Desktop", 540},
     };
-    for (const Seed &s : seeds) {
+    // 种子按显示顺序（最新在前）列出来，而历史的不变量是 history_[0] 最新——
+    // 所以从尾往头 prepend，铺出来的顺序和 reloadHistory 收到的那批一致。
+    for (int i = int(sizeof(seeds) / sizeof(seeds[0])) - 1; i >= 0; --i) {
+        const Seed &s = seeds[i];
         ClipEntry e;
         e.mime = QString::fromLatin1(s.mime);
         e.raw = QByteArray(s.text);
@@ -537,7 +569,7 @@ void ClipboardPanel::seedForSnapshot()
         e.kind = kindOf(e.mime, e.raw);
         e.source = QString::fromUtf8(s.source);
         e.agoSecs = s.ago;
-        history_.append(e);
+        history_.prepend(e);
     }
     trimHistory();
     rebuildHistory();
@@ -629,9 +661,10 @@ void ClipboardPanel::rebuildHistory()
     // 「本机现在的剪贴板是什么」的查询口，所以这里和历史首条同源。
     current_ = history_.isEmpty() ? ClipEntry() : history_.first();
     setPreviewText(current_.raw.isEmpty() ? tr("暂无剪贴板内容") : current_.text);
-    spec_->setText(current_.raw.isEmpty()
-                       ? QStringLiteral("--")
-                       : tr("%1 · 单帧发送 · 未分段").arg(humanSize(current_.raw.size())));
+    if (mimeBadge_ != nullptr) {
+        mimeBadge_->setText(current_.raw.isEmpty() ? QStringLiteral("--") : current_.mime);
+    }
+    spec_->setText(specText(current_));
 
     const QString kind = filter_ != nullptr ? filter_->currentData().toString()
                                             : QStringLiteral("全部");

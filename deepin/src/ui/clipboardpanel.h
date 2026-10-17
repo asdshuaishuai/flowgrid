@@ -84,6 +84,9 @@ private:
     QLineEdit *search_ = nullptr;
     QLabel *preview_ = nullptr;
     QLabel *spec_ = nullptr;
+    // 头部那颗 MIME 徽章跟着 current_ 走。设计稿上写死了 text/plain（示例数据），
+    // 但这一屏是能拿到真实 MIME 的——收到一张图还挂着 text/plain 就是假话。
+    Badge *mimeBadge_ = nullptr;
     QWidget *pill_ = nullptr;
     QLabel *pillLabel_ = nullptr;
     StatusDot *pillDot_ = nullptr;
