@@ -478,14 +478,16 @@ void FilesPanel::seedForSnapshot()
         int state;   // 0 进行中 1 完成 2 已拒绝 3 校验失败 4 超限
     };
     // 条目取自 files.html 的两个 .list，使截图可与设计稿逐行对照。
+    // 数组按**由旧到新**排：entries_ 是追加序，rebuildRecords() 倒着遍历取
+    // 「最新在前」，所以这里反过来写，截图里的行序才与设计稿一致。
     const Seed seeds[] = {
+        {"ubuntu-24.04-desktop.iso", false, 0, 4509715660LL, 32 * 60, 4},
+        {"build-artifact.tar.zst", true, 3251712, 3251712, 41 * 60, 3},
+        {"salary-2026.xlsx", true, 655360, 655360, 28 * 60, 2},
+        {"protocol-notes.md", false, 24576, 24576, 12 * 60, 1},
+        {"design-spec-v3.pdf", true, 2202009, 2202009, 3 * 60, 1},
         {"flowgrid-0.9.2-x86_64.AppImage", false, 8458240, 12451840, 0, 0},
         {"keymap-tables.rs", true, 0, 18432, 0, 0},
-        {"design-spec-v3.pdf", true, 2202009, 2202009, 3 * 60, 1},
-        {"protocol-notes.md", false, 24576, 24576, 12 * 60, 1},
-        {"salary-2026.xlsx", true, 655360, 655360, 28 * 60, 2},
-        {"build-artifact.tar.zst", true, 3251712, 3251712, 41 * 60, 3},
-        {"ubuntu-24.04-desktop.iso", false, 0, 4509715660LL, 32 * 60, 4},
     };
     for (const Seed &s : seeds) {
         XferEntry e;

@@ -306,10 +306,29 @@ Collapsible::Collapsible(const QString &title, const QString &iconName, QWidget 
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
+    // ui.css .section：1px line-2 描边 / r-card 圆角 / surface-2 底。
+    // 少了这一层，折叠区就只是几行浮在面板底色上的文字，与设计稿的层级完全
+    // 对不上——五个屏十来个折叠区都靠它撑起分组。QFrame 默认不参与样式表
+    // 绘制底色，必须显式打开（和 DropZone、托盘快速切换按钮同一个坑）。
+    setAttribute(Qt::WA_StyledBackground, true);
+    applyBoxStyle(this,
+                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                      .arg(cssColor(Theme::instance().palette().line2))
+                      .arg(QString::number(tokens::kRadiusCard))
+                      .arg(cssColor(Theme::instance().palette().surface2)));
+
     head_ = new QWidget(this);
     auto *hl = new QHBoxLayout(head_);
     hl->setContentsMargins(tokens::kS3, 9, tokens::kS3, 9);
     hl->setSpacing(tokens::kS2);
+    connect(&Theme::instance(), &Theme::changed, this, [this] {
+        const Palette &p = Theme::instance().palette();
+        applyBoxStyle(this,
+                      QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                          .arg(cssColor(p.line2))
+                          .arg(QString::number(tokens::kRadiusCard))
+                          .arg(cssColor(p.surface2)));
+    });
 
     if (!iconName.isEmpty()) {
         auto *ic = new QLabel(head_);
@@ -333,6 +352,9 @@ Collapsible::Collapsible(const QString &title, const QString &iconName, QWidget 
     hl->addWidget(chevron_);
 
     root->addWidget(head_);
+    // .section__body 上边一道 hairline，折叠时这条线就是头与身的分界。
+    body_->setStyleSheet(QStringLiteral("border-top:1px solid %1")
+                             .arg(cssColor(Theme::instance().palette().hairline)));
     root->addWidget(body_);
 
     setCollapsed(false);
@@ -707,7 +729,10 @@ void DeviceCard::rebuild(const Device &device)
     }
 
     name_->setText(device.name);
-    name_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
+    // .device--off 的 opacity: .6 是整卡压暗。这里用「文字降一档」来表达同一
+    // 件事——QWidget::setOpacity 要求父控件开了 WA_TranslucentBackground，而
+    // 浮板内容区不是，为了一个离线态把整块内容区改成半透明不划算。
+    name_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(online_ ? p.text1 : p.text2)));
 
     QString meta = device.online ? device.platformLabel : tr("离线");
     if (device.online) {
@@ -718,6 +743,8 @@ void DeviceCard::rebuild(const Device &device)
     }
     meta_->setText(meta);
     latency_->setLatency(device.latencyMs, device.online);
+
+
 
     if (!online_) {
         setAction(QStringLiteral("reconnect"));
