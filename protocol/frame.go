@@ -75,11 +75,13 @@ func (f *HIDFrame) checkPayloadLen() error {
 	return nil
 }
 
-// Encode writes the frame to w in wire format (big-endian, tight packing).
-func (f *HIDFrame) Encode(w io.Writer) error {
-	if err := f.checkPayloadLen(); err != nil {
-		return err
-	}
+// headerBytes renders the 12-byte header (§5.1).
+//
+// 三个编码入口（Encode / EncodeBytes / EncodeBytesWithHMAC）原先各自抄了一遍
+// 这段字节布局，改一处漏两处就会发出对不上的帧——布局只留这一个来源。
+// PayloadLen 以 Payload 长度为准，顺手把 Header 里的值也补齐，方便调用方
+// 编码后直接读 Header。
+func (f *HIDFrame) headerBytes() [HeaderSize]byte {
 	f.Header.PayloadLen = uint8(len(f.Payload))
 
 	var buf [HeaderSize]byte
@@ -87,8 +89,17 @@ func (f *HIDFrame) Encode(w io.Writer) error {
 	binary.BigEndian.PutUint16(buf[1:3], f.Header.Sequence)
 	binary.BigEndian.PutUint64(buf[3:11], f.Header.Timestamp)
 	buf[11] = f.Header.PayloadLen
+	return buf
+}
 
-	if _, err := w.Write(buf[:]); err != nil {
+// Encode writes the frame to w in wire format (big-endian, tight packing).
+func (f *HIDFrame) Encode(w io.Writer) error {
+	if err := f.checkPayloadLen(); err != nil {
+		return err
+	}
+	hdr := f.headerBytes()
+
+	if _, err := w.Write(hdr[:]); err != nil {
 		return err
 	}
 	if len(f.Payload) > 0 {
@@ -104,17 +115,8 @@ func (f *HIDFrame) EncodeBytes() ([]byte, error) {
 	if err := f.checkPayloadLen(); err != nil {
 		return nil, err
 	}
-	var buf []byte
-	f.Header.PayloadLen = uint8(len(f.Payload))
-
-	hdr := make([]byte, HeaderSize)
-	hdr[0] = f.Header.FrameType
-	binary.BigEndian.PutUint16(hdr[1:3], f.Header.Sequence)
-	binary.BigEndian.PutUint64(hdr[3:11], f.Header.Timestamp)
-	hdr[11] = f.Header.PayloadLen
-
-	buf = append(hdr, f.Payload...)
-	return buf, nil
+	hdr := f.headerBytes()
+	return append(hdr[:], f.Payload...), nil
 }
 
 // EncodeBytesWithHMAC returns the frame with an 8-byte HMAC-SHA256 truncation appended.
@@ -123,16 +125,8 @@ func (f *HIDFrame) EncodeBytesWithHMAC(key []byte) ([]byte, error) {
 	if err := f.checkPayloadLen(); err != nil {
 		return nil, err
 	}
-	var buf []byte
-	f.Header.PayloadLen = uint8(len(f.Payload))
-
-	hdr := make([]byte, HeaderSize)
-	hdr[0] = f.Header.FrameType
-	binary.BigEndian.PutUint16(hdr[1:3], f.Header.Sequence)
-	binary.BigEndian.PutUint64(hdr[3:11], f.Header.Timestamp)
-	hdr[11] = f.Header.PayloadLen
-
-	buf = append(hdr, f.Payload...)
+	hdr := f.headerBytes()
+	buf := append(hdr[:], f.Payload...)
 	if len(key) > 0 {
 		hmac := ComputeHMAC(key, buf)
 		buf = append(buf, hmac[:]...)
