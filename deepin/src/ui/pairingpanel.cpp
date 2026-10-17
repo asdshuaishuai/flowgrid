@@ -104,16 +104,32 @@ QWidget *PairingPanel::buildSteps()
         num->setFixedSize(22, 22);
         num->setAlignment(Qt::AlignCenter);
         if (done) {
-            num->setPixmap(icons::icon(QStringLiteral("check"), 12, p.onAccent).pixmap(12, 12));
+            num->setPixmap(icons::icon(QStringLiteral("check"), 12, p.ok.text).pixmap(12, 12));
         } else {
             num->setText(QString::number(i + 1));
             num->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
         }
-        // .step--on 整圆填主色；.step--done 填 ok 实色。
-        const QColor fill = active ? p.accent : (done ? p.ok.solid : p.surface3);
-        const QColor fg = (active || done) ? p.onAccent : p.text3;
-        num->setStyleSheet(QStringLiteral("background:%1;color:%2;border-radius:11px")
-                               .arg(css(fill), css(fg)));
+        // .step--on 整圆填主色 + on-accent 字；.step--done 是 ok-soft 浅底 +
+        // ok-line 描边 + ok-text 字，不是实心——实心会把「已完成」和「正在进行」
+        // 画成同一档轻重；未到的档只给 line-2 描边，圆底透出面板色。
+        QColor line = p.line2;
+        QString background = QStringLiteral("transparent");
+        QColor fg = p.text3;
+        if (active) {
+            background = css(p.accent);
+            line = p.accent;
+            fg = p.onAccent;
+        } else if (done) {
+            background = css(p.ok.soft);   // 带 alpha，css() 会输出 8 位值
+            line = p.ok.solid;
+            line.setAlphaF(0.45);
+            fg = p.ok.text;
+        }
+        num->setStyleSheet(
+            QStringLiteral("background:%1;color:%2;border:1px solid %3;border-radius:11px")
+                .arg(background)
+                .arg(css(fg))
+                .arg(css(line)));
 
         auto *text = new QLabel(labels.at(i), step);
         text->setAlignment(Qt::AlignCenter);
