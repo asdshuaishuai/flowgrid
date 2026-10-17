@@ -61,6 +61,35 @@ func TestIdentifyResponseRoundTrip(t *testing.T) {
 	}
 }
 
+// §2.2 requires reserved fields to be zero on the wire, and §3.1.2 reserves
+// capability bit 6-7. A caller that sets those bits must not leak them onto
+// the wire — the marshal paths mask them off.
+func TestIdentifyCapsReservedBitsCleared(t *testing.T) {
+	const reserved = CapabilityFlags(0xC0)
+
+	id := &IdentifyPayload{
+		Version:  1,
+		Platform: PlatformMacOS,
+		Role:     RoleHost,
+		Caps:     CapNearLink | reserved,
+		SeqInit:  1,
+		Name:     "x",
+	}
+	if got := CapabilityFlags(id.Marshal()[3]); got&reserved != 0 {
+		t.Errorf("IDENTIFY leaked reserved caps bits: 0x%02X", got)
+	}
+
+	resp := &IdentifyResponsePayload{
+		Status:   IdentifyAccepted,
+		Platform: PlatformMacOS,
+		Caps:     CapDirectLink | reserved,
+		Name:     "x",
+	}
+	if got := CapabilityFlags(resp.Marshal()[2]); got&reserved != 0 {
+		t.Errorf("IDENTIFY_RESPONSE leaked reserved caps bits: 0x%02X", got)
+	}
+}
+
 func TestIdentifyEmptyName(t *testing.T) {
 	orig := &IdentifyPayload{
 		Version:  1,

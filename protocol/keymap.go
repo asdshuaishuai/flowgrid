@@ -113,18 +113,25 @@ const (
 	ModRightMeta uint8 = 0x80
 )
 
-// Platform-specific modifier key Usage IDs (§6.4). HID frames always carry the
-// standard masks above; these codes matter at the KeyMapper layer.
+// Modifier key Usage IDs from the USB HID Usage Tables (§6.1's code space).
+// These are the codes that appear inside HID frames; on the wire a modifier is
+// additionally reported through the §6.2 bitmask, so a frame carries both.
+//
+// §6.4's per-platform table is a DIFFERENT code space (macOS virtual keycodes,
+// Windows/HID mix, Linux evdev) for the KeyMapper layer only — its values must
+// never be confused with these. Concretely: §6.4 lists Ctrl on Linux as 0x25,
+// which here is the digit-8 key (HIDKey8); and Fn (macOS 0x3F) collides with
+// F6 (HIDKeyF6) in HID space. There is no HID Usage ID for Fn, so no such
+// constant exists here.
 const (
-	HIDKeyLCtrl  uint16 = 0xE0 // Windows/Linux LCtrl
-	HIDKeyLShift uint16 = 0xE1
-	HIDKeyLAlt   uint16 = 0xE2 // Windows LMenu / macOS LOption
-	HIDKeyLMeta  uint16 = 0xE3 // Windows LWin / macOS Cmd / Linux Super
-	HIDKeyRCtrl  uint16 = 0xE4
-	HIDKeyRShift uint16 = 0xE5
-	HIDKeyRAlt   uint16 = 0xE6 // AltGr
-	HIDKeyRMeta  uint16 = 0xE7
-	HIDKeyFn     uint16 = 0x3F // macOS only
+	HIDKeyLCtrl  uint16 = 0xE0 // Left Control
+	HIDKeyLShift uint16 = 0xE1 // Left Shift
+	HIDKeyLAlt   uint16 = 0xE2 // Left Alt
+	HIDKeyLMeta  uint16 = 0xE3 // Left GUI (Cmd / Win / Super)
+	HIDKeyRCtrl  uint16 = 0xE4 // Right Control
+	HIDKeyRShift uint16 = 0xE5 // Right Shift
+	HIDKeyRAlt   uint16 = 0xE6 // Right Alt (often AltGr)
+	HIDKeyRMeta  uint16 = 0xE7 // Right GUI
 )
 
 // Convenience combined masks.

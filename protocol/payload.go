@@ -234,10 +234,6 @@ func (p *ClipboardPayload) Marshal() ([]byte, error) {
 	if uint64(p.TotalSize) < uint64(len(p.Data)) {
 		return nil, NewError(ErrInvalidPayload, "clipboard TotalSize smaller than chunk")
 	}
-	// Convenience: a single-fragment clipboard derives its total size.
-	if p.FragTot == 1 && p.TotalSize == 0 {
-		p.TotalSize = uint32(len(p.Data))
-	}
 
 	buf := make([]byte, clipboardFixedLen+len(mimeBytes)+len(p.Data))
 	buf[0] = uint8(len(mimeBytes))

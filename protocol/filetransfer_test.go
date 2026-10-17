@@ -237,6 +237,29 @@ func TestFileTransferOfferTimeout(t *testing.T) {
 	}
 }
 
+// §7.4: an unanswered offer is void after FileOfferTimeout. Accepting it late
+// must fail rather than mark a sender-abandoned transfer active — otherwise
+// r.active stays non-nil with a fresh lastMove and every new offer is declined
+// as busy until FileIdleTimeout.
+func TestFileTransferAcceptAfterOfferTimeout(t *testing.T) {
+	p := newFilePair()
+	p.receiver.OnOffer = func(FileOffer) {} // never accept automatically
+
+	current := time.Unix(0, 0)
+	p.sender.SetClock(func() time.Time { return current })
+	p.receiver.SetClock(func() time.Time { return current })
+
+	id, err := p.sender.OfferFile("slow.txt", []byte("data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	current = current.Add(31 * time.Second) // past FileOfferTimeout
+	if err := p.receiver.Accept(id); err == nil {
+		t.Fatal("accepting an offer past FileOfferTimeout must fail")
+	}
+}
+
 func TestFileTransferSecondOfferWhilePending(t *testing.T) {
 	p := newFilePair()
 	p.receiver.OnOffer = func(FileOffer) {} // do not accept

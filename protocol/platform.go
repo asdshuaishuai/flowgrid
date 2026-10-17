@@ -48,6 +48,15 @@ const (
 	CapDTLS13       CapabilityFlags = 0x08
 	CapClipboard    CapabilityFlags = 0x10
 	CapFileTransfer CapabilityFlags = 0x20
+
+	// CapDefinedMask is the set of bits this version assigns. §2.2 requires
+	// reserved fields to be zero on the wire and §3.1.2 reserves bit 6-7, so
+	// the marshal paths mask Caps with this before writing. Kept as a named
+	// constant — and derived from the Cap* values above — so that defining a
+	// new capability bit here widens the mask automatically instead of the
+	// old hardcoded 0x3F silently clearing it.
+	CapDefinedMask CapabilityFlags = CapNearLink | CapDirectLink | CapWiFiDirect |
+		CapDTLS13 | CapClipboard | CapFileTransfer
 )
 
 // Has checks if flag has a specific capability set.

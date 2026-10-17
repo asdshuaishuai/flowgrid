@@ -48,7 +48,8 @@ func (p *IdentifyPayload) Marshal() []byte {
 	buf[0] = p.Version
 	buf[1] = uint8(p.Platform)
 	buf[2] = uint8(p.Role)
-	buf[3] = uint8(p.Caps)
+	// §2.2: reserved fields must be zero on the wire; §3.1.2 reserves bit 6-7.
+	buf[3] = uint8(p.Caps & CapDefinedMask)
 	binary.BigEndian.PutUint32(buf[4:8], p.SeqInit)
 	copy(buf[8:], nameBytes)
 	buf[8+len(nameBytes)] = 0 // null terminator
@@ -97,7 +98,8 @@ func (p *IdentifyResponsePayload) Marshal() []byte {
 	buf := make([]byte, 3+len(nameBytes)+1)
 	buf[0] = p.Status
 	buf[1] = uint8(p.Platform)
-	buf[2] = uint8(p.Caps)
+	// §2.2: reserved fields must be zero on the wire; §3.1.2 reserves bit 6-7.
+	buf[2] = uint8(p.Caps & CapDefinedMask)
 	copy(buf[3:], nameBytes)
 	buf[3+len(nameBytes)] = 0
 	return buf

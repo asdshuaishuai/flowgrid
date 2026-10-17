@@ -657,6 +657,11 @@ func (r *FileReceiver) handleAbort(payload []byte) error {
 // Accept approves the pending offer and answers FILE_ACK accepted.
 func (r *FileReceiver) Accept(transferID uint16) error {
 	r.mu.Lock()
+	// §7.4: an unanswered offer is void after FileOfferTimeout. Without this
+	// the accept would mark a transfer active that the sender has already
+	// abandoned, wedging the receiver: r.active stays non-nil with a fresh
+	// lastMove, so every new offer is declined as busy until FileIdleTimeout.
+	r.expireLocked(r.now())
 	t := r.offered
 	if t == nil || t.offer.TransferID != transferID {
 		r.mu.Unlock()
