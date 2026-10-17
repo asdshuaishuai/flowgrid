@@ -6,6 +6,8 @@
 #include "widgets.h"
 
 #include <QApplication>
+#include <QDir>
+#include <QFile>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -33,6 +35,38 @@ QString css(const QColor &c)
 // 设计稿 settings.html 剪贴板组给的档位。协议侧只认这三个值，早先用的自由
 // 数字输入框能填出 37 这种没人认的数。
 constexpr int kHistoryCounts[3] = {50, 100, 200};
+
+// 「开机自启」开关的落点。自启本身由包安装的
+// /etc/xdg/autostart/flowgrid-deepin-autostart.desktop 提供（默认启用），这里只管
+// 用户覆盖：关 → 在 ~/.config/autostart 放一个**同名**文件 Hidden=true（XDG 规则：
+// 同名用户文件整体顶掉系统文件，即禁用）；开 → 删掉覆盖，回落系统项。
+// 「同名」是关键——名字不一致就不是覆盖，两个条目会各自生效。
+void applyAutoStartOverride(bool on)
+{
+    const QString dir = QDir::homePath() + QStringLiteral("/.config/autostart");
+    const QString path = dir + QStringLiteral("/flowgrid-deepin-autostart.desktop");
+    if (on) {
+        if (QFile::exists(path) && !QFile::remove(path)) {
+            qCWarning(lcSettingsPanel) << "移除自启覆盖失败" << path;
+        }
+        return;
+    }
+    if (!QDir().mkpath(dir)) {
+        qCWarning(lcSettingsPanel) << "创建自启目录失败" << dir;
+        return;
+    }
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        qCWarning(lcSettingsPanel) << "写入自启覆盖失败" << path;
+        return;
+    }
+    f.write("[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=FlowGrid\n"
+            "Exec=flowgrid-deepin\n"
+            "Hidden=true\n"
+            "X-GNOME-Autostart-enabled=false\n");
+}
 
 int historyCountIndex(int count)
 {
@@ -157,7 +191,11 @@ QWidget *SettingsPanel::buildConnectionGroup()
     autoStart_ = new ToggleSwitch(this);
     autoStart_->setChecked(s.autoStart());
     QObject::connect(autoStart_, &ToggleSwitch::clicked, this, [this] {
-        Settings::instance().setAutoStart(autoStart_->isChecked());
+        const bool on = autoStart_->isChecked();
+        Settings::instance().setAutoStart(on);
+        // 存值不够：自启是文件系统上的状态，得真去写/删用户覆盖，否则这个开关
+        // 和「写着 50 条却不裁历史」一样，只是块好看的牌子。
+        applyAutoStartOverride(on);
     });
 
     return groupBox(tr("连接"),

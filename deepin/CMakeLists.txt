@@ -172,8 +172,14 @@ target_compile_definitions(flowgrid-deepin PRIVATE
 install(TARGETS flowgrid-deepin RUNTIME DESTINATION bin)
 install(FILES resources/flowgrid-deepin.desktop
         DESTINATION share/applications)
+# 自启项必须落到 /etc/xdg/autostart——绝对路径 destination（相对路径会被拼到
+# CMAKE_INSTALL_PREFIX 下）。装进 share/applications 是错的：那是「菜单项」目录，
+# 而这个文件 NoDisplay=true，结果既不进菜单也不自启，成了一枚死文件。
+# 与 resources/flowgrid-deepin-autostart.desktop 里的 NoDisplay/X-GNOME-Autostart
+# 设置配套；用户关掉设置屏的「开机自启」时，是在 ~/.config/autostart 写一个同名
+# 文件 Hidden=true 覆盖它（见 settingspanel.cpp）。
 install(FILES resources/flowgrid-deepin-autostart.desktop
-        DESTINATION share/applications)
+        DESTINATION /etc/xdg/autostart)
 install(FILES resources/icons/flowgrid.svg
         DESTINATION share/icons/hicolor/scalable/apps)
 
