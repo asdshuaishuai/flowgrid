@@ -45,7 +45,6 @@ private:
     QLineEdit *switchHotkey_ = nullptr;
     ToggleSwitch *clipSync_ = nullptr;
     FgSelect *clipHistory_ = nullptr;
-    ToggleSwitch *fileTransfer_ = nullptr;
     ToggleSwitch *confirm_ = nullptr;
 };
 

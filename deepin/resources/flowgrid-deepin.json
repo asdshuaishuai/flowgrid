@@ -32,7 +32,7 @@
         { "key": "sync/clipboard_auto_write", "type": "b", "default": false,
           "name": "接收后自动写入本地", "description": "入站后自动写入本机剪贴板" },
         { "key": "sync/file_transfer_enabled", "type": "b", "default": true,
-          "name": "文件传输", "description": "拖放或选择文件发送" },
+          "name": "自动接收文件", "description": "文件传输浮板的「自动接收来自已配对设备的文件」：关闭后入站文件一律不接受" },
 
         { "key": "security/e2e_encryption", "type": "b", "default": true,
           "name": "端到端加密", "description": "XChaCha20-Poly1305，强制开启不可关闭" },

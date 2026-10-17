@@ -236,26 +236,17 @@ QWidget *SettingsPanel::buildSyncGroup()
         }
     });
 
-    fileTransfer_ = new ToggleSwitch(this);
-    fileTransfer_->setChecked(s.fileTransfer());
-    QObject::connect(fileTransfer_, &ToggleSwitch::clicked, this, [this] {
-        Settings::instance().setFileTransfer(fileTransfer_->isChecked());
-    });
-
     confirm_ = new ToggleSwitch(this);
     confirm_->setChecked(s.requireConfirmation());
     QObject::connect(confirm_, &ToggleSwitch::clicked, this, [this] {
         Settings::instance().setRequireConfirmation(confirm_->isChecked());
     });
 
-    return groupBox(tr("跨端同步"),
+    return groupBox(tr("剪贴板"),
            {new ListRow(tr("跨端同步"), tr("文本与图片，单条上限 63,240 B"), clipSync_, this),
             new ListRow(tr("历史条数"), tr("超出后按时间淘汰"), clipHistory_, this),
             new ListRow(tr("排除应用"), tr("密码管理器等窗口内不采集"),
-                        unwiredButton(tr("3 个"), tr("排除应用列表"), this), this),
-            // 设计稿这一组只有剪贴板三项，没有文件传输开关；这是 deepin 侧
-            // 自己加的一条（文件传输浮板的标题胶囊要读它），故并在本组末尾。
-            new ListRow(tr("文件传输"), tr("拖放或选择文件发送"), fileTransfer_, this)},
+                        unwiredButton(tr("3 个"), tr("排除应用列表"), this), this)},
            this);
 }
 
@@ -330,7 +321,6 @@ void SettingsPanel::reload()
     sync(autoStart_, s.autoStart());
     sync(smoothing_, s.mouseSmoothing());
     sync(clipSync_, s.clipboardSync());
-    sync(fileTransfer_, s.fileTransfer());
     sync(confirm_, s.requireConfirmation());
 
     if (edgeThreshold_ != nullptr) {
