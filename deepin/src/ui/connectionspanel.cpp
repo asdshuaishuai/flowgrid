@@ -2,6 +2,7 @@
 #include "core/designtokens.h"
 #include "core/devicemanager.h"
 #include "core/theme.h"
+#include "core/settings.h"
 #include "icons.h"
 #include "clipboardpanel.h"
 #include "filespanel.h"
@@ -86,6 +87,24 @@ QWidget *makeSectionFooter(const QString &hint, const QString &buttonText, QWidg
     // 自由函数里没有 QObject 派生带来的 connect 重载，必须写全 QObject::connect。
     QObject::connect(btn, &FgButton::clicked, row, [onClick, btn] { onClick(btn); });
     hl->addWidget(btn);
+    return row;
+}
+
+// 一行页脚：左侧说明 + 右侧若干按钮。设计稿里 .section__body 的页脚都是这个
+// 形状，只是按钮个数从 1 个到 2 个不等，早先是按个数各写一遍。
+QWidget *makeSectionFooterRow(QWidget *hint, const QList<QWidget *> &buttons, QWidget *parent)
+{
+    auto *row = new QWidget(parent);
+    auto *hl = new QHBoxLayout(row);
+    hl->setContentsMargins(tokens::kS3, 0, tokens::kS3, tokens::kS3);
+    hl->setSpacing(tokens::kS2);
+    if (hint != nullptr) {
+        hl->addWidget(hint);
+    }
+    hl->addStretch(1);
+    for (QWidget *b : buttons) {
+        hl->addWidget(b);
+    }
     return row;
 }
 
@@ -278,11 +297,28 @@ QWidget *ConnectionsPanel::buildClipboardSection()
     noteHl->addWidget(note);
     vl->addWidget(noteRow);
 
-    vl->addWidget(makeSectionFooter(QString(), tr("打开剪贴板"), body,
-                                    [this](FgButton *) { Q_EMIT clipboardRequested(); }));
+    // 设计稿这一区的页脚是「跨端同步已加密，历史保留 N 条」+ 详情 + 清空。
+    // 保留条数跟着设置走（sync/clipboard_history），别写死 50。
+    clipboardFootHint_ = new QLabel(body);
+    clipboardFootHint_->setFont(uiFont(tokens::kFont11));
+    clipboardFootHint_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    auto *open = new FgButton(tr("打开剪贴板"), FgButton::Variant::Secondary, true, body);
+    connect(open, &FgButton::clicked, this, [this] { Q_EMIT clipboardRequested(); });
+    auto *clear = new FgButton(tr("清空"), FgButton::Variant::Ghost, true, body);
+    connect(clear, &FgButton::clicked, this, [this] {
+        // 历史归剪贴板浮板所有，这里只调它的公开入口，不另存一份计数。
+        if (clipboard_ != nullptr) {
+            clipboard_->clearHistory();
+            toast(tr("已清空同步历史"), ToastKind::Ok);
+        } else {
+            qCInfo(lcConnections) << "剪贴板浮板未挂上，清空按钮暂时无处可去";
+        }
+    });
+    vl->addWidget(makeSectionFooterRow(clipboardFootHint_, {open, clear}, body));
 
     clipboardBadge_ = new Badge(QStringLiteral("—"), Badge::Variant::Neutral);
     refreshClipboardBadge();
+    refreshClipboardFootHint();
     return new Collapsible(tr("剪贴板同步"), QStringLiteral("clipboard"), body,
                            clipboardBadge_);
 }
@@ -655,6 +691,16 @@ void ConnectionsPanel::refresh()
 
     rebuildDeviceCards();
     updateLatencyBadge();
+    refreshClipboardFootHint();
+}
+
+void ConnectionsPanel::refreshClipboardFootHint()
+{
+    if (clipboardFootHint_ == nullptr) {
+        return;
+    }
+    const int keep = Settings::instance().clipboardHistory();
+    clipboardFootHint_->setText(tr("跨端同步已加密，历史保留 %1 条").arg(keep));
 }
 
 void ConnectionsPanel::updateLatencyBadge()

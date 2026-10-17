@@ -39,6 +39,7 @@ public Q_SLOTS:
     void onSampled();
     // 两个数据源各自的变化：剪贴板只改徽章，文件传输要重建整区。
     void refreshClipboardBadge();
+    void refreshClipboardFootHint();
     void rebuildFileRows();
 
 Q_SIGNALS:
@@ -75,6 +76,8 @@ private:
     ClipboardPanel *clipboard_ = nullptr;
     FilesPanel *files_ = nullptr;
     Badge *clipboardBadge_ = nullptr;
+    // 剪贴板折叠区页脚那句「历史保留 N 条」，N 跟着 sync/clipboard_history 走。
+    QLabel *clipboardFootHint_ = nullptr;
     QWidget *fileBody_ = nullptr;
     QVBoxLayout *fileRows_ = nullptr;
     Badge *fileBadge_ = nullptr;
