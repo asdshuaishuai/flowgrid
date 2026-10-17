@@ -256,7 +256,7 @@ QWidget *ClipboardPanel::buildCurrent()
             return;
         }
         Q_EMIT localWriteRequested(current_);
-        toast(tr("已写入本地剪贴板"));
+        toast(tr("已写入本地剪贴板"), ToastKind::Ok);
     });
     auto *push = new FgButton(tr("推送"), FgButton::Variant::Secondary, true, foot);
     push->setIcon(QStringLiteral("arrowRight"));
@@ -268,7 +268,7 @@ QWidget *ClipboardPanel::buildCurrent()
         // 真实发送：交给 Go 的 ClipboardSession 分段，UI 不碰帧结构。
         session_.send(e.mime.toUtf8(), e.raw);
         Q_EMIT pushRequested(e);
-        toast(tr("已推送"));
+        toast(tr("已推送"), ToastKind::Ok);
     });
     fl->addWidget(write);
     fl->addWidget(push);
@@ -424,7 +424,7 @@ QWidget *ClipboardPanel::buildFooter()
     clear->setIcon(QStringLiteral("trash"));
     connect(clear, &FgButton::clicked, this, [this] {
         clearHistory();
-        toast(tr("已清空同步历史"));
+        toast(tr("已清空同步历史"), ToastKind::Ok);
     });
     hl->addWidget(clear);
 
@@ -638,7 +638,7 @@ void ClipboardPanel::rebuildHistory()
         auto *copy = new IconButton(QStringLiteral("copy"), tr("写入本地"), trailing);
         connect(copy, &IconButton::clicked, this, [this, e] {
             Q_EMIT localWriteRequested(e);
-            toast(tr("已写入本地剪贴板"));
+            toast(tr("已写入本地剪贴板"), ToastKind::Ok);
         });
         tl->addWidget(copy, 0, Qt::AlignVCenter);
 

@@ -20,6 +20,7 @@
 #include "ui/pairingpanel.h"
 #include "ui/settingspanel.h"
 #include "ui/traypopup.h"
+#include "ui/widgets.h"
 
 #include <DApplication>
 #include <DGuiApplicationHelper>
@@ -324,7 +325,24 @@ int main(int argc, char *argv[])
             shot(g_pairing, QStringLiteral("pairing"));
             shot(g_clipboard, QStringLiteral("clipboard"));
             shot(g_files, QStringLiteral("files"));
-            app.quit();
+
+            // Toast 是独立顶层窗，上面的 shot(g_*) 全都抓不到它。它自己出过一次
+            // 「药丸被阴影内缩压没」的版（底色等于没画、文字被裁半截），浮板截图
+            // 又照不到，所以单独出一张。
+            toast(QStringLiteral("已写入本地剪贴板"), ToastKind::Ok);
+            // base 必须按值捕获：外层 singleShot 返回后它就析构了，按引用捕获
+            // 会拼出乱码文件名（顺带在下一轮跑出 std::bad_alloc）。
+            QTimer::singleShot(tokens::kDurToast + 120, &app, [&app, base] {
+                if (QWidget *t = activeToast(); t != nullptr) {
+                    t->ensurePolished();
+                    const QString toastPath =
+                        QStringLiteral("%1-toast.png").arg(base);
+                    t->grab().save(toastPath);
+                    qCInfo(lcApp) << "snapshot ->" << toastPath
+                                  << t->width() << "x" << t->height();
+                }
+                app.quit();
+            });
         });
     } else {
         // 托盘常驻但首屏不主动弹浮层：设计稿的入口只有托盘图标。

@@ -483,10 +483,10 @@ QWidget *FilesPanel::buildFooter()
     connect(openDir, &FgButton::clicked, this, [foot] {
         const QString dir = QDir::homePath();
         if (QDesktopServices::openUrl(QUrl::fromLocalFile(dir))) {
-            toast(tr("已打开接收目录"));
+            toast(tr("已打开接收目录"), ToastKind::Ok);
         } else {
             qCInfo(lcFiles) << "无法打开接收目录" << dir;
-            toast(tr("无法打开接收目录"));
+            toast(tr("无法打开接收目录"), ToastKind::Danger);
         }
     });
     hl->addWidget(openDir);
@@ -640,7 +640,7 @@ int FilesPanel::offerFile(const QString &path)
     rebuildTransfers();
     refreshPill();
     Q_EMIT transfersChanged();
-    toast(tr("已开始发送 %1").arg(e.name));
+    toast(tr("已开始发送 %1").arg(e.name), ToastKind::Ok);
     return 0;
 }
 

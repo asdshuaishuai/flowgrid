@@ -429,6 +429,16 @@ public:
 //
 // 做成无焦点、不拦鼠标的顶层窗口：浮板是 Qt::Popup，点完就消失，Toast 得
 // 挂在 QApplication 上才不会被浮板一起带走。
+// Toast 的语义档：设计稿 app.js 里 toast(msg, kind) 会按 kind 选图标——
+// 默认 info，ok 走 check，danger 走 warn。
+enum class ToastKind { Info, Ok, Danger };
+
+// 设计稿 .toast 里的 .ic 是 16px。
+inline constexpr int kToastIcon = 16;
+
+// 窗口四周给阴影（0 10px 26px）预留的透明边距。
+inline constexpr int kToastMargin = 18;
+
 class Toast : public QWidget {
     Q_OBJECT
 public:
@@ -438,13 +448,14 @@ public:
     // 上一条的动画往下改文案，而不是让两层叠起来。
     // 刻意不叫 show(QString)：QWidget::show() 无参，名字一撞就成了「重载取
     // 零参数版本」，调用处的 Toast::show(text) 会编译不过。
-    void showMessage(const QString &text);
+    void showMessage(const QString &text, ToastKind kind = ToastKind::Info);
 
 protected:
     void paintEvent(QPaintEvent *) override;
 
 private:
     QString text_;
+    ToastKind kind_ = ToastKind::Info;
     QPropertyAnimation *anim_ = nullptr;
 };
 
@@ -452,7 +463,12 @@ private:
 //
 // 必须挂在 QApplication 而不是某个浮板上：浮板是 Qt::Popup，唤出即抢走输入、
 // 关闭即销毁，提示挂在它身上会跟着一起没，用户刚点的反馈就没了。
-void toast(const QString &text);
+void toast(const QString &text, ToastKind kind = ToastKind::Info);
+
+// 当前那个 Toast 实例（还没唤出过就是 nullptr）。
+// 只给截图模式用：Toast 是独立顶层窗，浮板的 w->grab() 抓不到它——早先 Toast
+// 的药丸被内缩压成 3px 高、底色等于没画，就这么一路发出去没人发现。
+QWidget *activeToast();
 
 // ── 提示条：设计稿 ui.css .banner ───────────────────────────────────────
 //

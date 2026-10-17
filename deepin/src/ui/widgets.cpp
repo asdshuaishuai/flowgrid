@@ -1294,11 +1294,11 @@ EmptyState::EmptyState(const QString &iconName, const QString &title, const QStr
 
     const Palette &p = Theme::instance().palette();
     if (!iconName.isEmpty()) {
-        // .empty__icon：40px 圆形 / surface-3 底 / text-3 图标
+        // .empty__icon：40px 圆形 / surface-3 底 / text-3 图标（.ic 默认 16px）
         auto *icon = new QLabel(this);
         icon->setFixedSize(40, 40);
         icon->setAlignment(Qt::AlignCenter);
-        icon->setPixmap(icons::icon(iconName, 18, p.text3).pixmap(18, 18));
+        icon->setPixmap(icons::icon(iconName, 16, p.text3).pixmap(16, 16));
         applyBoxStyle(icon, QStringLiteral("border-radius:20px;background:%1")
                                   .arg(cssColor(p.surface3)));
         vl->addWidget(icon, 0, Qt::AlignHCenter);
@@ -1318,7 +1318,16 @@ EmptyState::EmptyState(const QString &iconName, const QString &title, const QStr
         d->setFont(uiFont(tokens::kFont12));
         d->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
         d->setAlignment(Qt::AlignCenter);
-        vl->addWidget(d);
+        // .empty__desc 有 max-width:320px：不设上限的话一句说明能横穿整块浮板
+        // （520 - 内容 14×2 = 492px），居中的一行字拉到那么宽很难看。
+        auto *holder = new QWidget(this);
+        auto *hl = new QHBoxLayout(holder);
+        hl->setContentsMargins(0, 0, 0, 0);
+        hl->addStretch(1);
+        d->setMaximumWidth(320);
+        hl->addWidget(d, 0, Qt::AlignTop);
+        hl->addStretch(1);
+        vl->addWidget(holder);
     }
 }
 
@@ -1338,25 +1347,49 @@ Toast::Toast(QWidget *parent) : QWidget(parent)
     shadow->setOffset(0, 10);
     shadow->setColor(p.shadowPop);
     setGraphicsEffect(shadow);
+    // 阴影是 26px 模糊 + 10px 下沉，Qt 会把它裁在窗口边界内，所以窗口本身要比
+    // 药丸大一圈，投影才有地方落。早先是在 paintEvent 里把药丸「内缩 14px」来
+    // 给阴影腾位——可窗口只有 31px 高，内缩完药丸只剩 3px，底色等于没画，文字
+    // 还因为画在 3px 高的带子里被裁掉半截。改成把空间加在窗口尺寸上。
+    setContentsMargins(kToastMargin, kToastMargin, kToastMargin, kToastMargin);
+
+    connect(&Theme::instance(), &Theme::changed, this, [this] {
+        if (auto *sh = graphicsEffect(); sh != nullptr) {
+            qobject_cast<QGraphicsDropShadowEffect *>(sh)->setColor(
+                Theme::instance().palette().shadowPop);
+        }
+        update();
+    });
 
     // translateY(80px) → 0，节奏取 --dur-toast
     anim_ = new QPropertyAnimation(this, "geometry", this);
     anim_->setDuration(tokens::kDurToast);
     anim_->setEasingCurve(QEasingCurve::InOutQuad);
+
+    // 滑到位之后再等一会儿才收起，设计稿的 Toast 是这么给的。
+    // 早先这条连接写在 showMessage() 里还带着 Qt::UniqueConnection——但 UniqueConnection
+    // 只认成员函数指针，配 lambda 会被 Qt 拒掉（qt.core.qobject.connect 告警），
+    // 于是每唤一次 Toast 就多挂一条连接，第 N 次提示会触发 N 个收起定时器。
+    connect(anim_, &QPropertyAnimation::finished, this, [this] {
+        QTimer::singleShot(2200, this, [this] { hide(); });
+    });
 }
 
-void Toast::showMessage(const QString &text)
+void Toast::showMessage(const QString &text, ToastKind kind)
 {
     text_ = text;
+    kind_ = kind;
     QFontMetrics fm(uiFont(tokens::kFont12, QFont::DemiBold));
-    // padding 8×16，阴影四周各留 14px 免得描边被裁
-    const QSize box(fm.horizontalAdvance(text) + tokens::kS4 * 2,
-                    fm.height() + tokens::kS2 * 2);
-    resize(box);
+    // padding 8×16 + 图标 16 + gap 8（设计稿 .toast 是「图标 + 文字」并排），
+    // 外面再各留 kToastMargin 给阴影。
+    const int pillW = fm.horizontalAdvance(text) + tokens::kS4 * 2 + kToastIcon + tokens::kS2;
+    const int pillH = fm.height() + tokens::kS2 * 2;
+    resize(pillW + kToastMargin * 2, pillH + kToastMargin * 2);
 
-    QPoint anchor;
-    anchor.setX((QGuiApplication::primaryScreen()->geometry().center().x()) - width() / 2);
-    anchor.setY(QGuiApplication::primaryScreen()->geometry().bottom() - height() - 20);
+    // 设计稿 .toast 是 bottom: 20px / 水平居中——量的是药丸下沿，不是窗口下沿。
+    const QRect screen = QGuiApplication::primaryScreen()->geometry();
+    const QPoint anchor(screen.center().x() - width() / 2,
+                        screen.bottom() - kToastMargin - pillH - 20);
 
     // 从下方 80px 处滑入；已经在屏上就从中途接着走，不闪一下
     const QRect target(anchor, size());
@@ -1368,10 +1401,6 @@ void Toast::showMessage(const QString &text)
     anim_->setStartValue(from);
     anim_->setEndValue(target);
     anim_->start();
-
-    connect(anim_, &QPropertyAnimation::finished, this, [this] { QTimer::singleShot(2200, this,
-                                                                                   [this] { hide(); }); },
-            Qt::UniqueConnection);
 }
 
 void Toast::paintEvent(QPaintEvent *)
@@ -1379,23 +1408,53 @@ void Toast::paintEvent(QPaintEvent *)
     const Palette &p = Theme::instance().palette();
     QPainter pt(this);
     pt.setRenderHint(QPainter::Antialiasing, true);
-    // 阴影 effect 挂在自身上会连底色一起投影，所以这里只留内缩 14px 的圆角块
+    const QRectF pill = QRectF(rect()).adjusted(kToastMargin, kToastMargin,
+                                                -kToastMargin, -kToastMargin);
     QPainterPath path;
-    path.addRoundedRect(QRectF(rect()).adjusted(14, 14, -14, -14), tokens::kRadiusCard,
-                        tokens::kRadiusCard);
+    path.addRoundedRect(pill, tokens::kRadiusCard, tokens::kRadiusCard);
     pt.fillPath(path, p.toastBg);
     pt.setPen(p.toastFg);
     pt.setFont(uiFont(tokens::kFont12, QFont::DemiBold));
-    pt.drawText(rect().adjusted(0, 0, 0, -28), Qt::AlignCenter, text_);
+
+    // 图标 + 文字整体居中（各自居中会错位，和 FgButton 同一条道理），
+    // 且以药丸为基准而不是整个窗口。
+    const QFontMetrics fm(pt.font());
+    const int total = kToastIcon + tokens::kS2 + fm.horizontalAdvance(text_);
+    const int x0 = pill.left() + (pill.width() - total) / 2;
+    const int y0 = pill.top() + (pill.height() - kToastIcon) / 2;
+    // app.js toast(msg, kind)：ok 走 check，danger 走 warn，其余 info。
+    const QString iconName = kind_ == ToastKind::Ok ? QStringLiteral("check")
+                             : kind_ == ToastKind::Danger ? QStringLiteral("warn")
+                                                          : QStringLiteral("info");
+    pt.drawPixmap(QPoint(x0, y0), icons::icon(iconName, kToastIcon, p.toastFg)
+                                     .pixmap(kToastIcon, kToastIcon));
+    pt.drawText(QRect(x0 + kToastIcon + tokens::kS2, int(pill.top()),
+                      fm.horizontalAdvance(text_) + 2, int(pill.height())),
+                Qt::AlignVCenter | Qt::AlignLeft, text_);
 }
 
-void toast(const QString &text)
+namespace {
+
+// toast() 与 activeToast() 必须是同一个实例，所以单例只在这里存一份。
+Toast *toastInstance()
 {
     static Toast *instance = nullptr;
     if (instance == nullptr) {
         instance = new Toast();
     }
-    instance->showMessage(text);
+    return instance;
+}
+
+} // namespace
+
+void toast(const QString &text, ToastKind kind)
+{
+    toastInstance()->showMessage(text, kind);
+}
+
+QWidget *activeToast()
+{
+    return toastInstance();
 }
 
 QLabel *groupTitle(const QString &text, QWidget *parent)
