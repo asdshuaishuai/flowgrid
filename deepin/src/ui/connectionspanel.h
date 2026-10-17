@@ -46,6 +46,9 @@ Q_SIGNALS:
     // 页脚「设置」按钮：切到设置浮板由 main 统一调度（浮板互斥逻辑在 main）。
     void settingsRequested();
 
+    // 顶栏「添加设备」：切到配对浮板，同样交给 main 调度。
+    void addRequested();
+
     // 设计稿里键位映射区的「编辑」、网络延迟区的「详情」、剪贴板区的入口，
     // 同样是跨屏跳转，统一交给 main 调度。
     void keymapRequested();

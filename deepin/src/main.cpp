@@ -241,6 +241,12 @@ int main(int argc, char *argv[])
     // 跨屏跳转一律交给 main：浮板互斥逻辑只有一处，避免各处各 hide 一遍。
     QObject::connect(g_connections, &ConnectionsPanel::settingsRequested, g_connections,
                      [] { showPanel(g_settings); });
+    // 连接屏顶栏的「添加设备」与托盘那一行是同一个入口，都进配对浮板。此前这里
+    // 漏了接线，而按钮内部用的是 QMetaObject::invokeMethod(this, "addRequested")
+    // ——按字符串找方法，编不过编译器，那个方法也从没声明过，点下去只有一条
+    // 运行时警告，界面毫无反应。
+    QObject::connect(g_connections, &ConnectionsPanel::addRequested, g_connections,
+                     [] { showPanel(g_pairing); });
     QObject::connect(g_settings, &SettingsPanel::keymapRequested, g_settings,
                      [] { showPanel(g_keymap); });
     QObject::connect(g_connections, &ConnectionsPanel::keymapRequested, g_connections,

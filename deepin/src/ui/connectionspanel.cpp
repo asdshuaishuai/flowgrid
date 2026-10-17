@@ -138,9 +138,7 @@ ConnectionsPanel::ConnectionsPanel(QWidget *parent) : Panel(tr("设备与连接"
         hl->addStretch(1);
 
         auto *addBtn = new FgButton(tr("添加设备"), FgButton::Variant::Accent, false, row);
-        connect(addBtn, &FgButton::clicked, this, [this] {
-            QMetaObject::invokeMethod(this, "addRequested");
-        });
+        connect(addBtn, &FgButton::clicked, this, [this] { Q_EMIT addRequested(); });
         hl->addWidget(addBtn);
 
         contentLayout_->addWidget(row);
@@ -560,6 +558,12 @@ QWidget *ConnectionsPanel::buildLayoutSection()
                 cl->addWidget(hint);
             }
             cell->setCursor(Qt::PointingHandCursor);
+            // 悬停就能看到「还没接通」，不用非点一下才知道。
+            cell->setToolTip(tr("屏幕布局尚无持久化，暂不可拖动"));
+            // customContextMenuRequested 只在显式开了 CustomContextMenu 策略时才
+            // 发出。此前漏了这一句，下面这个 lambda 一次也不会跑——所谓「点格子
+            // 记一条日志说明尚未接通」，其实从来没有日志。
+            cell->setContextMenuPolicy(Qt::CustomContextMenu);
             QObject::connect(cell, &QWidget::customContextMenuRequested, this, [d] {
                 qCInfo(lcConnections)
                     << "调整设备布局：" << d.name << QStringLiteral("屏幕布局尚无持久化，暂不可拖动");
@@ -670,7 +674,13 @@ void ConnectionsPanel::rebuildDeviceCards()
             DeviceManager::instance().setActive(id);
         });
         connect(card, &DeviceCard::actionRequested, this,
-                [](const QString &, const QString &) { /* 重连 / 更多待传输层落地 */ });
+                [](const QString &id, const QString &kind) {
+                    // 这张卡右侧的按钮：离线设备是「重连」，当前设备是「更多信息」，
+                    // 两者都要等传输层。以前这里挂的是个空 lambda ——点下去既没有
+                    // 动作也没有日志，用户只能猜。按项目惯例如实记一条。
+                    qCInfo(lcConnections)
+                        << "设备动作" << kind << id << QStringLiteral("尚未接通");
+                });
         deviceListLayout_->addWidget(card);
     }
 }
