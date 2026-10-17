@@ -237,6 +237,9 @@ QWidget *SettingsPanel::buildInputGroup()
     QObject::connect(switchHotkey_, &QLineEdit::editingFinished, this, [this] {
         Settings::instance().setSwitchHotkey(switchHotkey_->text().toInt());
     });
+    // 键帽画的是**当前**那个修饰键，不是写死的 Ctrl：改完数字后若键帽不跟着变，
+    // 这一行就在指着一组不存在的快捷键。
+    switchKeycap_ = new FgKeycap(switchModifierName(s.switchHotkey()), false, this);
 
     return groupBox(tr("输入"),
            {new ListRow(tr("键位映射"), tr("跨平台修饰键转换"), editKeymap, this),
@@ -247,10 +250,7 @@ QWidget *SettingsPanel::buildInputGroup()
             // 设计稿的 trailing 是修饰键键帽（按住后按数字直切）。我们把数字
             // 也留着可编辑，所以按 .keys 的「键帽 + 输入」排，而不是只画键帽。
             new ListRow(tr("切换热键"), tr("按住后按数字键直切"),
-                        makeControlRow(this,
-                                       {new FgKeycap(QStringLiteral("Ctrl"), false, this),
-                                        switchHotkey_}),
-                        this)},
+                        makeControlRow(this, {switchKeycap_, switchHotkey_}), this)},
            this);
 }
 
@@ -366,6 +366,9 @@ void SettingsPanel::reload()
     }
     if (switchHotkey_ != nullptr) {
         switchHotkey_->setText(QString::number(s.switchHotkey()));
+    }
+    if (switchKeycap_ != nullptr) {
+        switchKeycap_->setText(switchModifierName(s.switchHotkey()));
     }
     if (clipHistory_ != nullptr) {
         clipHistory_->setCurrentIndex(historyCountIndex(s.clipboardHistory()));

@@ -1341,6 +1341,18 @@ QSize FgKeycap::sizeHint() const
                  fm.height() + 5 * 2 + 2);
 }
 
+void FgKeycap::setText(const QString &text)
+{
+    if (text_ == text) {
+        return;
+    }
+    text_ = text;
+    // 宽度是按文本算出来的（sizeHint），换字后必须让布局重算，否则宽键帽
+    // 会顶着旧几何被裁掉半截。
+    updateGeometry();
+    update();
+}
+
 void FgKeycap::paintEvent(QPaintEvent *)
 {
     const Palette &p = Theme::instance().palette();

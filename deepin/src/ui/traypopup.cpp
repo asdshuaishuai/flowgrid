@@ -37,6 +37,21 @@ QString css(const QColor &c)
 
 namespace {
 
+// 设备切换的修饰键：设置屏「切换热键」1=Ctrl / 2=Alt。托盘里三处显示的是同一个
+// 键——两条导航行的快捷键、快速切换按钮上的键位、当前设备那行的「切换回来」。
+// 早先只有导航行跟着设置走，另两处写死 Ctrl，用户把热键改成 Alt 后，界面上
+// 那两处就指着一组并不存在的快捷键。
+QString switchModifier()
+{
+    return switchModifierName(Settings::instance().switchHotkey());
+}
+
+// 「修饰键 + 数字」的完整键位串（数字是设备的热键序号）。
+QString deviceHotkeyLabel(int index)
+{
+    return QStringLiteral("%1+%2").arg(switchModifier()).arg(index);
+}
+
 // 快速切换按钮：设计稿里它就是一个「图标方块 + 快捷键」的可点块。
 // 做成类而不是裸 QWidget，是因为 QWidget::mouseReleaseEvent 是 protected，
 // 没法用 connect 直接挂——与其用事件过滤器绕，不如把点击语义收进类型里。
@@ -50,9 +65,7 @@ QWidget *kbdHint(const QString &key)
     hl->setContentsMargins(0, 0, 0, 0);
     hl->setSpacing(tokens::kS1);
     // 修饰键名跟着设置屏的「切换热键」走：默认 1=Ctrl，改成 Alt 时这里也显示 Alt。
-    const QString mod = Settings::instance().switchHotkey() == 2 ? QObject::tr("Alt")
-                                                                 : QObject::tr("Ctrl");
-    for (const QString &part : {mod, key}) {
+    for (const QString &part : {switchModifier(), key}) {
         auto *cap = new QLabel(part, w);
         cap->setFont(uiFont(tokens::kFont11));
         cap->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
@@ -89,7 +102,7 @@ public:
                                  .arg(tokens::kRadiusCtl));
 
         // .switch-btn__key
-        auto *kbd = new QLabel(QStringLiteral("Ctrl+%1").arg(hotkey), this);
+        auto *kbd = new QLabel(deviceHotkeyLabel(hotkey), this);
         kbd->setFont(uiFont(tokens::kFont11));
         kbd->setAlignment(Qt::AlignCenter);
         kbd->setStyleSheet(
@@ -495,7 +508,8 @@ void TrayPopup::refresh()
                                      : active->abbrev);
             deviceName_->setText(active->name);
             deviceMeta_->setText(active->hotkeyIndex > 0
-                                     ? tr("Ctrl+%1 切换回来").arg(active->hotkeyIndex)
+                                     ? tr("%1 切换回来").arg(
+                                           deviceHotkeyLabel(active->hotkeyIndex))
                                      : tr("未分配快捷键"));
         } else {
             deviceIcon_->setText(QStringLiteral("--"));
@@ -513,12 +527,10 @@ void TrayPopup::refresh()
                 continue;
             }
             // 设计稿给三台设备的是 accent / ok / warn 三种实色，而不是随手挑的：
-            // 当前控制端取 ok，其余按各自的延迟档取（良好→主色、偏慢→warn、
-            // 告警→danger、离线→idle）。规则是数据推出来的，不随排版漂。
-            const Palette &pal = Theme::instance().palette();
-            // 当前控制端取 ok 实色；其余按各自的延迟档取——良好给主色、偏慢给
+            // 当前控制端取 ok 实色，其余按各自的延迟档取——良好给主色、偏慢给
             // warn、告警给 danger、离线给 idle。这样「哪个慢了」在托盘上一眼可辨，
             // 规则由读数推出，不随排版或设备顺序漂。
+            const Palette &pal = Theme::instance().palette();
             const Quality q = Theme::instance().qualityOf(d.latencyMs, d.online);
             StatusColor sc = d.isActive
                                  ? pal.ok

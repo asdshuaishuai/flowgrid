@@ -96,6 +96,14 @@ private:
     QString reason_;
 };
 
+// input/switch_hotkey 取值语义（1=Ctrl / 2=Alt）对应的修饰键名。设置屏的键帽、
+// 托盘里的三处快捷键提示都从这里派生——原先只有托盘的两条导航行跟着设置走，
+// 另三处写死「Ctrl」，用户把热键改成 Alt 后界面就指着一组并不存在的快捷键。
+inline QString switchModifierName(int hotkey)
+{
+    return hotkey == 2 ? QStringLiteral("Alt") : QStringLiteral("Ctrl");
+}
+
 } // namespace fg
 
 #endif // FLOWGRID_SETTINGS_H

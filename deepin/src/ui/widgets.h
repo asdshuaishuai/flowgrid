@@ -560,6 +560,9 @@ public:
     explicit FgKeycap(const QString &text, bool ghost = false,
                       QWidget *parent = nullptr);
 
+    // 键帽上的字可以换（设置屏的「切换热键」键帽跟着配置走），宽度随之重算。
+    void setText(const QString &text);
+
     QSize sizeHint() const override;
 
 protected:

@@ -13,6 +13,7 @@ namespace fg {
 class FgSelect;
 class ToggleSwitch;
 class FgButton;
+class FgKeycap;
 class ListRow;
 
 class SettingsPanel : public Panel {
@@ -43,6 +44,7 @@ private:
     ToggleSwitch *smoothing_ = nullptr;
     QLineEdit *edgeThreshold_ = nullptr;
     QLineEdit *switchHotkey_ = nullptr;
+    FgKeycap *switchKeycap_ = nullptr;
     ToggleSwitch *clipSync_ = nullptr;
     FgSelect *clipHistory_ = nullptr;
     ToggleSwitch *confirm_ = nullptr;
