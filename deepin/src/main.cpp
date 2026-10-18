@@ -35,6 +35,8 @@
 #include <QCommandLineParser>
 #include <QClipboard>
 #include <QDir>
+#include <QEnterEvent>
+#include <QEvent>
 #include <QFileDialog>
 #include <QLoggingCategory>
 #include <QMimeData>
@@ -368,6 +370,32 @@ int main(int argc, char *argv[])
             syncTrayCounts();
             shot(g_trayPopup, QStringLiteral("tray"));
             shot(g_connections, QStringLiteral("connections"));
+
+            // hover 态单独出一张：.device:hover 的 --shadow-lift 只在鼠标停上去
+            // 时才有，而快照从不 hover——DeviceCard 里那段绘制在上面这一串
+            // shot() 里一行都没被执行过，审不了就只能算没看过。这里合成一个
+            // QEnterEvent 打给所有设备卡再拍：激活卡自己会忽略 hover，正好能
+            // 一次看清「该浮的浮、不该浮的不浮」。
+            if (QWidget *w = g_connections) {
+                w->setAttribute(Qt::WA_DontShowOnScreen, true);
+                showPanel(w);
+                w->ensurePolished();
+                for (fg::DeviceCard *card : w->findChildren<fg::DeviceCard *>()) {
+                    QEnterEvent enter(QPointF(1, 1), QPointF(1, 1), QPointF(1, 1));
+                    QCoreApplication::sendEvent(card, &enter);
+                }
+                w->ensurePolished();
+                const QString hoverPath =
+                    QStringLiteral("%1-connections-hover.png").arg(base);
+                w->grab().save(hoverPath);
+                qCInfo(lcApp) << "snapshot ->" << hoverPath << w->width() << "x" << w->height();
+                for (fg::DeviceCard *card : w->findChildren<fg::DeviceCard *>()) {
+                    QEvent leave(QEvent::Leave);
+                    QCoreApplication::sendEvent(card, &leave);
+                }
+                w->hide();
+            }
+
             shot(g_latency, QStringLiteral("latency"));
             shot(g_settings, QStringLiteral("settings"));
             shot(g_keymap, QStringLiteral("keymap"));
