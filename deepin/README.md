@@ -56,6 +56,29 @@ export QT_PLUGIN_PATH="$HOME/.local/dd-sysroot/usr/lib/x86_64-linux-gnu/qt6/plug
 QT_QPA_PLATFORM=offscreen ./deepin/build/flowgrid-deepin --snapshot /tmp/fgshot/s
 ```
 
+## 安装
+
+```bash
+./deepin/install.sh              # 配置 + 编译 + 系统级安装（需要 sudo）
+./deepin/install.sh --skip-build # 只安装，沿用已编译好的产物
+./deepin/install.sh --launch     # 装完直接拉起
+```
+
+装到 `/usr/local` **必须是系统级**，不能只装到 `~/.local`：
+
+- **DConfig meta 固定认 `/usr/share/flowgrid/flowgrid-deepin.json`**，不搜 `~/.local/share`。
+  装错位置不报错——`create()` 返回不可用对象、设置静默回退默认值，设置屏的开关看着能点、
+  实际上关掉进程就没了。这是本工程最难查的一种坏法，所以脚本末尾会实打实校验这个文件。
+- **自启项必须落 `/etc/xdg/autostart`**（`CMakeLists.txt` 里是绝对路径 destination，
+  相对路径会被拼到 prefix 下）。装进 `share/applications` 是错的：那是菜单目录，而这个
+  文件 `NoDisplay=true`，结果既不进菜单也不自启，成了一枚死文件。
+
+装好的可执行文件带 RPATH，**直接跑不需要设 `LD_LIBRARY_PATH` / `QT_PLUGIN_PATH`**
+（上面「运行」那两行是给 build 目录里的未安装产物用的）。
+
+启动后不弹窗——托盘常驻、无主窗口，点托盘图标才出 300px 浮层。启动日志里若出现
+「DConfig meta 未安装」，说明 meta 没被 dconfig 认到。
+
 ## 目录
 
 ```
