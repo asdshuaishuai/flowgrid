@@ -27,7 +27,9 @@ QString colorHex(const QColor &c)
 QFont titleFont()
 {
     QFont f = QApplication::font();
-    f.setPixelSize(tokens::kFont12);
+    // 面板标题是这一屏最重的字：13px + DemiBold。原先 12px，和正文里那些
+    // 13px 的组标题撞在一档，标题栏看着像「又一行说明文字」。
+    f.setPixelSize(tokens::kFont13);
     f.setWeight(QFont::DemiBold);
     return f;
 }
@@ -123,6 +125,10 @@ Panel::Panel(const QString &title, QWidget *parent) : QWidget(parent)
         hl->setSpacing(tokens::kS2);
         titleLabel_ = new QLabel(title, titleBar_);
         titleLabel_->setFont(titleFont());
+        // 不设色的话它继承 QLabel 的 WindowText，比 text1 淡一整档——面板标题
+        // 反而不像标题。面板标题是这一屏最重的一档字。
+        titleLabel_->setStyleSheet(
+            QStringLiteral("color:%1").arg(colorHex(Theme::instance().palette().text1)));
         hl->addWidget(titleLabel_);
         hl->addStretch(1);
         titleRight_ = new QWidget(titleBar_);
@@ -245,8 +251,12 @@ void Panel::paintEvent(QPaintEvent *)
 
 void Panel::restyle()
 {
+    const Palette &pal = Theme::instance().palette();
     if (shadow_ != nullptr) {
-        shadow_->setColor(Theme::instance().palette().shadowPanel);
+        shadow_->setColor(pal.shadowPanel);
+    }
+    if (titleLabel_ != nullptr) {
+        titleLabel_->setStyleSheet(QStringLiteral("color:%1").arg(colorHex(pal.text1)));
     }
     if (content_ == nullptr) {
         return;

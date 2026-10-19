@@ -220,6 +220,7 @@ void Theme::refresh()
         p.warn = {QColor(0xf0, 0xa6, 0x3c), QColor(217, 119, 6, 43), QColor(0xf5, 0xc0, 0x78)};
         p.danger = {QColor(0xf2, 0x55, 0x5a), QColor(220, 38, 38, 41), QColor(0xff, 0x8b, 0x8f)};
         p.idle = {QColor(0x7b, 0x84, 0x92), QColor(138, 147, 161, 46), QColor(0x9a, 0xa3, 0xb0)};
+        p.onSolid = QColor(0xff, 0xff, 0xff);
         p.shadowPanel = QColor(0, 0, 0, 122);
         p.shadowTray = QColor(0, 0, 0, 112);
         p.shadowLift = QColor(0, 0, 0, 77);
@@ -232,6 +233,7 @@ void Theme::refresh()
         p.warn = {QColor(0xd9, 0x77, 0x06), QColor(217, 119, 6, 31), QColor(0xa3, 0x5a, 0x04)};
         p.danger = {QColor(0xdc, 0x26, 0x26), QColor(220, 38, 38, 28), QColor(0xb9, 0x1c, 0x1c)};
         p.idle = {QColor(0x8a, 0x93, 0xa1), QColor(138, 147, 161, 33), QColor(0x6b, 0x74, 0x80)};
+        p.onSolid = QColor(0xff, 0xff, 0xff);
         p.shadowPanel = QColor(24, 30, 44, 36);
         p.shadowTray = QColor(15, 23, 42, 41);
         p.shadowLift = QColor(16, 24, 40, 20);

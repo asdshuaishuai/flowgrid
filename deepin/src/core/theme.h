@@ -69,6 +69,11 @@ struct Palette {
     StatusColor danger;
     StatusColor idle;
 
+    // 压在实色块上的字色。设计稿的 .cell__icon / .switch-btn__icon 都写死
+    // #fff——那是「落在实色上的字」，不是主题色，所以给它一个正式角色，
+    // 免得各处直接写死十六进制。
+    QColor onSolid;
+
     // 阴影（浮板 / 托盘 / 卡片浮起）
     QColor shadowPanel;
     QColor shadowTray;

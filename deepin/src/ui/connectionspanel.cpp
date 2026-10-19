@@ -581,14 +581,15 @@ void ConnectionsPanel::rebuildLayoutGrid()
             iconBox->setAlignment(Qt::AlignCenter);
             iconBox->setText(d.abbrev.isEmpty() ? d.name.left(2).toUpper() : d.abbrev);
             iconBox->setFont(uiFont(tokens::kFont15, QFont::Bold));
-            // 设计稿 .cell__icon 就是 color: #fff（ui.css 第 438 行），压在
-            // 实色块上；与托盘 .switch-btn__icon 同一处理，不走 onAccent——
-            // 那一档是配主色用的，状态色块套上去会串色。
+            // 42px 的色块有足够面积，柔底 + 同族字色读得清档位。原先用实色
+            // 块压白字，一屏三个饱和色块（绿/绿/橙）比整块面板都跳，deepin
+            // 那种克制的调子里完全站不住。状态语义不变：底色仍是这个设备的
+            // 延迟档（绿=好、橙=慢），只是把实心换成同族的淡底。
             iconBox->setStyleSheet(
                 QStringLiteral("background:%1;border-radius:%2px;color:%3")
-                    .arg(css(tone.solid))
+                    .arg(css(tone.soft))
                     .arg(QString::number(tokens::kRadiusCard))
-                    .arg(QStringLiteral("#ffffff")));
+                    .arg(css(tone.text)));
             cl->addWidget(iconBox);
             auto *label = new QLabel(d.name.section(QLatin1Char(' '), 0, 0), cell);
             label->setFont(uiFont(tokens::kFont11, QFont::DemiBold));

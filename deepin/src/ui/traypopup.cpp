@@ -91,14 +91,15 @@ public:
         vl->setContentsMargins(6, 6, 6, 6);
         vl->setSpacing(4);
 
-        // .switch-btn__icon：24×24 实色块 + 白字。实色取状态色 solid 一档，
-        // 不用 soft——soft 底 + 同族字色在 24px 的小块上几乎分不出档位。
+        // .switch-btn__icon：24×24 实色块 + 落在实色上的字色。实色取状态色 solid
+        // 一档，不用 soft——soft 底 + 同族字色在 24px 的小块上几乎分不出档位。
         auto *icon = new QLabel(abbrev, this);
         icon->setFixedSize(tokens::kSwitchBtnIconSize, tokens::kSwitchBtnIconSize);
         icon->setAlignment(Qt::AlignCenter);
         icon->setFont(uiFont(tokens::kFont11, QFont::Bold));
-        icon->setStyleSheet(QStringLiteral("background:%1;color:#ffffff;border-radius:%2px")
+        icon->setStyleSheet(QStringLiteral("background:%1;color:%2;border-radius:%3px")
                                  .arg(css(sc.solid))
+                                 .arg(css(Theme::instance().palette().onSolid))
                                  .arg(tokens::kRadiusCtl));
 
         // .switch-btn__key
