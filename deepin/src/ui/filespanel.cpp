@@ -140,7 +140,7 @@ void DropZone::applyRestingStyle()
                   QStringLiteral("border:2px dashed %1;border-radius:%2px;background:%3")
                       .arg(css(Theme::instance().palette().line2),
                            QString::number(tokens::kRadiusCard),
-                           css(Theme::instance().palette().surface2)));
+                           css(Theme::instance().palette().card)));
 }
 
 void DropZone::enterEvent(QEnterEvent *e)
@@ -283,7 +283,7 @@ QWidget *FilesPanel::buildTransferList()
     transferLayout_->addLayout(transferRows_);
     applyBoxStyle(list,
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.surface)));
+                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.card)));
     return list;
 }
 
@@ -344,7 +344,7 @@ QWidget *FilesPanel::buildRecords()
     recordsLayout_->addLayout(recordRows_);
     applyBoxStyle(list,
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.surface)));
+                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.card)));
     return list;
 }
 

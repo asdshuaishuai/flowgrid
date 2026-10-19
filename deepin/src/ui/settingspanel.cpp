@@ -99,7 +99,7 @@ QWidget *groupBox(const QString &title, const QList<QWidget *> &rows, QWidget *p
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
                       .arg(css(p.line2))
                       .arg(tokens::kRadiusCard)
-                      .arg(css(p.surface)));
+                      .arg(css(p.card)));
     for (QWidget *row : rows) {
         ll->addWidget(row);
     }

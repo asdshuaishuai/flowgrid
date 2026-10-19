@@ -171,7 +171,7 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
                       QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
                           .arg(css(p.line2))
                           .arg(tokens::kRadiusCard)
-                          .arg(css(p.surface)));
+                          .arg(css(p.card)));
         contentLayout_->addWidget(card);
     }
 

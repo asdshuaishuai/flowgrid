@@ -187,7 +187,7 @@ QWidget *PairingPanel::buildPairCode()
         slot->setText(QStringLiteral("·"));
         slot->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px;color:%3;"
                                           "border-bottom:1px solid %4")
-                                .arg(css(p.surface))
+                                .arg(css(p.card))
                                 .arg(tokens::kRadiusCtl)
                                 .arg(css(p.text3))
                                 .arg(css(p.line1)));
@@ -196,7 +196,7 @@ QWidget *PairingPanel::buildPairCode()
     hl->addStretch(1);
     applyBoxStyle(codeBox,
                   QStringLiteral("border:1px dashed %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.surface2)));
+                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.well)));
     vl->addWidget(codeBox);
 
     // 「5 分钟后失效」在左，「刷新」在右。
@@ -254,7 +254,7 @@ QWidget *PairingPanel::buildDeviceList()
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
                       .arg(css(Theme::instance().palette().line2))
                       .arg(tokens::kRadiusCard)
-                      .arg(css(Theme::instance().palette().surface)));
+                      .arg(css(Theme::instance().palette().card)));
     vl->addWidget(list);
     return box;
 }

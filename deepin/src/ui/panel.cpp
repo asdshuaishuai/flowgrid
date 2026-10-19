@@ -253,11 +253,18 @@ void Panel::restyle()
     }
     // 左右各留 1px 描边：内容铺满整宽，不自己描边会把面板那圈 1px 边框盖掉
     // （CSS 里子元素是裁在 padding box 内的，Qt 没有这个盒模型）。
+    //
+    // 底色取 surface-2 而不是 surface：这一层是「页面」，卡片（设备卡、折叠卡、
+    // 设置卡……）都是 surface。原先这里是 surface，于是白卡浮在白底上、只靠
+    // 1px 边框撑着，而折叠卡用了 surface-2、反而比背景深——同屏两种卡片两种
+    // 底色，层次是反的，整个浮板看着像一张没分层的网页。
+    // DDE 控制中心的惯例是「页面最灰、卡片最白」，卡片靠明度差浮起来而不是
+    // 靠边框硬撑，这里照此对齐。
     const Palette &p = Theme::instance().palette();
     content_->setStyleSheet(
         QStringLiteral("#panelContent{border-left:1px solid %1;border-right:1px solid %1;"
                        "background:%2;}")
-            .arg(colorHex(p.line2), colorHex(p.surface)));
+            .arg(colorHex(p.line2), colorHex(p.page)));
     if (scroll_ != nullptr) {
         // 设计稿 ui.css .content::-webkit-scrollbar：10px 宽、line-3 色、pill 形，
         // 靠 3px 透明边框把滑块收成 4px 的细条。DTK 自带的是一根 8px 亮灰粗条，
@@ -302,14 +309,14 @@ void Panel::paintChrome(QPainter &p)
 
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setPen(QPen(pal.line2, 1));
-    p.setBrush(pal.surface);
+    p.setBrush(pal.page);
     p.drawPath(path);
 
     // 标题栏底色（surface-2）+ 与内容之间的 hairline 分隔
     if (titleBar_ != nullptr && titleBar_->isVisible()) {
         p.save();
         p.setClipPath(path);
-        p.fillRect(QRectF(0, 0, width(), tokens::kTitlebarHeight), pal.surface2);
+        p.fillRect(QRectF(0, 0, width(), tokens::kTitlebarHeight), pal.page);
         p.setPen(QPen(pal.hairline, 1));
         p.drawLine(0, tokens::kTitlebarHeight, width(), tokens::kTitlebarHeight);
         p.restore();
@@ -320,7 +327,7 @@ void Panel::paintChrome(QPainter &p)
         const QRect footRect(0, height() - footer_->height(), width(), footer_->height());
         p.save();
         p.setClipPath(path);
-        p.fillRect(footRect, pal.surface2);
+        p.fillRect(footRect, pal.page);
         p.setPen(QPen(pal.hairline, 1));
         p.drawLine(footRect.top(), footRect.top(), width(), footRect.top());
         p.restore();

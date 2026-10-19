@@ -644,7 +644,7 @@ QWidget *ConnectionsPanel::buildLayoutSection()
                   QStringLiteral("border:2px dashed %1;border-radius:%2px;background:%3")
                       .arg(css(p.line2))
                       .arg(QString::number(tokens::kRadiusCard))
-                      .arg(css(p.surface2)));
+                      .arg(css(p.well)));
     layoutGrid_ = new QGridLayout(gridBox);
     layoutGrid_->setContentsMargins(tokens::kS4, tokens::kS4, tokens::kS4, tokens::kS4);
     layoutGrid_->setHorizontalSpacing(tokens::kS2);

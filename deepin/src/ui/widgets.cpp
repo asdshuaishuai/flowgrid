@@ -356,16 +356,19 @@ Collapsible::Collapsible(const QString &title, const QString &iconName, QWidget 
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // ui.css .section：1px line-2 描边 / r-card 圆角 / surface-2 底。
+    // ui.css .section：1px line-2 描边 / r-card 圆角。
     // 少了这一层，折叠区就只是几行浮在面板底色上的文字，与设计稿的层级完全
     // 对不上——五个屏十来个折叠区都靠它撑起分组。QFrame 默认不参与样式表
     // 绘制底色，必须显式打开（和 DropZone、托盘快速切换按钮同一个坑）。
+    //
+    // 底色用 surface 而不是设计稿的 surface-2：面板页面底已经是 surface-2，
+    // 卡片必须是 surface 才浮得起来（见 panel.cpp 里 content_ 那段注释）。
     setAttribute(Qt::WA_StyledBackground, true);
     applyBoxStyle(this,
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
                       .arg(cssColor(Theme::instance().palette().line2))
                       .arg(QString::number(tokens::kRadiusCard))
-                      .arg(cssColor(Theme::instance().palette().surface2)));
+                      .arg(cssColor(Theme::instance().palette().card)));
 
     head_ = new QWidget(this);
     auto *hl = new QHBoxLayout(head_);
@@ -384,7 +387,7 @@ Collapsible::Collapsible(const QString &title, const QString &iconName, QWidget 
                       QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
                           .arg(cssColor(p.line2))
                           .arg(QString::number(tokens::kRadiusCard))
-                          .arg(cssColor(p.surface2)));
+                          .arg(cssColor(p.card)));
     });
 
     if (!iconName.isEmpty()) {
@@ -989,7 +992,7 @@ void DeviceCard::paintEvent(QPaintEvent *)
         pt.drawPath(sh);
     }
 
-    QColor bg = active_ ? p.accentSoft : p.surface;
+    QColor bg = active_ ? p.accentSoft : p.card;
     if (hovered_ && !active_) {
         bg = p.surface;
     }
@@ -1451,7 +1454,7 @@ QWidget *banner(const QString &text, QWidget *parent, BannerVariant variant)
         break;
     case BannerVariant::Neutral:
         line = p.line2;
-        bg = p.surface2;
+        bg = p.card;      // 不能用 page：同色等于没画
         fg = p.text2;
         break;
     case BannerVariant::Info:
@@ -1673,7 +1676,7 @@ QLabel *groupTitle(const QString &text, QWidget *parent)
     // 这点字距撑着——少了它，分组标题就只是「小一号的灰字」，跟普通 hint 混作一堆。
     label->setStyleSheet(QStringLiteral("color:%1;background:%2;padding:8px %3px 6px %3px;"
                                         "border-bottom:1px solid %4;letter-spacing:0.4px")
-                             .arg(cssColor(p.text3), cssColor(p.surface2))
+                             .arg(cssColor(p.text3), cssColor(p.well))
                              .arg(QString::number(tokens::kS3))
                              .arg(cssColor(p.hairline)));
     return label;
@@ -1764,7 +1767,7 @@ void SegmentedControl::paintEvent(QPaintEvent *)
             lifted.addRoundedRect(cell.adjusted(0.5, 0.5, -0.5, -0.5), tokens::kRadiusChip,
                                   tokens::kRadiusChip);
             pt.fillPath(lifted, p.shadowBar);
-            pt.fillPath(lifted, p.surface);
+            pt.fillPath(lifted, p.card);
         }
         pt.setPen((i == current_ || i == hover_) ? p.text1 : p.text2);
         pt.setFont(uiFont(tokens::kFont11, QFont::DemiBold));
@@ -1889,7 +1892,7 @@ void FgSelect::paintEvent(QPaintEvent *)
     QPainter pt(this);
     pt.setRenderHint(QPainter::Antialiasing, true);
 
-    QColor bg = hovered_ ? p.surfaceHi : p.surface;
+    QColor bg = hovered_ ? p.surfaceHi : p.card;
     pt.setPen(QPen(p.line2, 1));
     pt.setBrush(bg);
     pt.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
@@ -1936,7 +1939,7 @@ void FgSelect::openMenu()
         "QMenu::item { padding:6px 12px; color:%4; font-size:%5px; border-radius:%4px; }"
         "QMenu::item:selected { background:%6; color:%7; }"
         "QMenu::separator { height:1px; background:%2; margin:4px 0; }")
-        .arg(cssColor(p.surface), cssColor(p.line2), QString::number(tokens::kRadiusCtl),
+        .arg(cssColor(p.card), cssColor(p.line2), QString::number(tokens::kRadiusCtl),
              cssColor(p.text1), QString::number(tokens::kFont12),
              cssColor(p.accent), cssColor(p.onAccent)));
 

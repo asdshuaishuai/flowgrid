@@ -241,7 +241,7 @@ QWidget *ClipboardPanel::buildCurrent()
     applyBoxStyle(head,
                   QStringLiteral("background:%1;border-bottom:1px solid %2;"
                                  "border-top-left-radius:%3px;border-top-right-radius:%3px")
-                      .arg(css(p.surface), css(p.hairline))
+                      .arg(css(p.card), css(p.hairline))
                       .arg(tokens::kRadiusCard));
     vl->addWidget(head);
 
@@ -258,7 +258,7 @@ QWidget *ClipboardPanel::buildCurrent()
     preview_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
     preview_->setFixedHeight(QFontMetrics(preview_->font()).lineSpacing());
     bl->addWidget(preview_);
-    applyBoxStyle(bodyBox, QStringLiteral("background:%1").arg(css(p.surface2)));
+    applyBoxStyle(bodyBox, QStringLiteral("background:%1").arg(css(p.well)));
     vl->addWidget(bodyBox);
 
     // __foot：surface 底 + 上 hairline，左边讲这条载荷的规格，右边两个动作。
@@ -309,7 +309,7 @@ QWidget *ClipboardPanel::buildCurrent()
     applyBoxStyle(foot,
                   QStringLiteral("background:%1;border-top:1px solid %2;"
                                  "border-bottom-left-radius:%3px;border-bottom-right-radius:%3px")
-                      .arg(css(p.surface), css(p.hairline))
+                      .arg(css(p.card), css(p.hairline))
                       .arg(tokens::kRadiusCard));
     vl->addWidget(foot);
 
@@ -370,7 +370,7 @@ QWidget *ClipboardPanel::buildHistory()
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
                       .arg(css(p.line2))
                       .arg(tokens::kRadiusCard)
-                      .arg(css(p.surface)));
+                      .arg(css(p.card)));
     return list;
 }
 

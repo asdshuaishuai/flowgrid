@@ -23,9 +23,15 @@ QColor shade(const QColor &base, qreal amount)
         return base;
     }
     QColor c = base;
-    const bool lighten = amount > 0;
+    // 约定：正数提亮、负数压暗。
+    //
+    // 原来写的是 `lighten ? amount : -amount`，负数那一支等于又加了一遍
+    // 绝对值——两个符号都往亮里推。于是所有「负数 = 压暗」的调用点全都反了：
+    // 浅色主题下 line-3 比 line-2 还浅（边框四档的层次整个翻过来），
+    // text2/text3 的「更淡」也是靠这个反号凑出来的。
+    const qreal delta = amount >= 0 ? amount : -amount;
     c.setHslF(c.hueF(), c.saturationF(),
-              qBound(0.0, c.lightnessF() + (lighten ? amount : -amount), 1.0),
+              qBound(0.0, c.lightnessF() + (amount >= 0 ? delta : -delta), 1.0),
               c.alphaF());
     return c;
 }
@@ -156,9 +162,23 @@ void Theme::refresh()
     // FrameBorder 是 DTK 官方边框色，落在线-2 附近；其余三档按比例派生，
     // 保证四档相对关系不变。
     p.line2 = dtk.color(DPalette::FrameBorder);
-    p.line1 = shade(p.line2, p.isDark ? 0.02 : -0.015);
-    p.hairline = shade(p.line2, p.isDark ? 0.005 : -0.01);
-    p.line3 = shade(p.line2, p.isDark ? 0.06 : -0.08);
+
+    // 四档边框是同一墨色压在底上的不同透明度（tokens.css：hairline .055 <
+    // line-1 .07 < line-2 .12 < line-3 .22），FrameBorder 只给了 line-2 那一档，
+    // 其余三档按这个比例推。方向随主题走：浅色底浅，墨越浓边框越明显
+    // （更深）；深色底深，墨越浓反而越亮。
+    //
+    // 「弱的那档更淡」在两个主题下的方向是相反的，所以这两行不是随手写的：
+    // light 下 weaker 要更浅（+），dark 下 weaker 要更深（−）。
+    if (p.isDark) {
+        p.hairline = shade(p.line2, -0.040);
+        p.line1 = shade(p.line2, -0.028);
+        p.line3 = shade(p.line2, 0.060);
+    } else {
+        p.hairline = shade(p.line2, 0.050);
+        p.line1 = shade(p.line2, 0.035);
+        p.line3 = shade(p.line2, -0.050);
+    }
 
     // ── 文字三档 ────────────────────────────────────────────────────────
     p.text1 = dtk.color(DPalette::TextTitle);
@@ -171,10 +191,11 @@ void Theme::refresh()
     }
     // DPalette 的提示色在个别主题下会与标题色过近，这里保底拉开可读性。
     if (p.text2.isValid() && p.text1.isValid() && p.text2 == p.text1) {
-        p.text2 = shade(p.text1, p.isDark ? -0.22 : -0.18);
+        // 次要文字要比标题淡：浅色底上「淡」= 更浅，深色底上「淡」= 更深。
+        p.text2 = shade(p.text1, p.isDark ? -0.22 : 0.18);
     }
     if (p.text3.isValid() && p.text2.isValid() && p.text3 == p.text2) {
-        p.text3 = shade(p.text2, p.isDark ? -0.22 : -0.16);
+        p.text3 = shade(p.text2, p.isDark ? -0.22 : 0.16);
     }
 
     // ── 主色：跟随 deepin 活动色 ───────────────────────────────────────
@@ -219,6 +240,33 @@ void Theme::refresh()
         p.toastBg = QColor(28, 34, 44, 240);
         p.toastFg = QColor(0xff, 0xff, 0xff);
     }
+
+    // ── 页 / 卡 / 井：三个与主题无关的层级角色 ────────────────────────
+    // 三档的明暗关系被钉死成「卡片比页面亮」：浅色下是白卡浮在灰页上，深色下
+    // 是略亮的深灰卡浮在更暗的页上。方向反了（卡片比页面暗）看着就像页面被
+    // 挖了个洞——两套主题对同一件事得用同一个方向。
+    //
+    // 派生只从 p.surface（QPalette::Window）出发，因为它是明暗下唯一保证
+    // 不透明的一档。原来还用过 p.surface2（AlternateBase），但那是个
+    // 「叠在别人上面的遮罩」：深色下实测是 alpha 14 的黑，拿它去 fill 卡片，
+    // 画在 #252525 的页面上算出来是 37×(1−14/255)=35，跟页面几乎一模一样，
+    // 等于没画——这就是深色下卡片一直浮不出来的原因。
+    //
+    // 浅色下白是「高」的一端，所以页要压暗一档；深色下深灰是「低」的一端，
+    // 所以页就是原底色、卡要提亮一档。
+    if (p.isDark) {
+        p.page = p.surface;
+        p.card = shade(p.surface, 0.035);
+        p.well = p.surface;
+    } else {
+        p.page = shade(p.surface, -0.030);
+        p.card = p.surface;
+        p.well = shade(p.surface, -0.070);
+    }
+    // 三档都是拿来 fill 的底色，半透明会跟底下的东西叠出意外的颜色。
+    p.page.setAlpha(255);
+    p.card.setAlpha(255);
+    p.well.setAlpha(255);
 
     palette_ = p;
     Q_EMIT changed();

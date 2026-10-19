@@ -155,7 +155,7 @@ private:
                       QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
                           .arg(css(on ? p.accent : p.line2))
                           .arg(tokens::kRadiusCtl)
-                          .arg(css(on ? p.accentSoft : p.surface)));
+                          .arg(css(on ? p.accentSoft : p.card)));
     }
 
     bool active_ = false;
@@ -581,7 +581,7 @@ void TrayPopup::paintEvent(QPaintEvent *e)
     path.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
                         tokens::kRadiusSurface, tokens::kRadiusSurface);
     pt.setPen(QPen(p.line2, 1));
-    pt.setBrush(p.surface);
+    pt.setBrush(p.page);
     pt.drawPath(path);
 
     pt.save();
