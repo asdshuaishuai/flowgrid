@@ -1,0 +1,56 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+      L2 语义色 · Dark（design/unified/tokens.css §2b）
+      + L3 Windows 强调色（#4a9eff，深色档）。组件一律 DynamicResource 消费。
+    -->
+    <SolidColorBrush x:Key="BrushCanvas" Color="#101215"/>
+    <SolidColorBrush x:Key="BrushSurface" Color="#1E2127"/>
+    <SolidColorBrush x:Key="BrushSurface2" Color="#252932"/>
+    <SolidColorBrush x:Key="BrushSurface3" Color="#2D323C"/>
+    <SolidColorBrush x:Key="BrushSurfaceHi" Color="#0EFFFFFF"/>
+    <SolidColorBrush x:Key="BrushSurfacePress" Color="#18FFFFFF"/>
+
+    <SolidColorBrush x:Key="BrushLine1" Color="#12FFFFFF"/>
+    <SolidColorBrush x:Key="BrushLine2" Color="#21FFFFFF"/>
+    <SolidColorBrush x:Key="BrushLine3" Color="#38FFFFFF"/>
+    <SolidColorBrush x:Key="BrushHairline" Color="#0DFFFFFF"/>
+    <SolidColorBrush x:Key="BrushEdgeHi" Color="#12FFFFFF"/>
+
+    <SolidColorBrush x:Key="BrushText1" Color="#E9EDF2"/>
+    <SolidColorBrush x:Key="BrushText2" Color="#A2AAB6"/>
+    <SolidColorBrush x:Key="BrushText3" Color="#6E7783"/>
+
+    <SolidColorBrush x:Key="BrushOkSolid" Color="#2CC487"/>
+    <SolidColorBrush x:Key="BrushOkText" Color="#5FD7A5"/>
+    <SolidColorBrush x:Key="BrushOkSoft" Color="#2B10A36F"/>
+    <SolidColorBrush x:Key="BrushOkLine" Color="#5710A36F"/>
+
+    <SolidColorBrush x:Key="BrushWarnSolid" Color="#F0A63C"/>
+    <SolidColorBrush x:Key="BrushWarnText" Color="#F5C078"/>
+    <SolidColorBrush x:Key="BrushWarnSoft" Color="#2BD97706"/>
+    <SolidColorBrush x:Key="BrushWarnLine" Color="#57D97706"/>
+
+    <SolidColorBrush x:Key="BrushDangerSolid" Color="#F2555A"/>
+    <SolidColorBrush x:Key="BrushDangerText" Color="#FF8B8F"/>
+    <SolidColorBrush x:Key="BrushDangerSoft" Color="#29DC2626"/>
+    <SolidColorBrush x:Key="BrushDangerLine" Color="#57DC2626"/>
+
+    <SolidColorBrush x:Key="BrushIdleSolid" Color="#7B8492"/>
+    <SolidColorBrush x:Key="BrushIdleText" Color="#9AA3B0"/>
+    <SolidColorBrush x:Key="BrushIdleSoft" Color="#2E8A93A1"/>
+    <SolidColorBrush x:Key="BrushIdleLine" Color="#528A93A1"/>
+
+    <SolidColorBrush x:Key="BrushAccent" Color="#4A9EFF"/>
+    <SolidColorBrush x:Key="BrushAccentText" Color="#4A9EFF"/>
+    <SolidColorBrush x:Key="BrushAccentSoft" Color="#1F4A9EFF"/>
+    <SolidColorBrush x:Key="BrushAccentLine" Color="#4D4A9EFF"/>
+    <SolidColorBrush x:Key="BrushAccentHi" Color="#2E4A9EFF"/>
+    <SolidColorBrush x:Key="BrushAccentHover" Color="#60AAFF"/>
+    <SolidColorBrush x:Key="BrushAccentPress" Color="#76B5FF"/>
+    <SolidColorBrush x:Key="BrushOnAccent" Color="#FFFFFF"/>
+
+    <SolidColorBrush x:Key="BrushOverlay" Color="#6B000000"/>
+    <SolidColorBrush x:Key="BrushToastBg" Color="#F52E333C"/>
+    <SolidColorBrush x:Key="BrushToastFg" Color="#F2F5F8"/>
+</ResourceDictionary>

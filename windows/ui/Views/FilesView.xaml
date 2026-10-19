@@ -1,0 +1,98 @@
+<UserControl x:Class="FlowGrid.UI.Views.FilesView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- files.html：传输中列表 + .drop 拖放区 + 传输记录 + 接收设置 -->
+    <DockPanel Margin="{StaticResource PadContent}">
+        <TextBlock DockPanel.Dock="Top" Text="文件传输"
+                   Style="{StaticResource TextTitle}" Margin="{StaticResource PadB12}"/>
+
+        <ScrollViewer>
+            <StackPanel>
+                <!-- 传输中（.xfer 行 + .bar 进度条） -->
+                <TextBlock Text="传输中" Style="{StaticResource TextCaption}" Margin="0,0,0,4"/>
+                <ItemsControl x:Name="Transfers" Margin="0,0,0,8">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Style="{StaticResource DeviceCard}" Margin="0,0,0,4" Padding="12,9,12,9">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Width="28" Height="28" CornerRadius="{StaticResource RadiusCtl}"
+                                            Background="{DynamicResource BrushSurface3}">
+                                        <TextBlock Text="{Binding DirText}" FontSize="10"
+                                                   Foreground="{DynamicResource BrushText2}"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Margin="{StaticResource PadL12}" VerticalAlignment="Center">
+                                        <Grid>
+                                            <TextBlock Text="{Binding Name}" FontWeight="Medium" FontSize="{StaticResource Font12}"
+                                                       Foreground="{DynamicResource BrushText1}" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding Percent}" FontSize="{StaticResource Font11}"
+                                                       FontFamily="Consolas" Foreground="{DynamicResource BrushText2}"
+                                                       HorizontalAlignment="Right"/>
+                                        </Grid>
+                                        <ProgressBar Style="{StaticResource ProgressBar}" Value="{Binding PercentValue}"
+                                                     Margin="0,4,0,0"/>
+                                        <TextBlock Text="{Binding Peer}" FontSize="{StaticResource Font11}"
+                                                   Foreground="{DynamicResource BrushText3}" Margin="{StaticResource PadV2}"/>
+                                    </StackPanel>
+                                    <TextBlock Grid.Column="2" Text="{Binding State}" FontSize="{StaticResource Font11}"
+                                               Foreground="{DynamicResource BrushText3}" VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- .drop 拖放区 -->
+                <Border Style="{StaticResource DropZone}" Margin="0,8,0,0" Cursor="Hand"
+                        MouseLeftButtonUp="OnPickFileClick">
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock Text="拖入文件，或点击选择" FontWeight="SemiBold" FontSize="{StaticResource Font12}"
+                                   Foreground="{DynamicResource BrushText3}" HorizontalAlignment="Center"/>
+                        <TextBlock Text="单文件 1 B — 16 MiB · 文件名不含路径分隔符" FontSize="{StaticResource Font11}"
+                                   Foreground="{DynamicResource BrushText3}" HorizontalAlignment="Center"
+                                   Margin="0,4,0,0" Opacity="0.7"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 传输记录 -->
+                <TextBlock Text="传输记录" Style="{StaticResource TextCaption}" Margin="0,16,0,4"/>
+                <ItemsControl x:Name="Records">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Style="{StaticResource ListRow}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Width="28" Height="28" CornerRadius="{StaticResource RadiusCtl}"
+                                            Background="{DynamicResource BrushOkSoft}">
+                                        <TextBlock Text="✓" FontSize="10"
+                                                   Foreground="{DynamicResource BrushOkText}"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Margin="{StaticResource PadL12}" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" FontSize="{StaticResource Font12}"
+                                                   Foreground="{DynamicResource BrushText1}" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Display}" FontSize="{StaticResource Font11}"
+                                                   Foreground="{DynamicResource BrushText3}"/>
+                                    </StackPanel>
+                                    <Border Grid.Column="2" Style="{StaticResource BadgeOk}" VerticalAlignment="Center">
+                                        <TextBlock Text="完成" FontSize="{StaticResource Font11}"
+                                                   Foreground="{DynamicResource BrushOkText}"/>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>

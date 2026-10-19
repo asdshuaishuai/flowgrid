@@ -34,5 +34,16 @@ protocol/cgo/*.a
 libflowgrid_*.a
 libflowgrid_*.h
 
+# .NET (windows/ui)
+windows/ui/bin/
+windows/ui/obj/
+
+# smoke-link 运行产物（含节点身份私钥，严禁入库）
+windows/.smoke/
+windows/linktest-out.txt
+
+# Mimosa 安全扫描本地状态
+.mimosa/
+
 # Tooling index
 .codegraph/

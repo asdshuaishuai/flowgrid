@@ -1,0 +1,97 @@
+<UserControl x:Class="FlowGrid.UI.Views.PairingView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- pairing.html：.steps 三档 + .paircode 虚线容器 + 6 位槽 -->
+    <DockPanel Margin="{StaticResource PadContent}">
+        <TextBlock DockPanel.Dock="Top" Text="配对新设备"
+                   Style="{StaticResource TextTitle}" Margin="{StaticResource PadB12}"/>
+
+        <StackPanel VerticalAlignment="Center">
+            <!-- .steps 三档 -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <StackPanel>
+                    <Border Width="20" Height="20" CornerRadius="10" Background="{DynamicResource BrushAccent}">
+                        <TextBlock Text="1" FontSize="{StaticResource Font11}" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource BrushOnAccent}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="双方就绪" FontSize="{StaticResource Font11}" FontWeight="SemiBold"
+                               Foreground="{DynamicResource BrushText1}" HorizontalAlignment="Center"
+                               Margin="0,4,0,0"/>
+                </StackPanel>
+                <Border Width="20" Height="1" Background="{DynamicResource BrushLine2}" VerticalAlignment="Top" Margin="10,10,10,0"/>
+                <StackPanel Opacity="0.55">
+                    <Border Width="20" Height="20" CornerRadius="10" Background="{DynamicResource BrushSurface}" BorderBrush="{DynamicResource BrushLine2}" BorderThickness="1">
+                        <TextBlock Text="2" FontSize="{StaticResource Font11}" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource BrushText3}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="输入配对码" FontSize="{StaticResource Font11}"
+                               Foreground="{DynamicResource BrushText3}" HorizontalAlignment="Center"
+                               Margin="0,4,0,0"/>
+                </StackPanel>
+                <Border Width="20" Height="1" Background="{DynamicResource BrushLine2}" VerticalAlignment="Top" Margin="10,10,10,0"/>
+                <StackPanel Opacity="0.55">
+                    <Border Width="20" Height="20" CornerRadius="10" Background="{DynamicResource BrushSurface}" BorderBrush="{DynamicResource BrushLine2}" BorderThickness="1">
+                        <TextBlock Text="3" FontSize="{StaticResource Font11}" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource BrushText3}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="建立连接" FontSize="{StaticResource Font11}"
+                               Foreground="{DynamicResource BrushText3}" HorizontalAlignment="Center"
+                               Margin="0,4,0,0"/>
+                </StackPanel>
+            </StackPanel>
+
+            <!-- .paircode：虚线容器 + 6 位槽 -->
+            <Grid HorizontalAlignment="Center" Margin="{StaticResource PadT16}">
+                <Rectangle Stroke="{DynamicResource BrushLine2}" StrokeThickness="1"
+                           StrokeDashArray="4 4" RadiusX="10" RadiusY="10"
+                           Fill="{DynamicResource BrushSurface2}"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="12">
+                    <Border Width="{StaticResource PairSlotW}" Height="{StaticResource PairSlotH}"
+                            CornerRadius="{StaticResource RadiusCtl}" Background="{DynamicResource BrushSurface}"
+                            Margin="0,0,8,0">
+                        <TextBlock Text="·" FontSize="{StaticResource Font20}" FontWeight="Bold"
+                                   Foreground="{DynamicResource BrushText1}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <Border Width="{StaticResource PairSlotW}" Height="{StaticResource PairSlotH}"
+                            CornerRadius="{StaticResource RadiusCtl}" Background="{DynamicResource BrushSurface}"
+                            Margin="0,0,8,0">
+                        <TextBlock Text="·" FontSize="{StaticResource Font20}" FontWeight="Bold"
+                                   Foreground="{DynamicResource BrushText1}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <Border Width="{StaticResource PairSlotW}" Height="{StaticResource PairSlotH}"
+                            CornerRadius="{StaticResource RadiusCtl}" Background="{DynamicResource BrushSurface}"
+                            Margin="0,0,8,0">
+                        <TextBlock Text="·" FontSize="{StaticResource Font20}" FontWeight="Bold"
+                                   Foreground="{DynamicResource BrushText1}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <Border Width="{StaticResource PairSlotW}" Height="{StaticResource PairSlotH}"
+                            CornerRadius="{StaticResource RadiusCtl}" Background="{DynamicResource BrushSurface}"
+                            Margin="0,0,8,0">
+                        <TextBlock Text="·" FontSize="{StaticResource Font20}" FontWeight="Bold"
+                                   Foreground="{DynamicResource BrushText1}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <Border Width="{StaticResource PairSlotW}" Height="{StaticResource PairSlotH}"
+                            CornerRadius="{StaticResource RadiusCtl}" Background="{DynamicResource BrushSurface}"
+                            Margin="0,0,8,0">
+                        <TextBlock Text="·" FontSize="{StaticResource Font20}" FontWeight="Bold"
+                                   Foreground="{DynamicResource BrushText1}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <Border Width="{StaticResource PairSlotW}" Height="{StaticResource PairSlotH}"
+                            CornerRadius="{StaticResource RadiusCtl}" Background="{DynamicResource BrushSurface}">
+                        <TextBlock Text="·" FontSize="{StaticResource Font20}" FontWeight="Bold"
+                                   Foreground="{DynamicResource BrushText1}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </StackPanel>
+            </Grid>
+
+            <Button Style="{StaticResource BtnSecondary}" Content="生成配对码" IsEnabled="False"
+                    HorizontalAlignment="Center" Margin="{StaticResource PadT16}"/>
+            <TextBlock Text="配对码由 fgcore 在连接里程碑生成，当前为设计骨架"
+                       Style="{StaticResource TextCaption}" HorizontalAlignment="Center"
+                       Margin="{StaticResource PadT12}"/>
+        </StackPanel>
+    </DockPanel>
+</UserControl>

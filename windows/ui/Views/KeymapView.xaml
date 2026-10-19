@@ -1,0 +1,72 @@
+<UserControl x:Class="FlowGrid.UI.Views.KeymapView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:FlowGrid.UI.Views">
+    <!-- keymap.html：默认跨平台映射行 + 规则表状态 -->
+    <DockPanel Margin="{StaticResource PadContent}">
+        <TextBlock DockPanel.Dock="Top" Text="键位映射"
+                   Style="{StaticResource TextTitle}" Margin="{StaticResource PadB12}"/>
+
+        <views:EmptyState x:Name="Empty" Title="自定义规则未加载"
+                          Description="把 keymap.yaml 放到 %APPDATA%\FlowGrid\ 后重启 fgcore；无规则时仅做下面的修饰键语义映射"
+                          Margin="{StaticResource PadB12}"/>
+
+        <Border DockPanel.Dock="Top" Style="{StaticResource DeviceCard}">
+            <StackPanel>
+                <TextBlock Text="默认跨平台修饰键（§6.3，恒启用）" Style="{StaticResource TextSecondary}"
+                           Margin="{StaticResource PadB12}"/>
+                <Grid Height="24">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="Ctrl" FontWeight="SemiBold" Style="{StaticResource TextMain}"/>
+                        <TextBlock Text="  →  " Style="{StaticResource TextMuted}"/>
+                        <TextBlock Text="Cmd (macOS)" Style="{StaticResource TextMain}"/>
+                    </StackPanel>
+                    <TextBlock Text="Windows → macOS" Style="{StaticResource TextCaption}"
+                               HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
+                <Grid Height="24">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="Win" FontWeight="SemiBold" Style="{StaticResource TextMain}"/>
+                        <TextBlock Text="  →  " Style="{StaticResource TextMuted}"/>
+                        <TextBlock Text="Ctrl (macOS)" Style="{StaticResource TextMain}"/>
+                    </StackPanel>
+                    <TextBlock Text="Windows → macOS" Style="{StaticResource TextCaption}"
+                               HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
+                <Grid Height="24">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="Alt" FontWeight="SemiBold" Style="{StaticResource TextMain}"/>
+                        <TextBlock Text="  →  " Style="{StaticResource TextMuted}"/>
+                        <TextBlock Text="Option (macOS)" Style="{StaticResource TextMain}"/>
+                    </StackPanel>
+                    <TextBlock Text="Windows → macOS" Style="{StaticResource TextCaption}"
+                               HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
+                <Grid Height="24">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="Ctrl / Alt / Win" Style="{StaticResource TextMain}"/>
+                        <TextBlock Text="  →  " Style="{StaticResource TextMuted}"/>
+                        <TextBlock Text="不变 (Linux)" Style="{StaticResource TextMain}"/>
+                    </StackPanel>
+                    <TextBlock Text="Windows → Linux" Style="{StaticResource TextCaption}"
+                               HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource DeviceCard}" Margin="{StaticResource PadT12}">
+            <StackPanel>
+                <Grid Height="22">
+                    <TextBlock Text="规则表" Style="{StaticResource TextMain}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="RulesState" Text="—" Style="{StaticResource TextSecondary}"
+                               HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
+                <Grid Height="22">
+                    <TextBlock Text="规则文件" Style="{StaticResource TextMain}" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="RulesPath" Style="{StaticResource TextSecondary}"
+                               HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+    </DockPanel>
+</UserControl>
