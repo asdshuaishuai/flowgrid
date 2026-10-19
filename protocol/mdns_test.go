@@ -163,6 +163,17 @@ func TestMdnsBrowserPrune(t *testing.T) {
 	if n := b.Prune(time.Minute); n != 0 {
 		t.Fatalf("刚发现的设备不该被淘汰，淘汰了 %d 台", n)
 	}
+
+	// Windows 的单调时钟粒度约 0.5ms，距 LastSeen 才过几十微秒时
+	// Since 返回精确的 0，靠「时间自然流过」触发 Prune(0) 在这里是赌运气。
+	// 同包直接把 LastSeen 拨旧，确定性地构造过期。
+	b.mu.Lock()
+	for k, p := range b.peers {
+		p.LastSeen = time.Now().Add(-time.Minute)
+		b.peers[k] = p
+	}
+	b.mu.Unlock()
+
 	if n := b.Prune(0); n != 1 {
 		t.Fatalf("过期设备应被淘汰 1 台，实际 %d", n)
 	}
