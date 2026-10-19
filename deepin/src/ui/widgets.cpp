@@ -6,6 +6,7 @@
 #include <QGraphicsDropShadowEffect>
 #include <QGuiApplication>
 #include <QEnterEvent>
+#include <QFocusEvent>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -14,6 +15,7 @@
 #include <QActionGroup>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
@@ -54,6 +56,31 @@ QFont uiFont(int px, int weight = QFont::Normal)
 QString cssColor(const QColor &c)
 {
     return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
+}
+
+// 焦点环。
+//
+// 设计稿 ui.css 的 :focus-visible 写的是 `outline: 2px solid 主色; outline-offset: 2px`
+// ——环画在控件**外面**。Qt 里做不到：控件的绘制区被裁到自己的矩形内
+// （paintEvent 的绘制区 = 控件矩形 ∩ 脏区），画到矩形外的部分一律被裁掉。
+// 实测过：开关的外扩环只剩四个角——正好是落在控件矩形内的四个角。
+//
+// 所以统一改成**内收环**：画在控件内侧，视觉上同样是「一圈 2px 主色」，只是从
+// 外面挪到了里面。控件本身是实色填充时（主色按钮），内收环要用 onSolid
+// （白）才看得见。
+//
+// 焦点态用 focused_ 成员而不是 hasFocus()：hasFocus() 依赖窗口处于激活态，
+// 无头截图里永远为假，焦点环就永远审不到；focusIn/focusOut 是控件自己收到
+// 的事件，与窗口激活与否无关。
+void paintFocusRing(QPainter &p, const QRectF &r, qreal radius, const QColor &color)
+{
+    // pen 是画在路径上（居中）的，2px 粗的笔会往路径两侧各渗 1px。路径再往里
+    // 收 1px，整条环就落在控件内侧 1…3px，不会被控件边缘切掉。
+    constexpr qreal kInset = 2.0;
+    p.setPen(QPen(color, 2.0));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(r.adjusted(kInset, kInset, -kInset, -kInset),
+                      qMax<qreal>(0.0, radius - kInset), qMax<qreal>(0.0, radius - kInset));
 }
 
 // 线性混合两个颜色（t=0 取 a，t=1 取 b）。开关的过渡要同时动轨道底色和旋钮
@@ -287,13 +314,25 @@ void ToggleSwitch::paintEvent(QPaintEvent *)
     pt.setBrush(QColor(Qt::white));
     pt.drawEllipse(QRectF(x, pad, d, d));
 
-    if (hasFocus()) {
-        QColor ring = p.accent;
-        ring.setAlpha(200);
-        pt.setPen(QPen(ring, 2));
-        pt.setBrush(Qt::NoBrush);
-        pt.drawRoundedRect(rect().adjusted(-2, -2, 2, 2), height() / 2.0 + 2, height() / 2.0 + 2);
+    // ui.css .switch:focus-visible —— 2px 主色、向外 2px。Qt 画不到控件外面
+    // （见 paintFocusRing 的说明），统一改成内收环。
+    if (focused_) {
+        paintFocusRing(pt, QRectF(rect()), height() / 2.0, p.accent);
     }
+}
+
+void ToggleSwitch::focusInEvent(QFocusEvent *e)
+{
+    focused_ = true;
+    update();
+    QAbstractButton::focusInEvent(e);
+}
+
+void ToggleSwitch::focusOutEvent(QFocusEvent *e)
+{
+    focused_ = false;
+    update();
+    QAbstractButton::focusOutEvent(e);
 }
 
 // ── LatencyChip ───────────────────────────────────────────────────────
@@ -496,7 +535,7 @@ void Collapsible::keyPressEvent(QKeyEvent *e)
 
 void Collapsible::paintFocusRing(QPainter &p)
 {
-    if (!hasFocus()) {
+    if (!focused_) {
         return;
     }
     // ui.css .section__head:focus-visible —— 2px 主色、offset -2px，即贴着头的
@@ -506,6 +545,20 @@ void Collapsible::paintFocusRing(QPainter &p)
     p.setBrush(Qt::NoBrush);
     p.drawRoundedRect(QRectF(head_->geometry()).adjusted(2.0, 2.0, -2.0, -2.0),
                       tokens::kRadiusCard - 2, tokens::kRadiusCard - 2);
+}
+
+void Collapsible::focusInEvent(QFocusEvent *e)
+{
+    focused_ = true;
+    update();
+    QFrame::focusInEvent(e);
+}
+
+void Collapsible::focusOutEvent(QFocusEvent *e)
+{
+    focused_ = false;
+    update();
+    QFrame::focusOutEvent(e);
 }
 
 void Collapsible::paintEvent(QPaintEvent *)
@@ -762,19 +815,40 @@ void FgButton::paintEvent(QPaintEvent *)
     pt.setFont(f);
     if (iconName_.isEmpty()) {
         pt.drawText(rect(), Qt::AlignCenter, text_);
-        return;
+    } else {
+        // 「图标 + 文字」并排：先量出整块宽度再居中，避免两段各自居中导致错位。
+        const int iconSize = small_ ? 13 : 14;
+        const int gap = small_ ? 5 : tokens::kS1;
+        const QFontMetrics fm(f);
+        const int total = iconSize + gap + fm.horizontalAdvance(text_);
+        const int x0 = (width() - total) / 2;
+        const int y0 = (height() - iconSize) / 2;
+        pt.drawPixmap(QPoint(x0, y0), icons::icon(iconName_, iconSize, fg_).pixmap(iconSize, iconSize));
+        pt.drawText(QRect(x0 + iconSize + gap, 0, fm.horizontalAdvance(text_) + 2, height()),
+                    Qt::AlignVCenter | Qt::AlignLeft, text_);
     }
 
-    // 「图标 + 文字」并排：先量出整块宽度再居中，避免两段各自居中导致错位。
-    const int iconSize = small_ ? 13 : 14;
-    const int gap = small_ ? 5 : tokens::kS1;
-    const QFontMetrics fm(f);
-    const int total = iconSize + gap + fm.horizontalAdvance(text_);
-    const int x0 = (width() - total) / 2;
-    const int y0 = (height() - iconSize) / 2;
-    pt.drawPixmap(QPoint(x0, y0), icons::icon(iconName_, iconSize, fg_).pixmap(iconSize, iconSize));
-    pt.drawText(QRect(x0 + iconSize + gap, 0, fm.horizontalAdvance(text_) + 2, height()),
-                Qt::AlignVCenter | Qt::AlignLeft, text_);
+    // ui.css .btn:focus-visible —— 2px 主色。实色（主色）按钮上主色环等于
+    // 没有环，所以这类按钮改用 onSolid（白）——白环压蓝底，跟实心控件的反差
+    // 最大，也和 DDE 自己的「实色按钮聚焦」观感一致。
+    if (focused_) {
+        const bool solid = (variant_ == Variant::Accent);
+        paintFocusRing(pt, QRectF(rect()), tokens::kRadiusCtl, solid ? p.onSolid : p.accent);
+    }
+}
+
+void FgButton::focusInEvent(QFocusEvent *e)
+{
+    focused_ = true;
+    update();
+    QAbstractButton::focusInEvent(e);
+}
+
+void FgButton::focusOutEvent(QFocusEvent *e)
+{
+    focused_ = false;
+    update();
+    QAbstractButton::focusOutEvent(e);
 }
 
 // ── IconButton ────────────────────────────────────────────────────────
@@ -783,6 +857,10 @@ IconButton::IconButton(const QString &iconName, const QString &tooltip, QWidget 
 {
     setFixedSize(tokens::kIconButtonSize, tokens::kIconButtonSize);
     setCursor(Qt::PointingHandCursor);
+    // 图标按钮此前一个焦点策略都没有：Tab 走不到它，键盘用户等于看不见这个
+    // 「切换到此设备 / 重连 / 更多信息」的存在。设计稿没写这条，但它是可点的
+    // 按钮，DDE 规范要求可交互控件都能被键盘到达。
+    setFocusPolicy(Qt::StrongFocus);
     if (!tooltip.isEmpty()) {
         setToolTip(tooltip);
     }
@@ -823,6 +901,25 @@ void IconButton::paintEvent(QPaintEvent *)
     const int s = tokens::kIconButtonSize - 6;
     pt.drawPixmap((width() - s) / 2, (height() - s) / 2,
                   icons::icon(iconName_, s, hovered_ ? p.text1 : p.text3).pixmap(s, s));
+
+    // 26px 的小控件，环压到相邻控件上不好看；统一内收（见 paintFocusRing）。
+    if (focused_) {
+        paintFocusRing(pt, QRectF(rect()), tokens::kRadiusCtl, p.accent);
+    }
+}
+
+void IconButton::focusInEvent(QFocusEvent *e)
+{
+    focused_ = true;
+    update();
+    QAbstractButton::focusInEvent(e);
+}
+
+void IconButton::focusOutEvent(QFocusEvent *e)
+{
+    focused_ = false;
+    update();
+    QAbstractButton::focusOutEvent(e);
 }
 
 // ── DeviceCard ────────────────────────────────────────────────────────
@@ -1014,6 +1111,8 @@ NavRow::NavRow(const QString &iconName, const QString &label, QWidget *trailing,
     : QWidget(parent), iconName_(iconName), label_(label), trailing_(trailing)
 {
     setCursor(Qt::PointingHandCursor);
+    // 托盘浮层是这应用唯一的常驻界面，每一行都是入口，必须能被键盘走到。
+    setFocusPolicy(Qt::StrongFocus);
 
     auto *hl = new QHBoxLayout(this);
     hl->setContentsMargins(tokens::kS3, 7, tokens::kS3, 7);
@@ -1087,7 +1186,7 @@ void NavRow::leaveEvent(QEvent *e)
 
 void NavRow::paintEvent(QPaintEvent *)
 {
-    if (!hovered_ && !pressed_) {
+    if (!hovered_ && !pressed_ && !focused_) {
         return;   // 常态透明，省一次重绘
     }
     const Palette &p = Theme::instance().palette();
@@ -1096,6 +1195,38 @@ void NavRow::paintEvent(QPaintEvent *)
     pt.setPen(Qt::NoPen);
     pt.setBrush(pressed_ ? p.surfacePress : p.surfaceHi);
     pt.drawRect(rect());
+
+    // 托盘入口行是设计稿里的 <a>，本来就该能被键盘走到。焦点环画在行内：
+    // 行是整块通栏的，向外扩会盖到分组标题和分隔线上（而且 Qt 也画不出去）。
+    if (focused_) {
+        paintFocusRing(pt, QRectF(rect()), 0, p.accent);
+    }
+}
+
+void NavRow::focusInEvent(QFocusEvent *e)
+{
+    focused_ = true;
+    update();
+    QWidget::focusInEvent(e);
+}
+
+void NavRow::focusOutEvent(QFocusEvent *e)
+{
+    focused_ = false;
+    update();
+    QWidget::focusOutEvent(e);
+}
+
+void NavRow::keyPressEvent(QKeyEvent *e)
+{
+    // 回车 / 空格 = 点这一行。托盘里的每一行都是一个入口，键盘走不到就等于
+    // 没有入口——托盘浮层是这应用唯一的常驻界面。
+    if (e->key() == Qt::Key_Space || e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) {
+        Q_EMIT clicked();
+        e->accept();
+        return;
+    }
+    QWidget::keyPressEvent(e);
 }
 
 // ── ElidedLabel ──────────────────────────────────────────────────────
@@ -1154,6 +1285,9 @@ ClipRow::ClipRow(const QString &iconName, const QString &text, const QString &hi
     : QWidget(parent), leading_(leading), trailing_(trailing)
 {
     setCursor(Qt::PointingHandCursor);
+    // 历史条目点一下就是「写入本地剪贴板」，是剪贴板屏的主要操作。整行可点
+    // 就要整行可聚焦，否则键盘用户只能看着列表过。
+    setFocusPolicy(Qt::StrongFocus);
     const Palette &p = Theme::instance().palette();
 
     // ui.css .list__row：padding 10px var(--s-3)、gap var(--s-3)；
@@ -1241,6 +1375,34 @@ void ClipRow::paintEvent(QPaintEvent *)
     // 这里统一画满宽，不去为「是不是最后一行」再存一个状态。
     pt.setPen(p.hairline);
     pt.drawLine(0, height() - 1, width() - 1, height() - 1);
+
+    if (focused_) {
+        paintFocusRing(pt, QRectF(rect()), 0, p.accent);
+    }
+}
+
+void ClipRow::focusInEvent(QFocusEvent *e)
+{
+    focused_ = true;
+    update();
+    QWidget::focusInEvent(e);
+}
+
+void ClipRow::focusOutEvent(QFocusEvent *e)
+{
+    focused_ = false;
+    update();
+    QWidget::focusOutEvent(e);
+}
+
+void ClipRow::keyPressEvent(QKeyEvent *e)
+{
+    if (e->key() == Qt::Key_Space || e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) {
+        Q_EMIT clicked();
+        e->accept();
+        return;
+    }
+    QWidget::keyPressEvent(e);
 }
 
 // ── ListRow ───────────────────────────────────────────────────────────
@@ -1693,6 +1855,9 @@ SegmentedControl::SegmentedControl(const QStringList &items, QWidget *parent)
     setCursor(Qt::PointingHandCursor);
     setMouseTracking(true);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    // 剪贴板屏的类型过滤（全部 / 文本 / 代码 / 链接 / 图片）此前只能用鼠标切，
+    // 键盘用户没有别的办法换筛选条件。
+    setFocusPolicy(Qt::StrongFocus);
 
     const QFont f = uiFont(tokens::kFont11, QFont::DemiBold);
     const QFontMetrics fm(f);
@@ -1774,6 +1939,39 @@ void SegmentedControl::paintEvent(QPaintEvent *)
         pt.drawText(cell, Qt::AlignCenter, s.text);
         cursor += s.size.width() + 2;
     }
+
+    if (focused_) {
+        paintFocusRing(pt, QRectF(rect()), tokens::kRadiusCtl, p.accent);
+    }
+}
+
+void SegmentedControl::focusInEvent(QFocusEvent *e)
+{
+    focused_ = true;
+    update();
+    QWidget::focusInEvent(e);
+}
+
+void SegmentedControl::focusOutEvent(QFocusEvent *e)
+{
+    focused_ = false;
+    update();
+    QWidget::focusOutEvent(e);
+}
+
+void SegmentedControl::keyPressEvent(QKeyEvent *e)
+{
+    // 左右方向键换档：分段控件的通用键盘语义（跟原生 radio group 一致）。
+    if (e->key() == Qt::Key_Left || e->key() == Qt::Key_Right) {
+        const int n = segments_.size();
+        if (n > 0) {
+            const int step = (e->key() == Qt::Key_Right) ? 1 : n - 1;
+            setCurrentIndex((current_ + step) % n);
+        }
+        e->accept();
+        return;
+    }
+    QWidget::keyPressEvent(e);
 }
 
 void SegmentedControl::mousePressEvent(QMouseEvent *event)
@@ -1892,11 +2090,24 @@ void FgSelect::paintEvent(QPaintEvent *)
     QPainter pt(this);
     pt.setRenderHint(QPainter::Antialiasing, true);
 
+    // ui.css .select:focus —— 描边转主色，外加 3px 主色浅底光晕。
+    // 光晕是画在控件**外面**的（CSS box-shadow），但 Qt 的控件只能画自己这块
+    // 矩形（见 paintFocusRing 的说明），所以把光晕挪到内侧：最外圈 2px 主色
+    // 浅底，往里才是控件本体。描边同时转主色——设计稿本来就有这一条。
+    constexpr qreal kHalo = 2.0;
+    if (focused_) {
+        pt.setPen(Qt::NoPen);
+        pt.setBrush(p.accentSoft);
+        pt.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+                           tokens::kRadiusCtl, tokens::kRadiusCtl);
+    }
+
     QColor bg = hovered_ ? p.surfaceHi : p.card;
-    pt.setPen(QPen(p.line2, 1));
+    const qreal body = focused_ ? kHalo : 0.0;
+    pt.setPen(QPen(focused_ ? p.accent : p.line2, 1));
     pt.setBrush(bg);
-    pt.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
-                       tokens::kRadiusCtl, tokens::kRadiusCtl);
+    pt.drawRoundedRect(QRectF(rect()).adjusted(body + 0.5, body + 0.5, -body - 0.5, -body - 0.5),
+                       tokens::kRadiusCtl - body, tokens::kRadiusCtl - body);
 
     pt.setPen(p.text1);
     pt.setFont(uiFont(tokens::kFont12, QFont::DemiBold));
@@ -1923,6 +2134,20 @@ void FgSelect::leaveEvent(QEvent *e)
     hovered_ = false;
     update();
     QAbstractButton::leaveEvent(e);
+}
+
+void FgSelect::focusInEvent(QFocusEvent *e)
+{
+    focused_ = true;
+    update();
+    QAbstractButton::focusInEvent(e);
+}
+
+void FgSelect::focusOutEvent(QFocusEvent *e)
+{
+    focused_ = false;
+    update();
+    QAbstractButton::focusOutEvent(e);
 }
 
 void FgSelect::openMenu()

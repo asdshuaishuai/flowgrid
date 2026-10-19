@@ -38,12 +38,14 @@
 #include <QEnterEvent>
 #include <QEvent>
 #include <QFileDialog>
+#include <QFocusEvent>
 #include <QLoggingCategory>
 #include <QMimeData>
 #include <QPixmap>
 #include <QScreen>
 #include <QSystemTrayIcon>
 #include <QTimer>
+#include <QVariantAnimation>
 
 #include <cstdlib>
 
@@ -155,6 +157,7 @@ QIcon appIcon()
 } // namespace
 
 static QWidget *buildIconSheet();
+static QWidget *buildFocusSheet();
 
 int main(int argc, char *argv[])
 {
@@ -416,6 +419,17 @@ int main(int argc, char *argv[])
                 sheet->deleteLater();
             }
 
+            // 焦点态样张：同理由来，键盘导航才出现的焦点环在别处一次都拍不到。
+            if (QWidget *sheet = buildFocusSheet()) {
+                sheet->setAttribute(Qt::WA_DontShowOnScreen, true);
+                sheet->ensurePolished();
+                const QString sheetPath = QStringLiteral("%1-focus.png").arg(base);
+                sheet->grab().save(sheetPath);
+                qCInfo(lcApp) << "snapshot ->" << sheetPath
+                              << sheet->width() << "x" << sheet->height();
+                sheet->deleteLater();
+            }
+
             // Toast 是独立顶层窗，上面的 shot(g_*) 全都抓不到它。它自己出过一次
             // 「药丸被阴影内缩压没」的版（底色等于没画、文字被裁半截），浮板截图
             // 又照不到，所以单独出一张。
@@ -460,6 +474,119 @@ int main(int argc, char *argv[])
     }
 
     return app.exec();
+}
+
+// 焦点态样张：把每一类可聚焦控件摆一排，统一点亮焦点环。
+//
+// 焦点环只在键盘导航时出现，逐屏快照里一次都拍不到——于是「这一屏到底有没有
+// 焦点态」只能靠读代码判断，看不出形状、粗细、深浅是否一致。这里做一张样张：
+// 所有控件都用合成的 QFocusEvent 点亮，一眼看完焦点环是不是齐的。
+static QWidget *buildFocusSheet()
+{
+    const fg::Palette &p = fg::Theme::instance().palette();
+    auto *sheet = new QWidget;
+    // 必须是不透明底：焦点环是半透明光晕（.select:focus 的 3px accent-soft），
+    // 落在透明底上会糊成一片，看不出形状。
+    sheet->setAutoFillBackground(true);
+    QPalette qp = sheet->palette();
+    qp.setColor(QPalette::Window, p.page);
+    qp.setColor(QPalette::WindowText, p.text1);
+    sheet->setPalette(qp);
+
+    auto *root = new QVBoxLayout(sheet);
+    root->setContentsMargins(20, 18, 20, 20);
+    root->setSpacing(12);
+
+    auto *title = new QLabel(QStringLiteral("焦点态样张 · 2px 主色"), sheet);
+    QFont tf = QApplication::font();
+    tf.setPixelSize(13);
+    tf.setWeight(QFont::DemiBold);
+    title->setFont(tf);
+    title->setStyleSheet(QStringLiteral("color:%1")
+                             .arg(p.text1.name(QColor::HexRgb)));
+    root->addWidget(title);
+
+    QList<QWidget *> lit;   // 待点亮的控件
+
+    auto nameLabel = [sheet, &p](const QString &text) {
+        auto *lab = new QLabel(text, sheet);
+        QFont f = QApplication::font();
+        f.setPixelSize(11);
+        lab->setFont(f);
+        lab->setStyleSheet(QStringLiteral("color:%1").arg(p.text3.name(QColor::HexRgb)));
+        lab->setFixedWidth(96);
+        lab->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        return lab;
+    };
+
+    auto addRow = [&](const QString &label, const QList<QWidget *> &controls) {
+        auto *row = new QWidget(sheet);
+        auto *hl = new QHBoxLayout(row);
+        hl->setContentsMargins(0, 0, 0, 0);
+        hl->setSpacing(12);
+        hl->addWidget(nameLabel(label));
+        for (QWidget *c : controls) {
+            hl->addWidget(c);
+            lit << c;
+        }
+        hl->addStretch(1);
+        root->addWidget(row);
+    };
+
+    addRow(QStringLiteral("按钮"),
+           {new fg::FgButton(QStringLiteral("保存"), fg::FgButton::Variant::Accent),
+            new fg::FgButton(QStringLiteral("取消"), fg::FgButton::Variant::Secondary),
+            new fg::FgButton(QStringLiteral("恢复默认"), fg::FgButton::Variant::Ghost)});
+
+    {
+        auto *iconBtn = new fg::IconButton(QStringLiteral("settings"),
+                                           QStringLiteral("设置"), sheet);
+        auto *sw = new fg::ToggleSwitch(sheet);
+        sw->setChecked(true);
+        // 开关的「开」是 180ms 过渡动画，样张是同步抓的，动画还停在第一帧——
+        // 直接把动画推到末尾，省得样张里两个开关看着一模一样。
+        if (auto *anim = sw->findChild<QVariantAnimation *>()) {
+            anim->setCurrentTime(anim->duration());
+        }
+        auto *sw2 = new fg::ToggleSwitch(sheet);
+        addRow(QStringLiteral("图标 / 开关"), {iconBtn, sw, sw2});
+    }
+
+    addRow(QStringLiteral("下拉"),
+           {new fg::FgSelect({QStringLiteral("50 条"), QStringLiteral("100 条"),
+                              QStringLiteral("200 条")},
+                             0, sheet)});
+
+    addRow(QStringLiteral("分段控件"),
+           {new fg::SegmentedControl({QStringLiteral("全部"), QStringLiteral("文本"),
+                                      QStringLiteral("代码"), QStringLiteral("链接")},
+                                     sheet)});
+
+    addRow(QStringLiteral("入口行"),
+           {new fg::NavRow(QStringLiteral("clipboard"), QStringLiteral("剪贴板"), nullptr, sheet)});
+
+    addRow(QStringLiteral("历史行"),
+           {new fg::ClipRow(QStringLiteral("code"),
+                            QStringLiteral("cargo build --release"),
+                            QStringLiteral("本机 · 55 B · text/plain"), nullptr, sheet)});
+
+    {
+        // 折叠区头：焦点环是「贴着头的内侧一圈」，和别的控件画法不同，单独摆一行。
+        auto *body = new QWidget(sheet);
+        new QVBoxLayout(body);
+        auto *col = new fg::Collapsible(QStringLiteral("剪贴板同步"),
+                                        QStringLiteral("clipboard"), body, nullptr, sheet);
+        addRow(QStringLiteral("折叠头"), {col});
+    }
+
+    // 点亮焦点：直接送一个 QFocusEvent。焦点控件的绘制看的是自己收到的
+    // focusIn/focusOut（不是 hasFocus()），所以窗口不必处于激活态也能点亮。
+    for (QWidget *w : lit) {
+        QFocusEvent in(QEvent::FocusIn, Qt::OtherFocusReason);
+        QCoreApplication::sendEvent(w, &in);
+    }
+    sheet->ensurePolished();
+    return sheet;
 }
 
 // 图标总览图：每行一枚图标，同一枚按 16 / 13 / 10px 排三遍，外加名字。

@@ -30,6 +30,8 @@ class QGridLayout;
 class QPropertyAnimation;
 class QTimer;
 class QVariantAnimation;
+class QFocusEvent;
+class QKeyEvent;
 
 namespace fg {
 
@@ -116,11 +118,16 @@ protected:
     void paintEvent(QPaintEvent *) override;
     void enterEvent(QEnterEvent *) override;
     void leaveEvent(QEvent *) override;
+    void focusInEvent(QFocusEvent *) override;
+    void focusOutEvent(QFocusEvent *) override;
 
 private:
     bool hovered_ = false;
     qreal progress_ = 0.0;                     // 0=关 1=开；过渡中的当前值
     QVariantAnimation *transition_ = nullptr;  // this 为父对象，无需手动释放
+    // 焦点态用成员而不是 hasFocus()：hasFocus() 依赖窗口处于激活态，无头
+    // 截图里恒为假，焦点环就永远审不到。focusIn/focusOut 是控件自己收到的事件。
+    bool focused_ = false;
 };
 
 // ── 延迟胶囊：min-width 56，按 good/warn/bad/idle 着色 ─────────────────
@@ -159,6 +166,8 @@ protected:
     void mouseMoveEvent(QMouseEvent *) override;
     void leaveEvent(QEvent *) override;
     void keyPressEvent(QKeyEvent *) override;
+    void focusInEvent(QFocusEvent *) override;
+    void focusOutEvent(QFocusEvent *) override;
     void paintEvent(QPaintEvent *) override;
 
 private:
@@ -172,6 +181,7 @@ private:
     QLabel *chevron_ = nullptr;
     bool collapsed_ = false;
     bool headHovered_ = false;
+    bool focused_ = false;
 };
 
 // ── 柱状图：70px 高 / 12 根 / 最近一根用主色 ──────────────────────────
@@ -240,6 +250,8 @@ protected:
     void paintEvent(QPaintEvent *) override;
     void enterEvent(QEnterEvent *) override;
     void leaveEvent(QEvent *) override;
+    void focusInEvent(QFocusEvent *) override;
+    void focusOutEvent(QFocusEvent *) override;
 
 private:
     void refreshColors();
@@ -251,6 +263,7 @@ private:
     Variant variant_;
     bool small_;
     bool hovered_ = false;
+    bool focused_ = false;
 };
 
 // ── 图标按钮：26×26，无边框 ──────────────────────────────────────────
@@ -268,10 +281,13 @@ protected:
     void paintEvent(QPaintEvent *) override;
     void enterEvent(QEnterEvent *) override;
     void leaveEvent(QEvent *) override;
+    void focusInEvent(QFocusEvent *) override;
+    void focusOutEvent(QFocusEvent *) override;
 
 private:
     QString iconName_;
     bool hovered_ = false;
+    bool focused_ = false;
 };
 
 // ── 设备卡：42px 图标 + 1fr 文本 + auto 侧栏 ──────────────────────────
@@ -332,6 +348,9 @@ protected:
     void mouseReleaseEvent(QMouseEvent *) override;
     void enterEvent(QEnterEvent *) override;
     void leaveEvent(QEvent *) override;
+    void focusInEvent(QFocusEvent *) override;
+    void focusOutEvent(QFocusEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
     void paintEvent(QPaintEvent *) override;
 
 private:
@@ -345,6 +364,7 @@ private:
     bool danger_ = false;
     bool hovered_ = false;
     bool pressed_ = false;
+    bool focused_ = false;
 };
 
 // ── 文字行：左标签 + 右控件，设置与列表两屏复用 ───────────────────────
@@ -418,6 +438,9 @@ protected:
     void mouseReleaseEvent(QMouseEvent *) override;
     void enterEvent(QEnterEvent *) override;
     void leaveEvent(QEvent *) override;
+    void focusInEvent(QFocusEvent *) override;
+    void focusOutEvent(QFocusEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
     void paintEvent(QPaintEvent *) override;
 
 private:
@@ -425,6 +448,7 @@ private:
     QWidget *trailing_ = nullptr;
     bool hovered_ = false;
     bool pressed_ = false;
+    bool focused_ = false;
 };
 
 // ── 空态：设计稿 ui.css .empty ─────────────────────────────────────────
@@ -537,6 +561,9 @@ protected:
     void mousePressEvent(QMouseEvent *) override;
     void enterEvent(QEnterEvent *) override;
     void leaveEvent(QEvent *) override;
+    void focusInEvent(QFocusEvent *) override;
+    void focusOutEvent(QFocusEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
 
 private:
     struct Segment {
@@ -551,6 +578,7 @@ private:
     QList<Segment> segments_;
     int current_ = 0;
     int hover_ = -1;
+    bool focused_ = false;
 };
 
 // ── 输入类控件：按设计稿 .input / .select 的规格上样式 ─────────────────
@@ -625,6 +653,8 @@ protected:
     void paintEvent(QPaintEvent *) override;
     void enterEvent(QEnterEvent *) override;
     void leaveEvent(QEvent *) override;
+    void focusInEvent(QFocusEvent *) override;
+    void focusOutEvent(QFocusEvent *) override;
 
 private:
     void openMenu();
@@ -632,6 +662,7 @@ private:
     QStringList options_;
     int current_ = 0;
     bool hovered_ = false;
+    bool focused_ = false;
 };
 
 } // namespace fg

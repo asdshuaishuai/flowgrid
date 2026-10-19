@@ -6,6 +6,7 @@
 #include <QCloseEvent>
 #include <QFocusEvent>
 #include <QGraphicsDropShadowEffect>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
@@ -247,6 +248,25 @@ void Panel::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
     paintChrome(p);
+}
+
+void Panel::keyPressEvent(QKeyEvent *e)
+{
+    // Esc 关闭浮板。
+    //
+    // 「失焦即走」是设计稿定的浮板行为，但它是**鼠标**语义：点了别处，浮板
+    // 收回去。纯键盘用户把焦点停在浮板里（Tab 到某个按钮上）时，点不到别处，
+    // 于是浮板只能靠「按 Tab 走到最后一个控件再 Tab 出去」这种笨办法收场——
+    // 而这里所有控件都在同一个窗口里，Tab 出去就把浮板留着不动。
+    //
+    // DDE 控制中心、dde-dock 的浮层都是 Esc 关闭，这一条是桌面端的通用约定，
+    // 也是无主窗设计里唯一能保证「键盘用户随时能收起浮板」的办法。
+    if (e->key() == Qt::Key_Escape) {
+        hide();
+        e->accept();
+        return;
+    }
+    QWidget::keyPressEvent(e);
 }
 
 void Panel::restyle()

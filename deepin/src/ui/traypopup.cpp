@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
@@ -594,6 +595,18 @@ void TrayPopup::paintEvent(QPaintEvent *e)
     pt.restore();
 
     QWidget::paintEvent(e);
+}
+
+void TrayPopup::keyPressEvent(QKeyEvent *e)
+{
+    // Esc 关闭托盘浮层。与 520px 浮板同一个理由：托盘是这应用唯一的常驻
+    // 界面，「失焦即走」只照顾得到鼠标，纯键盘用户需要一个明确的收起动作。
+    if (e->key() == Qt::Key_Escape) {
+        hide();
+        e->accept();
+        return;
+    }
+    QWidget::keyPressEvent(e);
 }
 
 } // namespace fg

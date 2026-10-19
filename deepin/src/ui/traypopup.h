@@ -16,6 +16,7 @@
 class QVBoxLayout;
 class QHBoxLayout;
 class QLabel;
+class QKeyEvent;
 
 namespace fg {
 
@@ -49,6 +50,7 @@ Q_SIGNALS:
 
 protected:
     void paintEvent(QPaintEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
 
 private:
     QWidget *buildHead();

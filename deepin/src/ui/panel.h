@@ -52,6 +52,7 @@ protected:
     void paintEvent(QPaintEvent *) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
     void showEvent(QShowEvent *) override;
+    void keyPressEvent(QKeyEvent *) override;
 
     QVBoxLayout *rootLayout() const { return root_; }
 

@@ -118,6 +118,25 @@ resources/   图标、desktop 文件、DConfig meta（flowgrid-deepin.json）
   `DConfig::create()` 和 `CMakeLists.txt` 的安装规则三处必须一致。对不上的表现
   不是报错，而是 `create()` 返回不可用对象、设置全部静默回退默认值。
 
+## 键盘与焦点
+
+浮板是「按需唤出、失焦即走」的无主窗界面，只靠鼠标的话，键盘用户没有任何办法
+把浮板收回去。因此：
+
+- **Esc 关闭浮板**：`Panel`（520px 八屏）与 `TrayPopup`（300px 托盘层）都处理
+  `Key_Escape`。「失焦即走」是鼠标语义，纯键盘用户把焦点停在浮板里时点不到别处，
+  Esc 是唯一能收场的方式——DDE 控制中心、dde-dock 的浮层都是这么做的。
+- **可交互控件都要能被 Tab 走到**：按钮、图标按钮、开关、下拉、分段控件、托盘入口行、
+  剪贴板/传输历史行、折叠区头。入口行与历史行支持 `Space`/`Enter` 触发，分段控件
+  支持 `←`/`→` 换档。
+- **焦点环一律画在控件内侧**。设计稿写的是 `outline: 2px solid; outline-offset: 2px`
+  （环在控件外面），但 Qt 的控件绘制区被裁到自己的矩形内，画到矩形外的部分一律被裁掉
+  ——实测开关的外扩环只剩四个角。改成内收环后观感一致，且不依赖控件周围的留白。
+  实色（主色）按钮上主色环等于没环，这类按钮改用 `onSolid`（白）。
+- **焦点态用 `focused_` 成员而不是 `hasFocus()`**：`hasFocus()` 要求窗口处于激活态，
+  无头截图里恒为假，焦点环就永远审不到。`focusIn/focusOut` 是控件自己收到的事件。
+  配套的焦点样张快照是 `--snapshot` 产出的 `s-focus.png`。
+
 ## 当前边界（尚未接通的部分）
 
 这些是**有意留白**，不是遗漏。传输层（L3：DTLS / UDP / mDNS / BLE）完全未实现，
@@ -132,10 +151,13 @@ resources/   图标、desktop 文件、DConfig meta（flowgrid-deepin.json）
 - 无 DDE 会话或未安装 meta 时，DConfig 不可用，`Settings` 退化为进程内 Hash：
   设置屏的开关仍然可点可生效，只是不跨进程保留，设置屏页脚会显示当前状态。
 
-## 需要在真实桌面验证的两件事
+## 需要在真实桌面验证的三件事
 
 1. **深色主题**：offscreen 下 `Appearance1` 不可达，代码回退到
    `DGuiApplicationHelper::themeType()`（light）。深色路径在位但从未在真实 DDE
    会话跑过。
 2. **托盘唤出**：offscreen 下 `QSystemTrayIcon::isSystemTrayAvailable()` 为 false。
    需在真实桌面点击托盘图标确认 300px 浮层能弹出。
+3. **键盘链路**：offscreen 下浮板拿不到真实焦点，Esc 关闭与 Tab 焦点环只做过
+   逻辑与样张层面的验证（`s-focus.png`）。需在真实桌面确认：浮板内 Tab 能走遍
+   控件、Esc 能收起浮板、Tab 走到某个控件时焦点环清晰可见。
