@@ -160,6 +160,40 @@ Environment=DSG_DATA_DIRS=/usr/share/dsg:/var/lib/linglong/entries/share/dsg
 **绝对路径**：相对路径会被拼到 `CMAKE_INSTALL_PREFIX` 下，变成
 `/usr/local/share/dsg/configs/flowgrid`，一样看不见。
 
+### `/usr` 只读的机器（ostree 不可变系统）：改用 `/usr/local/share/dsg`
+
+deepin 25 的 ostree 安装把 `/usr` 挂成**只读 overlay**，于是
+`/usr/share/dsg/configs/flowgrid` 物理上建不出来。症状很隐蔽：
+
+```
+-- Up-to-date: /usr/local/share/icons/hicolor/scalable/apps/flowgrid.svg
+CMake Error at deepin/build/cmake_install.cmake:94 (file):
+  file cannot create directory: /usr/share/dsg/configs/flowgrid.
+```
+
+前面那些文件全是 "Up-to-date"（没触发写入所以不报错），**只有新建目录才炸**。
+
+`install.sh` 会自己探测：试着建规范根，建得起来就用；建不起来就换
+`/usr/local/share/dsg`（`/usr/local` 是独立可写挂载），并把这个根
+**注册进守护进程的 `DSG_DATA_DIRS`**——不注册它，守护进程照样扫不到，
+又是一次不报错的静默失效。注册的方式是给服务加 systemd drop-in：
+
+```ini
+# /etc/systemd/system/dde-dconfig-daemon.service.d/10-flowgrid-dsg-root.conf
+[Service]
+Environment=DSG_DATA_DIRS=/usr/share/dsg:/var/lib/linglong/entries/share/dsg:/usr/local/share/dsg
+```
+
+注意 systemd 的 `Environment=` 是**覆盖**不是追加，所以 drop-in 里必须把原有的
+根一起写全——写漏了会把系统自己的 meta 根弄丢，那会让整台机器的桌面配置全废。
+`install.sh` 会先读出当前值再追加，不会手写死。
+
+CMakeLists 里这个根是可配的（默认 `/usr/share/dsg`）：
+
+```bash
+cmake -S deepin -B deepin/build -DFLOWGRID_DCONFIG_META_ROOT=/usr/local/share/dsg
+```
+
 ### 格式：DSG（顶层 magic / version / contents）
 
 DDE 25 的 dconfig 只认 DSG 格式。旧 dconfig 那种 `fileName` + `keys` 数组的写法，

@@ -27,15 +27,26 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 SRC_DIR="${REPO_ROOT}/deepin"
 BUILD_DIR="${SRC_DIR}/build"
 BIN_NAME="flowgrid-deepin"
+# ── DConfig（DSG）身份 ─────────────────────────────────────────────────
 # 与 src/core/settings.cpp 的 DConfig::create(appId, name) 和
 # CMakeLists.txt 的 install(FILES ...) 三处必须一致。
 #
-# 这个路径是 DTK 自己给的，不是猜的：DConfigMeta::applicationMetaDirs("", "flowgrid")
-# 返回的就是 /usr/share/dsg/configs/flowgrid，meta 文件名是 <name>.json。
-# dconfig 守护进程只扫 /usr/share/dsg 与 /var/lib/linglong/entries/share/dsg
-# （见 dde-dconfig-daemon.service 的 DSG_DATA_DIRS），装到 /usr/share/flowgrid/
-# 或 /usr/local/share/ 下它都看不见。
-DCONFIG_META="/usr/share/dsg/configs/flowgrid/flowgrid-deepin.json"
+# meta 的**根目录**是守护进程 DSG_DATA_DIRS 里的一个条目，完整布局是
+#     <根>/configs/<appId>/<name>.json
+# 规范根是 /usr/share/dsg —— 这个路径是 DTK 自己给的，不是猜的：
+# DConfigMeta::applicationMetaDirs("", "flowgrid") 返回的就是
+# /usr/share/dsg/configs/flowgrid。
+#
+# 但**不一定是它**：ostree 系统（deepin 25 的不可变安装）把 /usr 挂成只读
+# overlay，那个目录物理上建不出来（cmake 报 "file cannot create directory"）。
+# 这种机器上改用 /usr/local/share/dsg（/usr/local 是独立可写挂载），并把这个
+# 根注册进守护进程的 DSG_DATA_DIRS——不注册它就扫不到。
+DCONFIG_APPID="flowgrid"
+DCONFIG_NAME="flowgrid-deepin"
+DSG_ROOT_CANONICAL="/usr/share/dsg"
+DSG_ROOT_LOCAL="/usr/local/share/dsg"
+DSG_ROOT="${DSG_ROOT_CANONICAL}"
+DSG_ROOT_IS_CANONICAL=1
 
 BUILD=1
 LAUNCH=0
@@ -67,7 +78,7 @@ CMAKE="$(command -v cmake)"
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
-    command -v sudo >/dev/null || die "需要 root：装 /usr/local 和 ${DCONFIG_META}"
+    command -v sudo >/dev/null || die "需要 root：装 /usr/local 和 DConfig meta"
     SUDO="sudo"          # 故意不在这里校验密码，交互时提示一次即可
 fi
 
@@ -80,14 +91,40 @@ export FLOWGRID_DTK_SYSROOT="${FLOWGRID_DTK_SYSROOT:-${HOME}/.local/dd-sysroot/u
   本机 Qt6/DTK6 开发文件只在这里，系统目录没有。可用 FLOWGRID_DTK_SYSROOT=<prefix> 覆盖。"
 command -v go >/dev/null || die "PATH 里找不到 go（已加 ${HOME}/sdk/go/bin）"
 
+# ── 0.1 选 meta 根目录 ────────────────────────────────────────────────
+# 规范根是 /usr/share/dsg。但 ostree 机器（deepin 25 的不可变安装）把 /usr
+# 挂成**只读 overlay**，那个目录建不出来。实测症状很隐蔽：之前装过的文件全是
+# "Up-to-date"（没触发写入所以不报错），只有**新建目录**时才炸：
+#   CMake Error at cmake_install.cmake:94 (file):
+#   file cannot create directory: /usr/share/dsg/configs/flowgrid.
+#
+# 所以这里直接试着建一下：建得起来就用规范根，建不起来就换 /usr/local/share/dsg
+# （/usr/local 是独立可写挂载），并在后面把这个根注册进守护进程。
+if ${SUDO} mkdir -p "${DSG_ROOT_CANONICAL}/configs/${DCONFIG_APPID}" 2>/dev/null; then
+    DSG_ROOT="${DSG_ROOT_CANONICAL}"
+    DSG_ROOT_IS_CANONICAL=1
+    ok "meta 根目录：${DSG_ROOT}（规范位置）"
+else
+    DSG_ROOT="${DSG_ROOT_LOCAL}"
+    DSG_ROOT_IS_CANONICAL=0
+    note "meta 规范根 ${DSG_ROOT_CANONICAL} 建不出来（/usr 只读，ostree 不可变系统？）"
+    note "改用 ${DSG_ROOT}，并把该根注册进 dconfig 守护进程的 DSG_DATA_DIRS"
+fi
+DCONFIG_META="${DSG_ROOT}/configs/${DCONFIG_APPID}/${DCONFIG_NAME}.json"
+
 # ── 1. 编译 ────────────────────────────────────────────────────────────
 if [ "${BUILD}" -eq 1 ]; then
     ok "配置 Release"
-    "${CMAKE}" -S "${SRC_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release
+    "${CMAKE}" -S "${SRC_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release \
+        -DFLOWGRID_DCONFIG_META_ROOT="${DSG_ROOT}"
     ok "编译（$(nproc 2>/dev/null || echo 4) 线程）"
     "${CMAKE}" --build "${BUILD_DIR}" -j"$(nproc 2>/dev/null || echo 4)"
 else
     [ -x "${BUILD_DIR}/${BIN_NAME}" ] || die "--skip-build 但 ${BUILD_DIR}/${BIN_NAME} 不存在"
+    # --skip-build 也不能跳过配置：安装目标（meta 根）是在配置期定下的，
+    # 上一轮配的根可能跟这轮探测出来的不一样。重新 configure 不会重编。
+    "${CMAKE}" -S "${SRC_DIR}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release \
+        -DFLOWGRID_DCONFIG_META_ROOT="${DSG_ROOT}" >/dev/null
     ok "沿用已有产物：${BUILD_DIR}/${BIN_NAME}"
 fi
 
@@ -96,7 +133,7 @@ fi
 #   /usr/local/bin/flowgrid-deepin
 #   /usr/local/share/applications/flowgrid-deepin.desktop
 #   /usr/local/share/icons/hicolor/scalable/apps/flowgrid.svg
-#   /usr/share/dsg/configs/flowgrid/flowgrid-deepin.json  ← 绝对路径，dconfig 只扫这儿
+#   ${DCONFIG_META}              ← 绝对路径，dconfig 守护进程只扫它所在的根
 #   /etc/xdg/autostart/flowgrid-deepin-autostart.desktop   ← 绝对路径，自启项只能在这
 ok "安装到系统位置（会提示输入 sudo 密码）"
 ${SUDO} "${CMAKE}" --install "${BUILD_DIR}"
@@ -145,6 +182,68 @@ if command -v gtk-update-icon-cache >/dev/null; then
     ok "刷新图标缓存"
 fi
 
+# ── 4.1 把非规范根注册进 dconfig 守护进程 ──────────────────────────────
+# 守护进程只扫 DSG_DATA_DIRS 里列的根。规范根 /usr/share/dsg 它本来就扫，
+# 不用管；但 /usr 只读时我们改用了 ${DSG_ROOT}，**必须**把那个根也加进去，
+# 否则文件装好了守护进程照样扫不到——又是一次「不报错的静默失效」。
+#
+# 做法是给服务加一个 systemd drop-in。关键细节：systemd 的 Environment= 是
+# **覆盖**而不是追加，同名变量后写的赢。所以 drop-in 里必须把原有的根一起
+# 写全，否则会把系统自己的 meta 根（/usr/share/dsg）弄丢——那会让一整台
+# 机器的桌面配置全废。
+register_dsg_root() {
+    local root="$1"
+    local unit="dde-dconfig-daemon.service"
+    local dropin_dir="/etc/systemd/system/${unit}.d"
+    local dropin_file="${dropin_dir}/10-flowgrid-dsg-root.conf"
+
+    command -v systemctl >/dev/null || {
+        note "没有 systemctl，无法把 ${root} 注册进守护进程"
+        return 1
+    }
+    systemctl list-unit-files "${unit}" >/dev/null 2>&1 || \
+        systemctl cat "${unit}" >/dev/null 2>&1 || {
+        note "找不到 ${unit}，无法把 ${root} 注册进守护进程"
+        return 1
+    }
+
+    # 读出当前的 DSG_DATA_DIRS（两份来源都试：运行中的环境、单元文件）
+    local current
+    current=$(systemctl show "${unit}" --property=Environment --value 2>/dev/null \
+        | tr ' ' '\n' | sed -n 's/^DSG_DATA_DIRS=//p' | head -1)
+    if [ -z "${current}" ]; then
+        current=$(systemctl cat "${unit}" 2>/dev/null \
+            | grep -o 'DSG_DATA_DIRS=[^ "]*' | head -1 | cut -d= -f2-)
+    fi
+    [ -n "${current}" ] || {
+        note "读不到 ${unit} 现有的 DSG_DATA_DIRS，不擅自改（改错会让全机配置失效）"
+        return 1
+    }
+    if printf '%s' "${current}" | tr ':' '\n' | grep -qx "${root}"; then
+        ok "守护进程已扫 ${root}（DSG_DATA_DIRS 已含）"
+        return 0
+    fi
+
+    local updated="${current}:${root}"
+    ${SUDO} mkdir -p "${dropin_dir}"
+    printf '[Service]\n# 由 deepin/install.sh 加的：把 %s 也列为 meta 根。\n# /usr 在本机是只读 overlay，规范根 /usr/share/dsg 建不出来。\nEnvironment=DSG_DATA_DIRS=%s\n' \
+        "${root}" "${updated}" | ${SUDO} tee "${dropin_file}" >/dev/null
+    ${SUDO} systemctl daemon-reload
+    ${SUDO} systemctl restart "${unit}"
+    ok "已把 ${root} 注册进守护进程的 DSG_DATA_DIRS（并重启了服务）"
+    ok "  DSG_DATA_DIRS=${updated}"
+}
+
+if [ "${DSG_ROOT_IS_CANONICAL}" -eq 0 ]; then
+    if register_dsg_root "${DSG_ROOT}"; then
+        :
+    else
+        note "meta 装在 ${DSG_ROOT}，但没能注册进守护进程——dconfig 可能扫不到它"
+        note "手动加的话：把 ${DSG_ROOT} 追加到 dde-dconfig-daemon.service 的"
+        note "DSG_DATA_DIRS 里，然后 systemctl daemon-reload && systemctl restart dde-dconfig-daemon"
+    fi
+fi
+
 # ── 5. 校验：这几条任何一条不成立，装了也是坏的 ────────────────────────
 [ -x "/usr/local/bin/${BIN_NAME}" ] || die "可执行文件没落到位"
 ok "可执行文件：/usr/local/bin/${BIN_NAME}"
@@ -167,6 +266,22 @@ else
   检查 src/core/settings.cpp 的 DConfig::create() 与 CMakeLists.txt 的
   install(FILES resources/flowgrid-deepin.json ...) 的 appId/name 是否一致。
   正确位置由 DTK 自己给：DConfigMeta::applicationMetaDirs(\"\", \"flowgrid\")"
+fi
+
+# meta 在根目录里还得是守护进程**会扫**的那个根——文件在、守护进程看不见，
+# 同样是静默失效。这一条能真正验：读守护进程当前的 DSG_DATA_DIRS。
+if [ "${DSG_ROOT_IS_CANONICAL}" -eq 0 ]; then
+    if command -v systemctl >/dev/null; then
+        if systemctl show dde-dconfig-daemon --property=Environment --value 2>/dev/null \
+             | tr ' ' '\n' | sed -n 's/^DSG_DATA_DIRS=//p' | head -1 \
+             | tr ':' '\n' | grep -qx "${DSG_ROOT}"; then
+            ok "守护进程的 DSG_DATA_DIRS 含 ${DSG_ROOT}（它会扫到这个 meta）"
+        else
+            die "守护进程的 DSG_DATA_DIRS 里没有 ${DSG_ROOT}——meta 装了它也扫不到
+  把 ${DSG_ROOT} 加进 dde-dconfig-daemon.service 的 DSG_DATA_DIRS，然后
+  systemctl daemon-reload && systemctl restart dde-dconfig-daemon"
+        fi
+    fi
 fi
 
 [ -f "/etc/xdg/autostart/${BIN_NAME}-autostart.desktop" ] \

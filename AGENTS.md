@@ -188,9 +188,10 @@ wire format / 键码 / 握手有任何变动：**PROTOCOL.md → protocol/ Go �
 - 旧客户端相关 gotchas（deepin DTK 规范、udev 规则、SNI 托盘、cxx-qt 等）已随代码移除，需要时从 git 历史 e8d205c / d1e71e4 / 6b9aafa 找回
 
 ### deepin：DConfig meta 的位置与格式（静默失效型坑）
-- **位置**是 `/usr/share/dsg/configs/<appId>/<name>.json`，由 DTK 自己给出（`DConfigMeta::applicationMetaDirs("", appId)`）。dconfig 守护进程（`dde-dconfig-daemon`，**系统总线**上的 `org.desktopspec.ConfigManager`）只扫 `DSG_DATA_DIRS=/usr/share/dsg:/var/lib/linglong/entries/share/dsg`。装到 `/usr/share/flowgrid/` 或 `/usr/local/share/` 一律看不见——CMake 的 `install(FILES ...)` 必须用**绝对路径** destination，相对路径会被拼到 `CMAKE_INSTALL_PREFIX` 下。
+- **位置**是 `<根>/configs/<appId>/<name>.json`，规范根 `/usr/share/dsg`——由 DTK 自己给出（`DConfigMeta::applicationMetaDirs("", appId)`）。dconfig 守护进程（`dde-dconfig-daemon`，**系统总线**上的 `org.desktopspec.ConfigManager`）只扫 `DSG_DATA_DIRS` 里列的根（`/usr/share/dsg:/var/lib/linglong/entries/share/dsg`）。装到根之外它看不见——CMake 的 `install(FILES ...)` 必须用**绝对路径** destination，相对路径会被拼到 `CMAKE_INSTALL_PREFIX` 下。
 - **格式**必须是 DSG（顶层 `magic`/`version`/`contents` 映射）。旧 dconfig 的 `fileName`+`keys` 数组会被拒收（`The meta magic does not match`）。
-- 两种错都**不报错**，只是 `create()` 返回不可用对象、设置静默回退默认值（开关能点、关掉进程就没了）。所以位置/格式/键表由 `flowgrid-uitest` 的「DConfig meta」一段盯着；`appId`/`name` 在 `deepin/CMakeLists.txt` 里定义一次、编译期发成宏，避免改了代码忘了改安装目录。详见 `deepin/README.md` 的「DConfig meta 装哪、什么格式」。
+- **deepin 25 的 ostree 安装把 `/usr` 挂成只读 overlay**，规范根建不出来（`file cannot create directory`）。症状隐蔽：已存在的文件全是 "Up-to-date" 不报错，只有**新建目录**才炸。`install.sh` 会探测并改用 `/usr/local/share/dsg`，同时给它加 systemd drop-in 注册进 `DSG_DATA_DIRS`——systemd 的 `Environment=` 是覆盖不是追加，drop-in 必须写全原有的根，否则整台机器的桌面配置会失效。
+- 位置/格式/键表由 `flowgrid-uitest` 的「DConfig meta」一段盯着；`appId`/`name` 在 `deepin/CMakeLists.txt` 里定义一次、编译期发成宏。详见 `deepin/README.md` 的「DConfig meta 装哪、什么格式」。
 
 ---
 

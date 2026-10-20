@@ -169,7 +169,17 @@ set(FLOWGRID_SOURCES
 # （见 dde-dconfig-daemon.service 的 DSG_DATA_DIRS）。
 set(FLOWGRID_DCONFIG_APPID "flowgrid")
 set(FLOWGRID_DCONFIG_NAME "flowgrid-deepin")
-set(FLOWGRID_DCONFIG_META_DIR "/usr/share/dsg/configs/${FLOWGRID_DCONFIG_APPID}")
+# meta 的**根目录**——守护进程 DSG_DATA_DIRS 里的一个条目，完整布局是
+#     <根>/configs/<appId>/<name>.json
+# 默认 /usr/share/dsg：标准发行版上守护进程扫的就是它。
+#
+# 但 ostree 系统（deepin 25 的不可变安装）把 /usr 挂成**只读 overlay**，那个
+# 目录物理上建不出来，cmake 会报 "file cannot create directory"。这种机器上
+# 改用 /usr/local/share/dsg（/usr/local 是独立可写挂载），并由 install.sh
+# 把这个根注册进守护进程的 DSG_DATA_DIRS。
+set(FLOWGRID_DCONFIG_META_ROOT "/usr/share/dsg" CACHE STRING
+    "DConfig meta 根目录（dconfig 守护进程 DSG_DATA_DIRS 里的一个条目）")
+set(FLOWGRID_DCONFIG_META_DIR "${FLOWGRID_DCONFIG_META_ROOT}/configs/${FLOWGRID_DCONFIG_APPID}")
 
 # 两个目标的公共配置：头文件路径、链接库、编译选项、宏。
 function(flowgrid_configure_target target)
@@ -198,9 +208,13 @@ flowgrid_configure_target(flowgrid-deepin)
 add_executable(flowgrid-uitest tests/uitest.cpp ${FLOWGRID_SOURCES} ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
 flowgrid_configure_target(flowgrid-uitest)
 # 自检里要读 meta 源文件、并核对「装的目录」与「DTK 期望的目录」是否一致。
+# CANONICAL 是 DTK 客户端侧认的规范路径（/usr/share/dsg/configs/<appId>）；
+# 在 /usr 只读的 ostree 机器上实际装的根会不同，那时要靠守护进程的
+# DSG_DATA_DIRS 里多出的那个根，自检只核对布局形状与格式。
 target_compile_definitions(flowgrid-uitest PRIVATE
     FLOWGRID_META_FILE="${CMAKE_CURRENT_SOURCE_DIR}/resources/flowgrid-deepin.json"
-    FLOWGRID_META_DIR="${FLOWGRID_DCONFIG_META_DIR}")
+    FLOWGRID_META_DIR="${FLOWGRID_DCONFIG_META_DIR}"
+    FLOWGRID_DCONFIG_CANONICAL_DIR="/usr/share/dsg/configs/${FLOWGRID_DCONFIG_APPID}")
 
 # 自检要造「自发键事件」才能让 Qt 去查快捷键表，而 QEvent::setSpontaneous() 在
 # Qt 6 里是私有的——公开的转发头在 QtTest 模块里（纯头文件，不链接任何库）。
@@ -231,16 +245,16 @@ install(FILES resources/icons/flowgrid.svg
         DESTINATION share/icons/hicolor/scalable/apps)
 
 # DConfig（DSG）按固定约定定位 meta 文件：
-#     /usr/share/dsg/configs/<appId>/<name>.json
-# 这条路径是 DTK 自己给的，不是猜的——DConfigMeta::applicationMetaDirs("", appId)
-# 返回的正是 /usr/share/dsg/configs/<appId>（见 README 的「DConfig meta 装哪」）。
-# 这里的 appId / name 见上面 FLOWGRID_DCONFIG_APPID / FLOWGRID_DCONFIG_NAME——
-# 那是唯一来源，settings.cpp 编译时拿的是同一份，不会出现「代码改了、安装目录
-# 没改」这种静默失效。放错位置的表现是 create() 返回不可用对象、设置全部静默
-# 回退默认值，而不是报错。
+#     <FLOWGRID_DCONFIG_META_ROOT>/configs/<appId>/<name>.json
+# 根目录默认 /usr/share/dsg，是 DTK 自己给的（不是猜的）：
+#     DConfigMeta::applicationMetaDirs("", appId) → /usr/share/dsg/configs/<appId>
+# dconfig 守护进程只扫 DSG_DATA_DIRS 里的那几个根（见它的 systemd 单元），
+# 装到根之外它看不见。appId / name 见上面 FLOWGRID_DCONFIG_APPID /
+# FLOWGRID_DCONFIG_NAME——那是唯一来源，settings.cpp 编译时拿的是同一份，
+# 不会出现「代码改了、安装目录没改」这种静默失效。
+# 放错位置的表现是 create() 返回不可用对象、设置全部静默回退默认值，
+# 而不是报错。
 #
-# DESTINATION 必须是**绝对路径**：相对路径会被拼到 CMAKE_INSTALL_PREFIX 下，
-# 装成 /usr/local/share/dsg/configs/flowgrid —— dconfig 守护进程只扫
-# /usr/share/dsg 和 /var/lib/linglong/entries/share/dsg，不看 /usr/local 底下。
+# DESTINATION 必须是**绝对路径**：相对路径会被拼到 CMAKE_INSTALL_PREFIX 下。
 install(FILES resources/flowgrid-deepin.json
         DESTINATION ${FLOWGRID_DCONFIG_META_DIR})

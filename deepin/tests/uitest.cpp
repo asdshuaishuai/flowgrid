@@ -22,6 +22,7 @@
 
 #include <QApplication>
 #include <QFile>
+#include <QFileInfo>
 #include <QFocusEvent>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -106,14 +107,33 @@ void checkDConfigMeta()
     const QString appId = QStringLiteral(FLOWGRID_DCONFIG_APPID);
     const QString name = QStringLiteral(FLOWGRID_DCONFIG_NAME);
 
-    // 1. 位置：DTK 认的目录 vs CMake 装到的目录
-    const QStringList expectDirs =
+    // 1. 位置：DTK 认的规范目录 vs 我们装的目标。
+    //    规范目录是 /usr/share/dsg/configs/<appId>；但 /usr 在 ostree 机器上是
+    //    **只读 overlay**，那个目录建不出来，install.sh 会改用 /usr/local/share/dsg
+    //    并把那个根注册进守护进程的 DSG_DATA_DIRS。这种情况下两者当然不同，
+    //    所以这里只硬查「布局形状」对不对，根的差异打印出来说明。
+    const QString canonical = QStringLiteral(FLOWGRID_DCONFIG_CANONICAL_DIR);
+    const QString installDir = QStringLiteral(FLOWGRID_META_DIR);
+    const QStringList dtkDirs =
         Dtk::Core::DConfigMeta::applicationMetaDirs(QString(), appId);
-    check(expectDirs.value(0) == QStringLiteral(FLOWGRID_META_DIR),
-          QStringLiteral("DTK 认的 meta 目录是 %1（安装目标一致）")
-              .arg(expectDirs.value(0)));
-    check(expectDirs.value(0) == QStringLiteral("/usr/share/dsg/configs/") + appId,
-          QStringLiteral("meta 目录在 /usr/share/dsg/configs/ 下（dconfig 只扫这儿）"));
+    check(dtkDirs.value(0) == canonical,
+          QStringLiteral("DTK 认的规范 meta 目录是 %1").arg(canonical));
+
+    const QString suffix = QStringLiteral("/configs/") + appId;
+    check(installDir.endsWith(suffix),
+          QStringLiteral("安装目标是 <根>/configs/%1 的布局（%2）").arg(appId, installDir));
+    // meta 文件名必须正好是 <name>.json —— 目录对了名字不对，守护进程照样找不到
+    check(QFileInfo(metaPath).fileName() == name + QStringLiteral(".json"),
+          QStringLiteral("meta 文件名是 %1.json").arg(name));
+    if (installDir != dtkDirs.value(0)) {
+        std::printf("  [注意] 安装根不是 DTK 的规范根（/usr/share/dsg）："
+                    "这台机器 /usr 只读，改用了 %s；\n"
+                    "         该根必须出现在 dconfig 守护进程的 DSG_DATA_DIRS 里，"
+                    "否则守护进程扫不到（install.sh 负责注册）。\n",
+                    installDir.toUtf8().constData());
+    } else {
+        check(true, QStringLiteral("安装目标就是 DTK 的规范根"));
+    }
 
     // 2/3. 格式与键表
     QFile f(metaPath);
