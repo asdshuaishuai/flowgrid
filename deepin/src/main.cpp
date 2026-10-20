@@ -384,6 +384,13 @@ int main(int argc, char *argv[])
                      [syncTrayCounts] { syncTrayCounts(); });
     QObject::connect(g_files, &FilesPanel::transfersChanged, g_trayPopup,
                      [syncTrayCounts] { syncTrayCounts(); });
+    // 初始同步一次。
+    //
+    // 剪贴板面板在**构造期**就收下了本机剪贴板的第一条（captureLocalClipboard），
+    // 那时这里还没接上 transfersChanged —— 那条信号没人收，托盘里「剪贴板 /
+    // 文件传输」两个徽标就一直停在占位的「—」，看着像功能没接上。
+    // 主动同步一次，之后的变化照旧走信号。
+    syncTrayCounts();
     QObject::connect(g_pairing, &PairingPanel::doneRequested, g_pairing,
                      [] { showPanel(g_connections); });
     QObject::connect(g_clipboard, &ClipboardPanel::clearHistoryRequested, g_clipboard, [] {
