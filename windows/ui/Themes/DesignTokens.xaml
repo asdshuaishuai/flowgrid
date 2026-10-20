@@ -49,6 +49,10 @@
     <sys:Double x:Key="Font20">20</sys:Double>
     <sys:Double x:Key="Font28">28</sys:Double>
 
+    <!-- §3 Windows 字体栈（tokens.css [data-plat="windows"]；字体族与形态常量同放此处，颜色仍在 Theme*） -->
+    <FontFamily x:Key="FontUi">Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, Noto Sans SC</FontFamily>
+    <FontFamily x:Key="FontMono">Cascadia Mono, Consolas</FontFamily>
+
     <!-- §5 组件尺寸 -->
     <sys:Double x:Key="BadgeHeight">18</sys:Double>
     <sys:Double x:Key="StatusPillHeight">20</sys:Double>
@@ -58,8 +62,11 @@
     <sys:Double x:Key="EmptyIconSize">40</sys:Double>
     <sys:Double x:Key="PairSlotW">34</sys:Double>
     <sys:Double x:Key="PairSlotH">42</sys:Double>
+    <sys:Double x:Key="LatChipMinWidth">56</sys:Double>
     <Thickness x:Key="PadPill">8,0,8,0</Thickness>
     <Thickness x:Key="PadBadge">7,0,7,0</Thickness>
+    <Thickness x:Key="PadBtnH">12,0,12,0</Thickness>
+    <Thickness x:Key="PadBtnSmH">8,0,8,0</Thickness>
 
     <!-- 复合边距（值全部取自 S 阶梯，供 Margin 单值位使用） -->
     <Thickness x:Key="PadL6">6,0,0,0</Thickness>

@@ -10,6 +10,7 @@
     <!-- ── 文本 ─────────────────────────────────────────────────────────── -->
     <Style x:Key="TextMain" TargetType="TextBlock">
         <Setter Property="FontSize" Value="{StaticResource Font13}"/>
+        <Setter Property="FontFamily" Value="{DynamicResource FontUi}"/>
         <Setter Property="Foreground" Value="{DynamicResource BrushText1}"/>
     </Style>
     <Style x:Key="TextSecondary" TargetType="TextBlock" BasedOn="{StaticResource TextMain}">
@@ -29,13 +30,13 @@
         <Setter Property="FontWeight" Value="SemiBold"/>
     </Style>
     <Style x:Key="TextMono" TargetType="TextBlock" BasedOn="{StaticResource TextMain}">
-        <Setter Property="FontFamily" Value="Consolas, Cascadia Mono, Global Monospace"/>
+        <Setter Property="FontFamily" Value="{DynamicResource FontMono}"/>
     </Style>
 
     <!-- ── 按钮（.btn 及变体；hover 150ms 颜色渐变 via overlay border） ──── -->
     <Style x:Key="BtnPrimary" TargetType="Button">
         <Setter Property="Height" Value="{StaticResource HControl}"/>
-        <Setter Property="Padding" Value="{StaticResource PadBadge}"/>
+        <Setter Property="Padding" Value="{StaticResource PadBtnH}"/>
         <Setter Property="FontSize" Value="{StaticResource Font12}"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="Cursor" Value="Hand"/>
@@ -152,7 +153,7 @@
     <!-- .btn-sm：24 高、8 内边、11 号（类名 btn sm 变体） -->
     <Style x:Key="BtnSmSecondary" TargetType="Button" BasedOn="{StaticResource BtnSecondary}">
         <Setter Property="Height" Value="24"/>
-        <Setter Property="Padding" Value="{StaticResource PadBadge}"/>
+        <Setter Property="Padding" Value="{StaticResource PadBtnSmH}"/>
         <Setter Property="FontSize" Value="{StaticResource Font11}"/>
     </Style>
 
@@ -251,6 +252,13 @@
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="BorderBrush" Value="{DynamicResource BrushLine3}"/>
+                <!-- ui.css .device:hover 的 shadow-lift；阴影色主题无关，取石墨基色 -->
+                <Setter Property="Effect">
+                    <Setter.Value>
+                        <DropShadowEffect BlurRadius="10" ShadowDepth="2" Direction="270"
+                                          Opacity="0.18" Color="#101828"/>
+                    </Setter.Value>
+                </Setter>
             </Trigger>
         </Style.Triggers>
     </Style>
@@ -315,7 +323,7 @@
         </Setter>
     </Style>
 
-    <!-- chevron：展开朝下、收起旋转 -90°（200ms） -->
+    <!-- chevron：展开朝下、收起 -90°，随所在 Expander 状态 200ms 联动（ui.css .section .chevron） -->
     <Style x:Key="Chevron" TargetType="TextBlock">
         <Setter Property="Text" Value="▾"/>
         <Setter Property="FontSize" Value="{StaticResource Font11}"/>
@@ -327,14 +335,24 @@
             </Setter.Value>
         </Setter>
         <Style.Triggers>
-            <EventTrigger RoutedEvent="TextBlock.Loaded">
-                <BeginStoryboard>
-                    <Storyboard>
-                        <DoubleAnimation Storyboard.TargetProperty="(TextBlock.RenderTransform).(RotateTransform.Angle)"
-                                         From="-90" To="0" Duration="0:0:0.2"/>
-                    </Storyboard>
-                </BeginStoryboard>
-            </EventTrigger>
+            <DataTrigger Binding="{Binding IsExpanded, RelativeSource={RelativeSource AncestorType=Expander}}" Value="True">
+                <DataTrigger.EnterActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="(TextBlock.RenderTransform).(RotateTransform.Angle)"
+                                             To="0" Duration="0:0:0.2"/>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </DataTrigger.EnterActions>
+                <DataTrigger.ExitActions>
+                    <BeginStoryboard>
+                        <Storyboard>
+                            <DoubleAnimation Storyboard.TargetProperty="(TextBlock.RenderTransform).(RotateTransform.Angle)"
+                                             To="-90" Duration="0:0:0.2"/>
+                        </Storyboard>
+                    </BeginStoryboard>
+                </DataTrigger.ExitActions>
+            </DataTrigger>
         </Style.Triggers>
     </Style>
 
@@ -528,7 +546,7 @@
         <Setter Property="BorderThickness" Value="0,1,0,0"/>
     </Style>
 
-    <!-- ── 进度条（.bar 5px + .bar__fill accent） ────────────────────────── -->
+    <!-- ── 进度条（.bar 5px 药丸；100% 时转 ok 色，对齐 ui.css bar fill ok 态） ── -->
     <Style x:Key="ProgressBar" TargetType="ProgressBar">
         <Setter Property="Height" Value="5"/>
         <Setter Property="Minimum" Value="0"/>
@@ -536,6 +554,23 @@
         <Setter Property="Foreground" Value="{DynamicResource BrushAccent}"/>
         <Setter Property="Background" Value="{DynamicResource BrushSurface3}"/>
         <Setter Property="BorderThickness" Value="0"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ProgressBar">
+                    <Grid>
+                        <Border x:Name="PART_Track" CornerRadius="2.5"
+                                Background="{TemplateBinding Background}"/>
+                        <Border x:Name="PART_Indicator" CornerRadius="2.5" HorizontalAlignment="Left"
+                                Background="{TemplateBinding Foreground}"/>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <DataTrigger Binding="{Binding Value, RelativeSource={RelativeSource TemplatedParent}}" Value="100">
+                            <Setter TargetName="PART_Indicator" Property="Background" Value="{DynamicResource BrushOkSolid}"/>
+                        </DataTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <!-- ── 拖放区（.drop：虚线 2px + hover accent） ──────────────────────── -->

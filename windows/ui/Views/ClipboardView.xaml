@@ -2,73 +2,219 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:views="clr-namespace:FlowGrid.UI.Views">
-    <!-- clipboard.html：预览卡 + 过滤搜索 + 历史 + 同步设置 + 页脚 -->
+    <!-- clipboard.html：预览卡 → 过滤搜索 → 历史 → 同步设置 → 页脚（CB4 顺序） -->
     <DockPanel Margin="{StaticResource PadContent}">
-        <!-- 过滤 + 搜索 -->
-        <Grid DockPanel.Dock="Top" Margin="{StaticResource PadT12}">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal">
-                <RadioButton x:Name="FilterAll" GroupName="clipkind" Content="全部" IsChecked="True"
-                             Checked="OnFilterChanged" Margin="0,0,12,0"/>
-                <RadioButton GroupName="clipkind" Content="文本" Checked="OnFilterChanged" Margin="0,0,12,0"/>
-                <RadioButton x:Name="FilterLink" GroupName="clipkind" Content="链接" Checked="OnFilterChanged"/>
+        <!-- 页脚：端到端声明 + 清空历史（CB10） -->
+        <Grid DockPanel.Dock="Bottom" Margin="{StaticResource PadT12}">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <views:Icon Data="{StaticResource IconShield}" Size="12" VerticalAlignment="Center"
+                            TextElement.Foreground="{DynamicResource BrushText3}"/>
+                <TextBlock Text="端到端加密 · 不落盘" Style="{StaticResource TextCaption}"
+                           VerticalAlignment="Center" Margin="{StaticResource PadL6}"/>
             </StackPanel>
-            <TextBox Grid.Column="1" x:Name="SearchBox" Style="{StaticResource Input}" Width="150" Height="{StaticResource HControl}"
-                     VerticalContentAlignment="Center" FontSize="{StaticResource Font12}"
-                     TextChanged="OnFilterChanged"/>
+            <Button Style="{StaticResource BtnSmSecondary}" HorizontalAlignment="Right" Click="OnClearClick">
+                <StackPanel Orientation="Horizontal">
+                    <views:Icon Data="{StaticResource IconTrash}" Size="12" VerticalAlignment="Center"
+                                Margin="0,0,5,0"/>
+                    <TextBlock Text="清空历史" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Button>
         </Grid>
-
-        <!-- 页脚：清空历史 -->
-        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right"
-                    Margin="{StaticResource PadT12}">
-            <Button Style="{StaticResource BtnSecondary}" Content="清空历史" Click="OnClearClick"/>
-        </StackPanel>
 
         <ScrollViewer>
             <StackPanel>
-                <!-- 当前剪贴板预览卡（clipboard.html .preview） -->
-                <Border Style="{StaticResource DeviceCard}">
-                    <StackPanel Margin="{StaticResource PadL6}">
-                        <Grid Height="22">
-                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="当前剪贴板" FontWeight="SemiBold"
-                                           FontSize="{StaticResource Font12}"
-                                           Foreground="{DynamicResource BrushText1}" VerticalAlignment="Center"/>
-                                <Border Style="{StaticResource BadgeBorder}" VerticalAlignment="Center" Margin="{StaticResource PadL6}">
-                                    <TextBlock Text="text/plain" FontSize="{StaticResource Font11}"
-                                               Foreground="{DynamicResource BrushText3}"/>
-                                </Border>
-                            </StackPanel>
-                        </Grid>
-                        <TextBlock x:Name="PreviewText" Style="{StaticResource TextSecondary}"
-                                   TextTrimming="CharacterEllipsis" TextWrapping="Wrap" MaxHeight="44"
-                                   Margin="{StaticResource PadV2}" Text="（空）"/>
-                        <StackPanel Orientation="Horizontal" Margin="{StaticResource PadT12}">
-                            <Button Style="{StaticResource BtnSecondary}" Content="写入本地"
-                                    Click="OnPreviewWriteClick"/>
-                            <Button Style="{StaticResource BtnPrimary}" Content="推送到在线设备"
-                                    Margin="{StaticResource PadL6}" Click="OnPreviewPushClick"/>
-                        </StackPanel>
+                <!-- 当前剪贴板预览卡（CB6）：head(类型+来源) / body(mono 正文) / foot(分段信息+操作) -->
+                <Border Style="{StaticResource PreviewCard}">
+                    <StackPanel>
+                        <Border Style="{StaticResource PreviewHeadFoot}" BorderThickness="0,0,0,1">
+                            <Grid>
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Width="18" Height="18" CornerRadius="4" VerticalAlignment="Center"
+                                            Background="{DynamicResource BrushSurface3}">
+                                        <views:Icon Data="{StaticResource IconType}" Size="11"
+                                                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                    TextElement.Foreground="{DynamicResource BrushText2}"/>
+                                    </Border>
+                                    <TextBlock Text="当前剪贴板" FontWeight="SemiBold"
+                                               FontSize="{StaticResource Font12}"
+                                               Foreground="{DynamicResource BrushText1}" VerticalAlignment="Center"
+                                               Margin="{StaticResource PadL6}"/>
+                                    <Border Style="{StaticResource BadgeNeutral}" VerticalAlignment="Center"
+                                            Margin="{StaticResource PadL6}">
+                                        <TextBlock Text="text/plain" FontSize="{StaticResource Font11}"
+                                                   Foreground="{DynamicResource BrushText2}"/>
+                                    </Border>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                                            VerticalAlignment="Center">
+                                    <views:Icon Data="{StaticResource IconLaptop}" Size="12" VerticalAlignment="Center"
+                                                TextElement.Foreground="{DynamicResource BrushText3}"/>
+                                    <TextBlock x:Name="PreviewSource" Text="—" FontSize="{StaticResource Font11}"
+                                               Foreground="{DynamicResource BrushText3}" VerticalAlignment="Center"
+                                               Margin="{StaticResource PadL6}"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                        <!-- .preview__body：mono 12 号，92px 上限内滚动 -->
+                        <ScrollViewer MaxHeight="92" VerticalScrollBarVisibility="Auto"
+                                      Margin="{StaticResource PadAll12}">
+                            <TextBlock x:Name="PreviewText" Style="{StaticResource TextMono}"
+                                       FontSize="{StaticResource Font12}" TextWrapping="Wrap" Text="（空）"/>
+                        </ScrollViewer>
+                        <Border Style="{StaticResource PreviewHeadFoot}">
+                            <Grid>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <views:Icon Data="{StaticResource IconInfo}" Size="12" VerticalAlignment="Center"
+                                                TextElement.Foreground="{DynamicResource BrushText3}"/>
+                                    <TextBlock x:Name="PreviewMeta" Text="—" FontSize="{StaticResource Font11}"
+                                               Foreground="{DynamicResource BrushText3}" VerticalAlignment="Center"
+                                               Margin="{StaticResource PadL6}"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <Button Style="{StaticResource BtnGhost}" Width="Auto" Height="24"
+                                            Click="OnPreviewWriteClick" ToolTipService.ToolTip="写入本地">
+                                        <StackPanel Orientation="Horizontal" Margin="8,0,8,0">
+                                            <views:Icon Data="{StaticResource IconCopy}" Size="12"
+                                                        VerticalAlignment="Center"/>
+                                            <TextBlock Text="写入本地" FontSize="{StaticResource Font11}"
+                                                       VerticalAlignment="Center" Margin="{StaticResource PadL6}"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <!-- CB7：逐字「推送」+ 描边小钮 + arrowRight -->
+                                    <Button Style="{StaticResource BtnSmSecondary}" Margin="{StaticResource PadL6}"
+                                            Click="OnPreviewPushClick" ToolTipService.ToolTip="推送到在线设备">
+                                        <StackPanel Orientation="Horizontal">
+                                            <views:Icon Data="{StaticResource IconArrowRight}" Size="12"
+                                                        VerticalAlignment="Center"/>
+                                            <TextBlock Text="推送" VerticalAlignment="Center"
+                                                       Margin="{StaticResource PadL6}"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
                     </StackPanel>
                 </Border>
 
-                <!-- 同步设置折叠区 -->
-                <Expander Style="{StaticResource SectionExpander}" Margin="{StaticResource PadT12}">
+                <!-- 过滤 + 搜索（CB1 分段 / CB5 占位文字） -->
+                <Grid Margin="{StaticResource PadT12}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Style="{StaticResource SegContainer}" HorizontalAlignment="Left">
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="FilterAll" Style="{StaticResource SegItem}" GroupName="clipkind"
+                                         Content="全部" IsChecked="True" Checked="OnFilterChanged"/>
+                            <RadioButton Style="{StaticResource SegItem}" GroupName="clipkind"
+                                         Content="文本" Margin="2,0,0,0" Checked="OnFilterChanged"/>
+                            <RadioButton x:Name="FilterLink" Style="{StaticResource SegItem}" GroupName="clipkind"
+                                         Content="链接" Margin="2,0,0,0" Checked="OnFilterChanged"/>
+                            <!-- D4：图片/代码过滤依赖未实现的类型能力，照常渲染但置灰 -->
+                            <RadioButton Style="{StaticResource SegItem}" GroupName="clipkind"
+                                         Content="代码" Margin="2,0,0,0" IsEnabled="False" Opacity="0.5"
+                                         ToolTipService.ToolTip="仅同步文本 · 待后续里程碑"/>
+                            <RadioButton Style="{StaticResource SegItem}" GroupName="clipkind"
+                                         Content="图片" Margin="2,0,0,0" IsEnabled="False" Opacity="0.5"
+                                         ToolTipService.ToolTip="待后续里程碑"/>
+                        </StackPanel>
+                    </Border>
+                    <!-- Input 无原生 placeholder：Text 为空时叠加提示文本（CB5） -->
+                    <Grid Grid.Column="1" Width="150" Height="{StaticResource HControl}">
+                        <TextBox x:Name="SearchBox" Style="{StaticResource Input}" TextChanged="OnSearchChanged"/>
+                        <TextBlock x:Name="SearchHint" Text="搜索历史" IsHitTestVisible="False"
+                                   FontSize="{StaticResource Font12}"
+                                   Foreground="{DynamicResource BrushText3}"
+                                   VerticalAlignment="Center" Margin="11,0,11,0"/>
+                    </Grid>
+                </Grid>
+
+                <!-- 历史（CB9）：ListCard + 分组标题 + ListRow 行 -->
+                <Border x:Name="HistoryCard" Style="{StaticResource ListCard}" Margin="{StaticResource PadT12}">
+                    <StackPanel>
+                        <Border Style="{StaticResource ListGroupTitle}">
+                            <TextBlock Text="同步历史 · 保留最近 50 条" FontSize="{StaticResource Font11}"
+                                       FontWeight="SemiBold" Foreground="{DynamicResource BrushText3}"/>
+                        </Border>
+                        <ItemsControl x:Name="History">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource ListRow}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Width="18" Height="18" CornerRadius="4"
+                                                    Background="{DynamicResource BrushSurface3}"
+                                                    VerticalAlignment="Center">
+                                                <views:Icon Size="11" HorizontalAlignment="Center"
+                                                            VerticalAlignment="Center"
+                                                            TextElement.Foreground="{DynamicResource BrushText2}">
+                                                    <views:Icon.Style>
+                                                        <Style TargetType="views:Icon">
+                                                            <Setter Property="Data" Value="{StaticResource IconType}"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding Kind}" Value="link">
+                                                                    <Setter Property="Data" Value="{StaticResource IconLink}"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </views:Icon.Style>
+                                                </views:Icon>
+                                            </Border>
+                                            <StackPanel Grid.Column="1" Margin="{StaticResource PadL12}"
+                                                        VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Preview}" FontSize="{StaticResource Font12}"
+                                                           Foreground="{DynamicResource BrushText1}"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding Hint}" FontSize="{StaticResource Font11}"
+                                                           Foreground="{DynamicResource BrushText3}"
+                                                           Margin="{StaticResource PadV2}"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                                        VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Time}" FontSize="{StaticResource Font11}"
+                                                           Foreground="{DynamicResource BrushText3}"
+                                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                                <!-- CB11：26×26 幽灵钮 + copy 图标 -->
+                                                <Button Style="{StaticResource BtnGhost}" Tag="{Binding Index}"
+                                                        Click="OnWriteClick" ToolTipService.ToolTip="写入本地">
+                                                    <views:Icon Data="{StaticResource IconCopy}" Size="12"/>
+                                                </Button>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+                <views:EmptyState x:Name="NoHistory" Title="暂无剪贴板记录"
+                                  Description="本机复制或对端同步的文本会出现在这里"
+                                  Margin="0,12,0,8"/>
+
+                <!-- 同步设置（CB2 两行置灰 + 4 项口径 / CB3 上限说明横幅） -->
+                <Expander Style="{StaticResource SectionExpander}" Margin="0,12,0,0">
                     <Expander.Header>
                         <Grid Height="{StaticResource HControl}">
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <views:Icon Data="{StaticResource IconSettings}" Size="12" VerticalAlignment="Center"
+                                            TextElement.Foreground="{DynamicResource BrushText3}"/>
                                 <TextBlock Text="同步设置" FontSize="{StaticResource Font12}" FontWeight="Medium"
-                                           Foreground="{DynamicResource BrushText1}" VerticalAlignment="Center"/>
-                                <Border Style="{StaticResource BadgeBorder}" VerticalAlignment="Center" Margin="{StaticResource PadL6}">
-                                    <TextBlock Text="2 项" FontSize="{StaticResource Font11}"
-                                               Foreground="{DynamicResource BrushText3}"/>
+                                           Foreground="{DynamicResource BrushText1}" VerticalAlignment="Center"
+                                           Margin="{StaticResource PadL6}"/>
+                                <!-- 4 项 = 跨端同步 + 接收后自动写入（实际）+ 同步图片 + 忽略密码管理器（置灰） -->
+                                <Border Style="{StaticResource BadgeNeutral}" VerticalAlignment="Center"
+                                        Margin="{StaticResource PadL6}">
+                                    <TextBlock Text="4 项" FontSize="{StaticResource Font11}"
+                                               Foreground="{DynamicResource BrushText2}"/>
                                 </Border>
                             </StackPanel>
-                            <TextBlock Text="▸" Foreground="{DynamicResource BrushText3}" FontSize="{StaticResource Font11}"
-                                       HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                            <TextBlock Style="{StaticResource Chevron}" HorizontalAlignment="Right"
+                                       VerticalAlignment="Center"/>
                         </Grid>
                     </Expander.Header>
                     <StackPanel Margin="{StaticResource PadAll12}">
@@ -77,47 +223,53 @@
                             <ToggleButton x:Name="SyncToggle" Style="{StaticResource Switch}" HorizontalAlignment="Right"
                                           Checked="OnSyncToggle" Unchecked="OnSyncToggle"/>
                         </Grid>
-                        <Grid Height="24">
+                        <!-- D4：同步图片 / 忽略密码管理器依赖未实现能力，照常渲染但置灰 -->
+                        <Grid Margin="{StaticResource PadT12}" Opacity="0.5">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="同步图片" Style="{StaticResource TextMain}"/>
+                                <TextBlock Text="仅同步文本 · 待后续里程碑" Style="{StaticResource TextCaption}"
+                                           Margin="{StaticResource PadV2}"/>
+                            </StackPanel>
+                            <ToggleButton Style="{StaticResource Switch}" Grid.Column="1" IsChecked="True"
+                                          IsEnabled="False" VerticalAlignment="Center"/>
+                        </Grid>
+                        <Grid Margin="{StaticResource PadT12}" Opacity="0.5">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="忽略密码管理器内容" Style="{StaticResource TextMain}"/>
+                                <TextBlock Text="待后续里程碑" Style="{StaticResource TextCaption}"
+                                           Margin="{StaticResource PadV2}"/>
+                            </StackPanel>
+                            <ToggleButton Style="{StaticResource Switch}" Grid.Column="1" IsChecked="True"
+                                          IsEnabled="False" VerticalAlignment="Center"/>
+                        </Grid>
+                        <Grid Height="24" Margin="{StaticResource PadT12}">
                             <TextBlock Text="接收后自动写入本地" Style="{StaticResource TextMain}" VerticalAlignment="Center"/>
                             <TextBlock Text="已启用" Style="{StaticResource TextSecondary}"
                                        HorizontalAlignment="Right" VerticalAlignment="Center"/>
                         </Grid>
-                        <TextBlock Style="{StaticResource TextCaption}" TextWrapping="Wrap" Margin="{StaticResource PadT12}"
-                                   Text="单条上限 63,240 B（协议 §5.3 分段上限），超出不同步；仅同步文本，图片/代码待后续里程碑。"/>
+                        <!-- CB3：单条上限说明对齐 clipboard.html:152-155 原文 -->
+                        <Border Style="{StaticResource BannerNeutral}" Margin="{StaticResource PadT12}">
+                            <StackPanel Orientation="Horizontal">
+                                <views:Icon Data="{StaticResource IconInfo}" Size="14" VerticalAlignment="Top"
+                                            TextElement.Foreground="{DynamicResource BrushText2}"/>
+                                <TextBlock FontSize="{StaticResource Font12}"
+                                           Foreground="{DynamicResource BrushText2}"
+                                           TextWrapping="Wrap" VerticalAlignment="Center" Margin="{StaticResource PadL6}"
+                                           LineHeight="18">
+                                    <Run Text="单条上限 "/><Bold><Run Text="63,240 B"/></Bold><Run Text="（协议 §5.3 分段上限），超出不同步；5 秒内未收齐则整份丢弃；同一时刻仅允许一路传输。"/>
+                                </TextBlock>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Expander>
-
-                <TextBlock Text="同步历史 · 保留最近 50 条" Style="{StaticResource TextCaption}" Margin="{StaticResource PadT16}"/>
-                <ItemsControl x:Name="History">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Style="{StaticResource DeviceCard}" Margin="0,0,0,8">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding Preview}" FontSize="{StaticResource Font12}"
-                                                   Foreground="{DynamicResource BrushText1}" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Text="{Binding Hint}" FontSize="{StaticResource Font11}"
-                                                   Foreground="{DynamicResource BrushText3}" Margin="{StaticResource PadV2}"/>
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding Time}" FontSize="{StaticResource Font11}"
-                                                   Foreground="{DynamicResource BrushText3}" VerticalAlignment="Center"
-                                                   Margin="0,0,8,0"/>
-                                        <Button Style="{StaticResource BtnGhost}" Content="写入"
-                                                Tag="{Binding Index}" Click="OnWriteClick"/>
-                                    </StackPanel>
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-                <views:EmptyState x:Name="NoHistory" Title="暂无剪贴板记录"
-                                  Description="本机复制或对端同步的文本会出现在这里"
-                                  Margin="0,0,0,8"/>
             </StackPanel>
         </ScrollViewer>
     </DockPanel>

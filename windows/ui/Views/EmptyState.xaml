@@ -1,21 +1,19 @@
 <UserControl x:Class="FlowGrid.UI.Views.EmptyState"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <!-- ui.css .empty：圆形底 + 标题 + 说明 -->
+    <!-- ui.css .empty：圆形底 + 标题 + 说明，纵向间距走 8 阶梯（gap s-2） -->
     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-        <Border Width="{StaticResource EmptyIconSize}" Height="{StaticResource EmptyIconSize}"
-                CornerRadius="20" Background="{DynamicResource BrushSurface3}"
-                HorizontalAlignment="Center">
+        <Border Style="{StaticResource EmptyIcon}" HorizontalAlignment="Center">
             <TextBlock x:Name="GlyphHost" Text="◎" FontSize="{StaticResource Font15}"
                        Foreground="{DynamicResource BrushText3}"
                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
         </Border>
-        <TextBlock x:Name="TitleHost" FontSize="{StaticResource Font13}" FontWeight="Medium"
+        <TextBlock x:Name="TitleHost" FontSize="{StaticResource Font13}" FontWeight="SemiBold"
                    Foreground="{DynamicResource BrushText1}" HorizontalAlignment="Center"
-                   Margin="0,10,0,0"/>
+                   Margin="0,8,0,0"/>
         <TextBlock x:Name="DescriptionHost" FontSize="{StaticResource Font12}"
                    Foreground="{DynamicResource BrushText3}" HorizontalAlignment="Center"
-                   TextAlignment="Center" TextWrapping="Wrap" MaxWidth="300"
-                   Margin="0,4,0,0"/>
+                   TextAlignment="Center" TextWrapping="Wrap" MaxWidth="320"
+                   Margin="0,8,0,0"/>
     </StackPanel>
 </UserControl>

@@ -11,3 +11,6 @@ global using Brush = System.Windows.Media.Brush;
 global using HorizontalAlignment = System.Windows.HorizontalAlignment;
 global using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 global using MessageBox = System.Windows.MessageBox;
+global using DataFormats = System.Windows.DataFormats;
+global using DragDropEffects = System.Windows.DragDropEffects;
+global using DragEventArgs = System.Windows.DragEventArgs;

@@ -3,7 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="FlowGrid" Width="{StaticResource WPanel}" SizeToContent="Height"
-        MaxHeight="620" MinWidth="{StaticResource WPanel}" MaxWidth="{StaticResource WPanel}"
+        MinWidth="{StaticResource WPanel}" MaxWidth="{StaticResource WPanel}"
+        FontFamily="{DynamicResource FontUi}"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None" ResizeMode="NoResize" Background="Transparent"
         AllowsTransparency="True">
@@ -21,10 +22,11 @@
             <DropShadowEffect BlurRadius="42" ShadowDepth="18" Opacity="0.14"/>
         </Border.Effect>
         <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="{StaticResource RowTitlebar}"/>
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="{StaticResource RowTitlebar}"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
 
             <!-- .titlebar：surface-2 底 + hairline 底边 + 左标题/右元素/关闭 -->
             <Grid Grid.Row="0" Background="{DynamicResource BrushSurface2}">
@@ -59,6 +61,11 @@
                 <TextBlock x:Name="ToastText" FontWeight="SemiBold" FontSize="{StaticResource Font12}"
                            Foreground="{DynamicResource BrushToastFg}"/>
             </Border>
+        </Grid>
+        <!-- ui.css .panel 的 inset 顶部 1px 内高光（edge-hi） -->
+        <Border Height="1" Margin="1,1,1,0" VerticalAlignment="Top"
+                CornerRadius="10,10,0,0" Background="{DynamicResource BrushEdgeHi}"
+                IsHitTestVisible="False"/>
         </Grid>
     </Border>
 </Window>

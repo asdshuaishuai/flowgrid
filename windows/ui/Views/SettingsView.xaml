@@ -1,13 +1,27 @@
 <UserControl x:Class="FlowGrid.UI.Views.SettingsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:FlowGrid.UI.Views">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="{StaticResource PadContent}">
 
+            <!-- 设计稿顶部 info 条（settings.html:19-21，文案逐字） -->
+            <Border Style="{StaticResource BannerAccent}" Margin="0,0,0,12">
+                <StackPanel Orientation="Horizontal">
+                    <views:IconGlyph Data="{StaticResource IconInfo}" Size="14" VerticalAlignment="Center"
+                                     TextElement.Foreground="{DynamicResource BrushAccentText}"/>
+                    <TextBlock Text="设置即时生效并同步到全部已配对设备，无需重启。"
+                               FontSize="{StaticResource Font12}" Foreground="{DynamicResource BrushAccentText}"
+                               Margin="8,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
             <!-- 外观 -->
-            <TextBlock Text="外观" Style="{StaticResource TextCaption}" Margin="0,0,0,4"/>
             <Border Style="{StaticResource ListCard}">
                 <StackPanel>
+                    <Border Style="{StaticResource ListGroupTitle}">
+                        <TextBlock Text="外观" Style="{StaticResource TextCaption}" FontWeight="SemiBold"/>
+                    </Border>
                     <Border Style="{StaticResource ListRow}">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -32,9 +46,11 @@
             </Border>
 
             <!-- 连接 -->
-            <TextBlock Text="连接" Style="{StaticResource TextCaption}" Margin="0,12,0,4"/>
-            <Border Style="{StaticResource ListCard}">
+            <Border Style="{StaticResource ListCard}" Margin="{StaticResource PadT12}">
                 <StackPanel>
+                    <Border Style="{StaticResource ListGroupTitle}">
+                        <TextBlock Text="连接" Style="{StaticResource TextCaption}" FontWeight="SemiBold"/>
+                    </Border>
                     <Border Style="{StaticResource ListRow}">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -82,9 +98,11 @@
             </Border>
 
             <!-- 输入 -->
-            <TextBlock Text="输入" Style="{StaticResource TextCaption}" Margin="0,12,0,4"/>
-            <Border Style="{StaticResource ListCard}">
+            <Border Style="{StaticResource ListCard}" Margin="{StaticResource PadT12}">
                 <StackPanel>
+                    <Border Style="{StaticResource ListGroupTitle}">
+                        <TextBlock Text="输入" Style="{StaticResource TextCaption}" FontWeight="SemiBold"/>
+                    </Border>
                     <Border Style="{StaticResource ListRow}">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -105,21 +123,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="切换热键" Style="{StaticResource TextMain}"/>
-                                <TextBlock Text="按住后按数字键直切" Style="{StaticResource TextCaption}"/>
-                            </StackPanel>
-                            <TextBlock Text="Ctrl+Alt+0..8" Style="{StaticResource TextSecondary}"
-                                       HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                        </Grid>
-                    </Border>
-                    <Border Style="{StaticResource ListRow}" Opacity="0.5">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel>
+                            <StackPanel Opacity="0.5">
                                 <TextBlock Text="鼠标平滑" Style="{StaticResource TextMain}"/>
                                 <TextBlock Text="待后续里程碑" Style="{StaticResource TextCaption}"/>
                             </StackPanel>
@@ -127,13 +131,64 @@
                                        HorizontalAlignment="Right" VerticalAlignment="Center" Opacity="0.5"/>
                         </Grid>
                     </Border>
+                    <!-- 边缘切换阈值：fgcore 无对应 pref，按 D4 禁用（SE3） -->
+                    <Border Style="{StaticResource ListRow}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Opacity="0.5">
+                                <TextBlock Text="边缘切换阈值" Style="{StaticResource TextMain}"/>
+                                <TextBlock Text="指针抵达屏幕边缘后触发 · 待后续里程碑" Style="{StaticResource TextCaption}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                                        VerticalAlignment="Center" Opacity="0.5" IsEnabled="False">
+                                <TextBox Style="{StaticResource Input}" Width="64" Text="8"/>
+                                <TextBlock Text="px" Style="{StaticResource TextCaption}"
+                                           VerticalAlignment="Center" Margin="6,0,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <!-- 切换热键：KeyCap + TextMono 三枚键帽（SE9 / ui.css .key） -->
+                    <Border Style="{StaticResource ListRow}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="切换热键" Style="{StaticResource TextMain}"/>
+                                <TextBlock Text="按住后按数字键直切" Style="{StaticResource TextCaption}"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <Border Style="{StaticResource KeyCap}">
+                                    <TextBlock Text="Ctrl" Style="{StaticResource TextMono}" FontSize="{StaticResource Font11}"
+                                               FontWeight="SemiBold" Foreground="{DynamicResource BrushText2}"
+                                               HorizontalAlignment="Center"/>
+                                </Border>
+                                <Border Style="{StaticResource KeyCap}" Margin="4,0,0,0">
+                                    <TextBlock Text="Alt" Style="{StaticResource TextMono}" FontSize="{StaticResource Font11}"
+                                               FontWeight="SemiBold" Foreground="{DynamicResource BrushText2}"
+                                               HorizontalAlignment="Center"/>
+                                </Border>
+                                <Border Style="{StaticResource KeyCap}" Margin="4,0,0,0">
+                                    <TextBlock Text="0..8" Style="{StaticResource TextMono}" FontSize="{StaticResource Font11}"
+                                               FontWeight="SemiBold" Foreground="{DynamicResource BrushText2}"
+                                               HorizontalAlignment="Center"/>
+                                </Border>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
                 </StackPanel>
             </Border>
 
             <!-- 剪贴板 -->
-            <TextBlock Text="剪贴板" Style="{StaticResource TextCaption}" Margin="0,12,0,4"/>
-            <Border Style="{StaticResource ListCard}">
+            <Border Style="{StaticResource ListCard}" Margin="{StaticResource PadT12}">
                 <StackPanel>
+                    <Border Style="{StaticResource ListGroupTitle}">
+                        <TextBlock Text="剪贴板" Style="{StaticResource TextCaption}" FontWeight="SemiBold"/>
+                    </Border>
                     <Border Style="{StaticResource ListRow}">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -159,7 +214,7 @@
                                 <TextBlock Text="历史条数" Style="{StaticResource TextMain}"/>
                                 <TextBlock Text="超出后按时间淘汰" Style="{StaticResource TextCaption}"/>
                             </StackPanel>
-                            <ComboBox x:Name="CapBox" Width="90" Height="24" VerticalAlignment="Center"
+                            <ComboBox x:Name="CapBox" Width="90" Height="{StaticResource HControl}" VerticalAlignment="Center"
                                       FontSize="{StaticResource Font12}"
                                       SelectionChanged="OnCapChanged">
                                 <ComboBoxItem Content="50 条" Tag="50" IsSelected="True"/>
@@ -168,13 +223,30 @@
                             </ComboBox>
                         </Grid>
                     </Border>
+                    <!-- 排除应用：fgcore 无对应 pref，按 D4 禁用（SE3） -->
+                    <Border Style="{StaticResource ListRow}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Opacity="0.5">
+                                <TextBlock Text="排除应用" Style="{StaticResource TextMain}"/>
+                                <TextBlock Text="密码管理器等窗口内不采集 · 待后续里程碑" Style="{StaticResource TextCaption}"/>
+                            </StackPanel>
+                            <Button Style="{StaticResource BtnSmSecondary}" Content="管理" VerticalAlignment="Center"
+                                    IsEnabled="False" Opacity="0.5"/>
+                        </Grid>
+                    </Border>
                 </StackPanel>
             </Border>
 
             <!-- 安全 -->
-            <TextBlock Text="安全" Style="{StaticResource TextCaption}" Margin="0,12,0,4"/>
-            <Border Style="{StaticResource ListCard}">
+            <Border Style="{StaticResource ListCard}" Margin="{StaticResource PadT12}">
                 <StackPanel>
+                    <Border Style="{StaticResource ListGroupTitle}">
+                        <TextBlock Text="安全" Style="{StaticResource TextCaption}" FontWeight="SemiBold"/>
+                    </Border>
                     <Border Style="{StaticResource ListRow}">
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -185,8 +257,8 @@
                                 <TextBlock Text="传输加密" Style="{StaticResource TextMain}"/>
                                 <TextBlock Text="DirectLink TCP + TLS 1.3（自签证书固定根）" Style="{StaticResource TextCaption}"/>
                             </StackPanel>
-                            <Border Style="{StaticResource PillOk}" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                <TextBlock Text="已启用" FontSize="{StaticResource Font11}"
+                            <Border Style="{StaticResource BadgeOk}" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <TextBlock Text="已启用" FontSize="{StaticResource Font11}" FontWeight="SemiBold"
                                            Foreground="{DynamicResource BrushOkText}"/>
                             </Border>
                         </Grid>
@@ -209,18 +281,45 @@
                 </StackPanel>
             </Border>
 
+            <!-- 关闭「新设备需确认」的风险提示（settings.html:147-149，联动开关，SE1） -->
+            <Border Margin="{StaticResource PadT12}">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource BannerWarn}">
+                        <Setter Property="Visibility" Value="Collapsed"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsChecked, ElementName=RequireConfirmToggle}" Value="False">
+                                <Setter Property="Visibility" Value="Visible"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel Orientation="Horizontal">
+                    <views:IconGlyph Data="{StaticResource IconWarn}" Size="14" VerticalAlignment="Center"
+                                     TextElement.Foreground="{DynamicResource BrushWarnText}"/>
+                    <TextBlock Text="关闭「新设备需确认」会让同一网络内的任意设备发起配对请求，仅在可信网络中临时使用。"
+                               FontSize="{StaticResource Font12}" Foreground="{DynamicResource BrushWarnText}"
+                               Margin="8,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
             <!-- 已授权设备 -->
-            <TextBlock Text="已授权设备" Style="{StaticResource TextCaption}" Margin="0,12,0,4"/>
-            <Border Style="{StaticResource ListCard}">
-                <StackPanel x:Name="TrustList">
-                    <TextBlock Text="暂无已授权设备" Style="{StaticResource TextMuted}" Margin="12,10,12,10"/>
+            <Border Style="{StaticResource ListCard}" Margin="{StaticResource PadT12}">
+                <StackPanel>
+                    <Border Style="{StaticResource ListGroupTitle}">
+                        <TextBlock Text="已授权设备" Style="{StaticResource TextCaption}" FontWeight="SemiBold"/>
+                    </Border>
+                    <StackPanel x:Name="TrustList">
+                        <TextBlock Text="暂无已授权设备" Style="{StaticResource TextMuted}" Margin="12,10,12,10"/>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 
             <!-- 关于 -->
-            <TextBlock Text="关于" Style="{StaticResource TextCaption}" Margin="0,12,0,4"/>
-            <Border Style="{StaticResource ListCard}" Margin="0,0,0,12">
+            <Border Style="{StaticResource ListCard}" Margin="0,12,0,12">
                 <StackPanel>
+                    <Border Style="{StaticResource ListGroupTitle}">
+                        <TextBlock Text="关于" Style="{StaticResource TextCaption}" FontWeight="SemiBold"/>
+                    </Border>
                     <Border Style="{StaticResource ListRow}">
                         <Grid>
                             <Grid.ColumnDefinitions>

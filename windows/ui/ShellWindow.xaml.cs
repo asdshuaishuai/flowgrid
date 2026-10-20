@@ -18,13 +18,15 @@ public partial class ShellWindow : Window
         ["files"] = ("文件传输", "files"),
         ["latency"] = ("网络延迟", "latency"),
         ["keymap"] = ("键位映射", "keymap"),
-        ["pairing"] = ("配对新设备", "pairing"),
+        ["pairing"] = ("添加设备", "pairing"),
         ["settings"] = ("设置", "settings"),
     };
 
     private readonly ConnectionsView _connectionsView = new();
     private readonly Dictionary<string, Func<UserControl>> _views;
     private DispatcherTimer? _toastTimer;
+    private DispatcherTimer? _pillTimer;
+    private string _currentKey = "connections";
 
     public ShellWindow()
     {
@@ -41,6 +43,14 @@ public partial class ShellWindow : Window
             ["settings"] = () => new SettingsView(),
         };
 
+        // tokens.css §0 --panel-max-h: calc(100vh - 48px)；WPF 无 calc，按工作区换算
+        MaxHeight = SystemParameters.WorkArea.Height - 48;
+
+        // 停留在文件/剪贴板屏时标题 pill 也要跟随数据刷新
+        _pillTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _pillTimer.Tick += (_, _) => RefreshTitleRight(_currentKey);
+        _pillTimer.Start();
+
         Navigate("connections");
     }
 
@@ -50,6 +60,7 @@ public partial class ShellWindow : Window
         {
             return;
         }
+        _currentKey = key;
         ContentHost.Content = make();
         if (Screens.TryGetValue(key, out var meta))
         {
@@ -105,13 +116,13 @@ public partial class ShellWindow : Window
         var stack = new StackPanel { Orientation = Orientation.Horizontal };
         var dot = new System.Windows.Shapes.Ellipse
         {
-            Width = 7,
-            Height = 7,
-            Margin = new Thickness(0, 0, 6, 0),
+            Style = (Style)Application.Current.Resources["DotPulse"],
+            Margin = new Thickness(0, 0, 6, 0), // ui.css .status-pill gap 6，间距阶梯无 6 档
             VerticalAlignment = VerticalAlignment.Center,
         };
         dot.SetResourceReference(System.Windows.Shapes.Ellipse.FillProperty, dotBrush);
-        var label = new TextBlock { Text = text, FontSize = 11 };
+        var label = new TextBlock { Text = text };
+        label.SetResourceReference(TextBlock.FontSizeProperty, "Font11");
         label.SetResourceReference(TextBlock.ForegroundProperty, textBrush);
         stack.Children.Add(dot);
         stack.Children.Add(label);

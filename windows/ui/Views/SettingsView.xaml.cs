@@ -20,7 +20,12 @@ public partial class SettingsView : UserControl
             _ready = true;
             _ = App.Core.RefreshTrustListAsync();
         };
-        Unloaded += (_, _) => App.Core.StatusReceived -= OnStatusReceived;
+        // 退订全部核心事件：壳层导航往返会反复实例化本视图，漏退订即泄漏（SE11）。
+        Unloaded += (_, _) =>
+        {
+            App.Core.StatusReceived -= OnStatusReceived;
+            App.Core.TrustList -= OnTrustList;
+        };
     }
 
     private void SyncToggles()
@@ -61,9 +66,11 @@ public partial class SettingsView : UserControl
         {
             return;
         }
+        var on = AutostartToggle.IsChecked == true;
         try
         {
-            Autostart.SetEnabled(AutostartToggle.IsChecked == true);
+            Autostart.SetEnabled(on);
+            Toast(on, "开机自启");
         }
         catch (Exception)
         {
@@ -76,9 +83,11 @@ public partial class SettingsView : UserControl
         {
             return;
         }
+        var on = ClipSyncToggle.IsChecked == true;
         try
         {
-            await App.Core.SetClipSyncAsync(ClipSyncToggle.IsChecked == true);
+            await App.Core.SetClipSyncAsync(on);
+            Toast(on, "剪贴板同步");
         }
         catch (Exception)
         {
@@ -91,14 +100,20 @@ public partial class SettingsView : UserControl
         {
             return;
         }
+        var on = RequireConfirmToggle.IsChecked == true;
         try
         {
-            await App.Core.SetRequireConfirmAsync(RequireConfirmToggle.IsChecked == true);
+            await App.Core.SetRequireConfirmAsync(on);
+            Toast(on, "新设备确认");
         }
         catch (Exception)
         {
         }
     }
+
+    // 「XX已开启/已关闭」——文案格式对齐 design/unified/app.js:232-235 的开关 toast（SE13）。
+    private void Toast(bool on, string label) =>
+        (Window.GetWindow(this) as ShellWindow)?.ShowToast(label + (on ? "已开启" : "已关闭"));
 
     private async void OnCapChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -111,21 +126,6 @@ public partial class SettingsView : UserControl
             try
             {
                 await App.Core.SetClipboardCapAsync(cap);
-            }
-            catch (Exception)
-            {
-            }
-        }
-    }
-
-    private async void OnRevokeClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { Tag: string fp })
-        {
-            try
-            {
-                await App.Core.TrustRevokeAsync(fp);
-                await App.Core.RefreshTrustListAsync();
             }
             catch (Exception)
             {
@@ -167,7 +167,12 @@ public partial class SettingsView : UserControl
                 };
                 btn.Click += async (s, args) =>
                 {
-                    try { await App.Core.TrustRevokeAsync(entry.Fingerprint); }
+                    try
+                    {
+                        await App.Core.TrustRevokeAsync(entry.Fingerprint);
+                        // 撤销后主动拉列表，等 trust.list.ok 推送回来重绘（SE10）。
+                        await App.Core.RefreshTrustListAsync();
+                    }
                     catch (Exception) { }
                 };
                 Grid.SetColumn(btn, 1);
