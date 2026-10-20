@@ -22,14 +22,6 @@ Q_LOGGING_CATEGORY(lcLatency, "flowgrid.latency")
 namespace fg {
 namespace {
 
-QFont uiFont(int px, int weight = QFont::Normal)
-{
-    QFont f = QApplication::font();
-    f.setPixelSize(px);
-    f.setWeight(static_cast<QFont::Weight>(weight));
-    return f;
-}
-
 // 必须带 alpha：柔和底色（ok-soft / accent-soft）就是靠 12%~18% 透明度
 // 叠出来的。用 HexRgb 丢 alpha 会把它们渲染成实色，整个设计稿的浅底全废。
 QString css(const QColor &c)

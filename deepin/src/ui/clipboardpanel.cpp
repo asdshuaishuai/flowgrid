@@ -33,14 +33,6 @@ constexpr int kClipSegLimit = 63240;
 // 减去上下 12px 内边距还剩 68px，按 --lh-13 折正好 3 行。
 constexpr int kPreviewLines = 3;
 
-QFont uiFont(int px, int weight = QFont::Normal)
-{
-    QFont f = QApplication::font();
-    f.setPixelSize(px);
-    f.setWeight(static_cast<QFont::Weight>(weight));
-    return f;
-}
-
 QString css(const QColor &c)
 {
     return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);

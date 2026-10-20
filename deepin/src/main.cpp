@@ -98,31 +98,54 @@ QPoint anchorPoint()
     return QPoint(avail.right() - 32, avail.bottom() - 32);
 }
 
-// 深色主题下关掉 LCD 次像素抗锯齿。
+// 关掉 LCD 次像素抗锯齿，统一用灰度。
 //
 // Qt 会不会用次像素渲染，取决于它读到的**系统调色板**明暗；而这个应用的界面
 // 底色跟的是 DTK 主题（可以跟系统明暗走，也可以在设置中心被切成另一种），
-// 两者不一定对得上。对不上时，深色界面上每个字的边缘都会带上橙蓝彩边——
-// 实测浮板标题「设备与连接」四个字所在的 100×22 区域里有 212 个高饱和度
-// 彩色像素，在深底上非常扎眼，一眼看去像文字发虚、像渲染坏了。
+// 两者不一定对得上。对不上时，界面上每个字的边缘都会带上橙蓝彩边——
 //
-// 灰度抗锯齿没有彩边，代价只是边缘略软一点；深色底上这笔买卖划算。浅色
-// 主题下彩边本来就看不出来（浅底黑字），保留次像素渲染，那边字更清楚。
+//   · 深色底：浮板标题「设备与连接」四个字所在区域里有 62 块孤立的橙蓝色块
+//     （共 110 像素），在深底上非常扎眼，一眼看去像文字发虚、像渲染坏了。
+//   · 浅色底：托盘浮层的「FlowGrid」同样带着明显的橙蓝描边。浅底黑字一样
+//     藏不住——「浅色下看不出来」是错的。
 //
-// Qt 6.8 起渲染提示挂在 QFont::StyleStrategy 的位标志上：PreferAntialias 是
-// 灰度，NoSubpixelAntialias 明确关掉次像素。界面上的字都是从
-// QApplication::font() 派生的（见 uiFont），改应用默认字体就一次改到位。
+// 灰度抗锯齿没有彩边，代价只是边缘略软一点，两种主题下这笔买卖都划算。
+//
+// 真正管用的位是 NoSubpixelAntialias，不是 PreferAntialias：真桌面上把四种
+// 策略并排量过——默认(0x1) 有彩边、只加 PreferAntialias(0x80) 一样有彩边，
+// 只加 NoSubpixelAntialias(0x800) 和两个都加(0x880) 才是 0。PreferAntialias
+// 单独用是**无效**的，代码里两个都留着，但真正起作用的是后者。
+//
+// 这里改的是**应用字体**，只覆盖那些没有显式设字体的控件；界面上的字一律
+// 走 uiFont()/baseFont()，渲染策略在那两处逐个字体写死（见 widgets.h）。
 static void applyFontRenderHints()
 {
-    QFont f = QApplication::font();
-    if (fg::Theme::instance().isDark()) {
-        f.setStyleStrategy(static_cast<QFont::StyleStrategy>(QFont::PreferAntialias
-                                                            | QFont::NoSubpixelAntialias));
-    } else {
-        f.setStyleStrategy(QFont::PreferDefault);
-    }
-    QApplication::setFont(f);
+    QApplication::setFont(fg::baseFont());
 }
+
+// DTK 应用主题后会把应用字体整个换掉，连 StyleStrategy 一起换——刚设好的
+// 灰度策略当场被冲掉。
+//
+// 这里监听应用字体变化：只要字体被换过，就再压一次灰度策略。自己 setFont
+// 也会触发这个事件，用 m_applying 挡住，不自激。
+class FontGuard : public QObject {
+public:
+    explicit FontGuard(QObject *parent = nullptr) : QObject(parent) {}
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::ApplicationFontChange && !m_applying) {
+            m_applying = true;
+            applyFontRenderHints();
+            m_applying = false;
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    bool m_applying = false;
+};
 
 void showPanel(QWidget *panel)
 {
@@ -345,11 +368,12 @@ int main(int argc, char *argv[])
     }
     HostTheme::instance().probe();   // 内部已订阅 Appearance1 的 PropertiesChanged
     Theme::instance().refresh();
-    // 字体渲染提示要跟着 DTK 主题走（见 applyFontRenderHints）。主题在设置中心
-    // 被切走时重新判一次：改了渲染提示得让已经开着的窗口重画一遍。
+    // 字体渲染提示（见 applyFontRenderHints）：两种主题统一用灰度抗锯齿。
     applyFontRenderHints();
-    QObject::connect(&fg::Theme::instance(), &fg::Theme::changed, &app,
-                     [] { applyFontRenderHints(); });
+    // DTK 换主题时会重设应用字体，FontGuard 负责把那层灰度策略再压回去。
+    // 声明在 app 之后 → 析构在 app 之前，退出时不会留下指向已销毁 app 的过滤器。
+    FontGuard fontGuard;
+    app.installEventFilter(&fontGuard);
 
     auto &manager = DeviceManager::instance();
     manager.setSource(makeLocalSampleSource(&app));
@@ -677,10 +701,7 @@ static QWidget *buildFocusSheet()
     root->setSpacing(12);
 
     auto *title = new QLabel(QStringLiteral("焦点态样张 · 2px 主色"), sheet);
-    QFont tf = QApplication::font();
-    tf.setPixelSize(13);
-    tf.setWeight(QFont::DemiBold);
-    title->setFont(tf);
+    title->setFont(fg::uiFont(13, QFont::DemiBold));
     title->setStyleSheet(QStringLiteral("color:%1")
                              .arg(p.text1.name(QColor::HexRgb)));
     root->addWidget(title);
@@ -689,9 +710,7 @@ static QWidget *buildFocusSheet()
 
     auto nameLabel = [sheet, &p](const QString &text) {
         auto *lab = new QLabel(text, sheet);
-        QFont f = QApplication::font();
-        f.setPixelSize(11);
-        lab->setFont(f);
+        lab->setFont(fg::uiFont(11));
         lab->setStyleSheet(QStringLiteral("color:%1").arg(p.text3.name(QColor::HexRgb)));
         lab->setFixedWidth(96);
         lab->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -817,9 +836,7 @@ static QWidget *buildIconSheet()
             }
             col->addLayout(icons);
             auto *name = new QLabel(list.at(idx), cell);
-            QFont nf = QApplication::font();
-            nf.setPixelSize(10);
-            name->setFont(nf);
+            name->setFont(fg::uiFont(10));
             {
                 QColor c = p.text3;
                 name->setStyleSheet(QStringLiteral("color:%1")

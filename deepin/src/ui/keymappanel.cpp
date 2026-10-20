@@ -18,14 +18,6 @@ Q_LOGGING_CATEGORY(lcKeymap, "flowgrid.keymap")
 namespace fg {
 namespace {
 
-QFont uiFont(int px, int weight = QFont::Normal)
-{
-    QFont f = QApplication::font();
-    f.setPixelSize(px);
-    f.setWeight(static_cast<QFont::Weight>(weight));
-    return f;
-}
-
 QString css(const QColor &c)
 {
     return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);

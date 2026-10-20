@@ -30,7 +30,7 @@ QString colorHex(const QColor &c)
 
 QFont titleFont()
 {
-    QFont f = QApplication::font();
+    QFont f = baseFont();
     // 面板标题是这一屏最重的字：13px + DemiBold。原先 12px，和正文里那些
     // 13px 的组标题撞在一档，标题栏看着像「又一行说明文字」。
     f.setPixelSize(tokens::kFont13);

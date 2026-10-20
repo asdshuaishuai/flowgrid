@@ -43,14 +43,6 @@ void applyBoxStyle(QWidget *w, const QString &declarations)
 
 namespace {
 
-QFont uiFont(int px, int weight = QFont::Normal)
-{
-    QFont f = QApplication::font();
-    f.setPixelSize(px);
-    f.setWeight(static_cast<QFont::Weight>(weight));
-    return f;
-}
-
 // 与面板侧同一个坑：柔和底色靠 alpha 叠出来，HexRgb 会把它压成实色。
 QString cssColor(const QColor &c)
 {
@@ -110,6 +102,28 @@ void clearLayout(QLayout *layout)
         }
         delete item;
     }
+}
+
+QFont baseFont()
+{
+    QFont f = QApplication::font();
+    // Qt 6.8 起渲染提示挂在 QFont::StyleStrategy 的位标志上，整体覆盖写回，
+    // DTK 带来的默认策略在这里被顶掉。
+    //
+    // 两个位里真正管用的是 NoSubpixelAntialias：真桌面上并排量过——默认(0x1)
+    // 的字有橙蓝彩边，只加 PreferAntialias(0x80) 一样有彩边，只有带上
+    // NoSubpixelAntialias(0x800) 才干净。两个都留着。
+    f.setStyleStrategy(static_cast<QFont::StyleStrategy>(QFont::PreferAntialias
+                                                        | QFont::NoSubpixelAntialias));
+    return f;
+}
+
+QFont uiFont(int px, int weight)
+{
+    QFont f = baseFont();
+    f.setPixelSize(px);
+    f.setWeight(static_cast<QFont::Weight>(weight));
+    return f;
 }
 
 QFont uiMonoFont(int px, int weight)
@@ -635,8 +649,7 @@ void BarChart::paintEvent(QPaintEvent *)
         QPainter pt(this);
         pt.setRenderHint(QPainter::Antialiasing, true);
         pt.setPen(p.text3);
-        QFont f = QApplication::font();
-        f.setPixelSize(tokens::kFont11);
+        QFont f = uiFont(tokens::kFont11);
         pt.setFont(f);
         pt.drawText(rect(), Qt::AlignCenter, tr("等待采样"));
         return;

@@ -50,6 +50,26 @@ void applyBoxStyle(QWidget *w, const QString &declarations);
 // 先 hide 再 deleteLater，那段窗口期就没有了。
 void clearLayout(QLayout *layout);
 
+// 应用字体基底：界面上所有字体的**唯一**来源。
+//
+// 为什么不能各处直接 QApplication::font()：
+// DTK 在应用主题之后会把应用字体整个换掉（连 StyleStrategy 一起换），我们
+// 之前在 main.cpp 里 setFont 设的「关掉次像素」当场被冲掉，浅色主题下字的
+// 边缘重新长出橙蓝彩边。渲染策略指望不上应用字体带过来，就必须在每个派生
+// 字体上显式写死——baseFont() 就是干这件事的地方，uiFont() 走它。
+//
+// 关次像素的理由与主题无关：Qt 会不会用次像素渲染取决于它读到的**系统调色板**
+// 明暗，而这个界面的底色跟的是 DTK 主题（可跟系统，也可被设置中心切成另一种），
+// 两者对不上时每个字都带橙蓝彩边。灰度抗锯齿没有彩边，代价只是边缘略软一点。
+//
+// 真正管用的是 NoSubpixelAntialias：真桌面上并排量过四种策略，默认(0x1) 有
+// 彩边，只加 PreferAntialias(0x80) 一样有彩边，只有带上 NoSubpixelAntialias
+// 才是 0。两个都留着，但起作用的只有后者。
+QFont baseFont();
+
+// 界面字号：设计稿的 10/11/12/13/20/28px，统一按像素字号落地。
+QFont uiFont(int px, int weight = QFont::Normal);
+
 // 设计稿 tokens.css 的 --font-mono 在 deepin 档是 "Noto Sans Mono"。等宽用在
 // 剪贴板原文、延迟大数字、传输百分比、键位表格的标识符这几处，字号跨度大，
 // 收成一个函数免得每处各写一遍 QFontFamilies 的兜底顺序。
