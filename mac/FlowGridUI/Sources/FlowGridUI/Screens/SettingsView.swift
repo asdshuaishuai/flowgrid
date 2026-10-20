@@ -1,12 +1,20 @@
 import FlowGridCore
 import SwiftUI
 
-/// 设置（520px 浮板）。结构对应 settings.html；
+/// 设置（520px 浮板）。多 tab 组织（连接/输入/剪贴板/安全）；
 /// 编辑走本地草稿（取消丢弃 / 保存写回）。
 public struct SettingsView: View {
     @Bindable private var model: AppModel
     private let onClose: () -> Void
     @State private var draft: AppSettings
+    @State private var tab: SettingsTab = .connection
+
+    private enum SettingsTab: String, CaseIterable {
+        case connection = "连接"
+        case input = "输入"
+        case clipboard = "剪贴板"
+        case security = "安全"
+    }
 
     public init(model: AppModel, onClose: @escaping () -> Void) {
         self._model = Bindable(model)
@@ -17,11 +25,21 @@ public struct SettingsView: View {
     public var body: some View {
         FGPanel(title: "设置", onClose: onClose) {
             FGBanner("设置即时生效并同步到全部已配对设备，无需重启。", kind: .accent)
-            connectionList
-            inputList
-            clipboardList
-            securityList
-            FGBanner("关闭「新设备需确认」会让同一网络内的任意设备发起配对请求，仅在可信网络中临时使用。", kind: .warn)
+            FGSegmented(
+                options: SettingsTab.allCases.map { ($0, $0.rawValue) },
+                selection: $tab
+            )
+            switch tab {
+            case .connection:
+                connectionList
+            case .input:
+                inputList
+            case .clipboard:
+                clipboardList
+            case .security:
+                securityList
+                FGBanner("关闭「新设备需确认」会让同一网络内的任意设备发起配对请求，仅在可信网络中临时使用。", kind: .warn)
+            }
         } footer: {
             FGPanelFooter {
                 FGButton("恢复默认", kind: .ghost, small: true) {

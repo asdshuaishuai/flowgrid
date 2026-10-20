@@ -130,6 +130,7 @@ public struct FGTitlebar: View {
                 rightSlot
             }
         }
+        .background(WindowDragArea()) // 标题栏空白处拖动浮板（isMovableByWindowBackground 对 hosting 内容不生效）
         .padding(.horizontal, FGSpacing.s3)
         .frame(height: FGGeometry.titlebarHeight)
         .background(FGColor.surface2)

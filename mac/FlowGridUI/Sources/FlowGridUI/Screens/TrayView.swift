@@ -25,9 +25,8 @@ public struct TrayView: View {
                 togglesGroup
                 separator
                 navGroup
-                separator
-                quitGroup
             }
+            bottomBar
         }
         .frame(width: FGGeometry.trayWidth)
         .fgToastHost(model.toast, bottomInset: 20)
@@ -77,7 +76,7 @@ public struct TrayView: View {
                         .foregroundStyle(FGColor.text1)
                     Text(activeMetaText)
                         .font(.system(size: 11))
-                        .foregroundStyle(FGColor.text3)
+                        .foregroundStyle(FGColor.text2)
                 }
                 Spacer(minLength: 0)
                 FGBadge(model.captureEnabled ? "控制中" : "本机", kind: model.captureEnabled ? .ok : .neutral)
@@ -120,10 +119,10 @@ public struct TrayView: View {
                 }
                 if model.peerDevice?.isOnline != true {
                     HStack(spacing: FGSpacing.s1) {
-                        FGIcon("info", size: 12, color: FGColor.text3)
+                        FGIcon("info", size: 12, color: FGColor.text2)
                         Text("连接设备后可切换到对端")
                             .font(.system(size: 11))
-                            .foregroundStyle(FGColor.text3)
+                            .foregroundStyle(FGColor.text2)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -148,7 +147,7 @@ public struct TrayView: View {
                 Text("\(model.devices.count) 台")
                     .font(.system(size: 11))
                     .monospacedDigit()
-                    .foregroundStyle(FGColor.text3)
+                    .foregroundStyle(FGColor.text2)
             } action: {
                 model.openPanel(.connections)
             }
@@ -209,24 +208,27 @@ public struct TrayView: View {
             } action: {
                 model.openPanel(.keymap)
             }
-            TrayItem(icon: "settings", title: "设置") {
-                TrayKbd("⌘,")
-            } action: {
-                model.openPanel(.settings)
-            }
         }
         .padding(.vertical, FGSpacing.s1)
     }
 
-    private var quitGroup: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            TrayItem(icon: "power", title: "退出 FlowGrid", danger: true) {
-                TrayKbd("⌘Q")
-            } action: {
+    // MARK: - 底部工具条（右下角图标：设置 / 退出）
+
+    private var bottomBar: some View {
+        HStack(spacing: FGSpacing.s1) {
+            Spacer(minLength: 0)
+            TrayIconButton(icon: "settings", help: "设置（⌘,）") {
+                model.openPanel(.settings)
+            }
+            TrayIconButton(icon: "power", help: "退出 FlowGrid（⌘Q）", danger: true) {
                 model.quit()
             }
         }
-        .padding(.vertical, FGSpacing.s1)
+        .padding(.horizontal, FGSpacing.s3)
+        .padding(.vertical, 8)
+        .overlay(alignment: .top) {
+            Rectangle().fill(FGColor.hairline).frame(height: 1)
+        }
     }
 
     private var separator: some View {
@@ -251,7 +253,7 @@ private struct TrayLabel: View {
         Text(text)
             .font(.system(size: 11, weight: .semibold))
             .tracking(11 * 0.04)
-            .foregroundStyle(FGColor.text3)
+            .foregroundStyle(FGColor.text2)
             .padding(.vertical, 6)
             .padding(.horizontal, FGSpacing.s3)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -268,7 +270,7 @@ private struct TrayKbd: View {
     var body: some View {
         Text(text)
             .font(.system(size: 11))
-            .foregroundStyle(FGColor.text3)
+            .foregroundStyle(FGColor.text2)
     }
 }
 
@@ -290,7 +292,7 @@ private struct TrayItem<Trailing: View>: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: FGSpacing.s2) {
-                FGIcon(icon, size: 16, color: danger ? FGColor.dangerText : FGColor.text3)
+                FGIcon(icon, size: 16, color: danger ? FGColor.dangerText : FGColor.text2)
                 Text(title)
                     .font(.system(size: 12))
                     .foregroundStyle(danger ? FGColor.dangerText : FGColor.text1)
@@ -362,6 +364,38 @@ private struct TrayToggle: View {
     }
 }
 
+private struct TrayIconButton: View {
+    let icon: String
+    let help: String
+    let danger: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    init(icon: String, help: String, danger: Bool = false, action: @escaping () -> Void) {
+        self.icon = icon
+        self.help = help
+        self.danger = danger
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            FGIcon(icon, size: 15, color: danger ? FGColor.dangerText : FGColor.text2)
+                .frame(width: 28, height: 28)
+                .background(
+                    hovering
+                        ? (danger ? FGColor.dangerSoft : FGColor.surfaceHi)
+                        : Color.clear
+                )
+                .clipShape(RoundedRectangle(cornerRadius: FGRadius.control, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { hovering = $0 }
+        .animation(FGMotion.state, value: hovering)
+    }
+}
+
 private struct QuickSwitchButton: View {
     let device: Device
     let shortcut: String
@@ -380,7 +414,7 @@ private struct QuickSwitchButton: View {
                     .clipShape(RoundedRectangle(cornerRadius: FGRadius.control, style: .continuous))
                 Text("⌘\(shortcut)")
                     .font(.system(size: 11))
-                    .foregroundStyle(FGColor.text3)
+                    .foregroundStyle(FGColor.text2)
             }
             .frame(maxWidth: .infinity)
             .padding(6)
