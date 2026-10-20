@@ -97,7 +97,8 @@ FlowGrid/              app target：MenuBarExtra / PanelController / DependencyC
 - **会话层**：发送侧 `GoSession.setSink(true)` 后由 100ms tick 轮询出帧队列、打序列号/HMAC、
   经 TCP 长度前缀发送；接收侧解码后按 FrameType 分发到 ClipboardSession / FileReceiver /
   FileSender / 心跳 / 延迟 / HAL 注入。
-- **心跳与延迟**：双方每 2s 互发 HEARTBEAT 并立即回执；每 2s 发 LATENCY_PING，
+- **心跳与延迟**：双方每 2s 各自发送 HEARTBEAT（收帧仅喂狗、不回帧——双向角色下
+  「收到即回」会形成无限回显风暴，见 PROTOCOL-ISSUES P4）；每 2s 发 LATENCY_PING，
   对端原样回 T1，Host 侧 `LatencyMonitor` 计算单程延迟与 §9.2 分级。
 - **剪贴板**：推送取本机 `NSPasteboard` 文本（≤63,240 B）；接收按 MIME 入历史，
   「接收后自动写入本地」开启时才写回粘贴板。

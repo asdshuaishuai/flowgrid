@@ -400,6 +400,38 @@ final class DirectLinkTransportTests {
         #expect(reason.contains("校验"), "实际原因：\(reason)")
     }
 
+    // MARK: - 用例：心跳不回显（PROTOCOL-ISSUES P4 回归）
+
+    @Test func heartbeatsDoNotEcho() async throws {
+        let mock = try MockPeer(code: "1234")
+        mock.start()
+        try await waitFor("mock 监听端口就绪", timeout: 8) { (mock.port ?? 0) > 0 }
+
+        let manager = DirectLinkManager()
+        let sink = EventSink()
+        manager.onEvent = { event in sink.events.append(event) }
+        defer {
+            manager.disconnect()
+            mock.stop()
+        }
+
+        // mock 对每个收到的心跳都回一帧——最坏情形：旧实现「收到即回」会与此形成无限乒乓
+        mock.onFrame = { type, _, peer in
+            if type == FGFrameType.heartbeat { peer.sendFrame(FGFrameType.heartbeat, Data()) }
+        }
+
+        manager.connect(address: "127.0.0.1:\(mock.port!)", pairingCode: "1234")
+        try await waitFor("握手完成") { sink.status()?.isConnected == true }
+
+        // 连接保持 5s（>2 个心跳周期）：本侧只应发出 2s 周期的少量心跳，
+        // 不得因回帧产生风暴（修复前此处为数百帧）
+        let baseline = mock.count(of: FGFrameType.heartbeat)
+        try await Task.sleep(for: .seconds(5))
+        let sent = mock.count(of: FGFrameType.heartbeat) - baseline
+        #expect(sent <= 4, "5s 内发出心跳应 ≤4（2s 周期），实际 \(sent)——疑似回显风暴")
+        #expect(sink.status()?.isConnected == true, "连接应保持存活")
+    }
+
     // MARK: - 载荷构造（mock 侧，按 PROTOCOL §5.3/§7.4 手工编码）
 
     private func clipboardPayload(mime: String, data: Data) -> Data {

@@ -217,7 +217,9 @@ final class PeerSession {
 
         case FGFrameType.heartbeat:
             heartbeatTracker.receivedHeartbeat()
-            sendFrame(FGFrameType.heartbeat, Data()) // 立即回复（§9.1）
+            // 收帧仅喂狗、不回帧：双侧各自 2s 周期发送（§9.1）。
+            // 「收到即回」在双向角色（0x03）下会与对端形成无限回显风暴
+            // （PROTOCOL-ISSUES P4；Windows 端已按此方案实现）。
 
         case FGFrameType.latencyPing:
             sendFrame(FGFrameType.latencyPong, frame.payload) // 原样回 T1（§9.2）

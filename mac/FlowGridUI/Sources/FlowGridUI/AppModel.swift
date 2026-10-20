@@ -443,7 +443,7 @@ public final class AppModel {
         } else {
             pasteboard.clearContents()
             pasteboard.setString(item.preview, forType: .string)
-            lastRemoteText = nil
+            lastRemoteText = item.preview // 与图片路径一致：手动复制不回推对端
         }
         clipboardCurrent = item
         toast.show("已写入本地剪贴板", kind: .ok)
