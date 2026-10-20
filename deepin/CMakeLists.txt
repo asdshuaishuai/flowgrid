@@ -128,9 +128,9 @@ if(NOT EXISTS "${GO_PROTOCOL_A}")
 endif()
 
 # ── 目标 ──────────────────────────────────────────────────────────────
+# 不含 main.cpp：应用与自检两个目标共用同一批界面源码，自检带自己的 main。
+# 拆开是为了让自检能直接用真实控件、真实事件路径，而不是另写一套假界面。
 set(FLOWGRID_SOURCES
-    src/main.cpp
-
     src/core/designtokens.h
     src/core/settings.h           src/core/settings.cpp
     src/core/theme.h              src/core/theme.cpp
@@ -143,6 +143,7 @@ set(FLOWGRID_SOURCES
     src/ui/widgets.h              src/ui/widgets.cpp
     src/ui/panel.h                src/ui/panel.cpp
     src/ui/traypopup.h            src/ui/traypopup.cpp
+    src/ui/hotkeys.h              src/ui/hotkeys.cpp
     src/ui/connectionspanel.h     src/ui/connectionspanel.cpp
     src/ui/latencypanel.h         src/ui/latencypanel.cpp
     src/ui/settingspanel.h        src/ui/settingspanel.cpp
@@ -154,24 +155,44 @@ set(FLOWGRID_SOURCES
     resources/flowgrid.qrc
 )
 
-add_executable(flowgrid-deepin ${FLOWGRID_SOURCES} ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
+# 两个目标的公共配置：头文件路径、链接库、编译选项、宏。
+function(flowgrid_configure_target target)
+    target_include_directories(${target} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${GO_PROTOCOL_DIR}/cgo)
+    target_link_libraries(${target} PRIVATE
+        ${FLOWGRID_DTK_LIBS}
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::DBus
+        ${GO_PROTOCOL_A}
+        Threads::Threads)
+    target_compile_options(${target} PRIVATE -Wall -Wextra)
+    # 应用身份：深链接、任务栏与单实例都按这个 id。
+    target_compile_definitions(${target} PRIVATE
+        FLOWGRID_APP_ID="io.github.asdshuaishuai.flowgrid"
+        FLOWGRID_VERSION="${PROJECT_VERSION}")
+endfunction()
 
-target_include_directories(flowgrid-deepin PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${GO_PROTOCOL_DIR}/cgo)
+add_executable(flowgrid-deepin src/main.cpp ${FLOWGRID_SOURCES} ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
+flowgrid_configure_target(flowgrid-deepin)
 
-target_link_libraries(flowgrid-deepin PRIVATE
-    ${FLOWGRID_DTK_LIBS}
-    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::DBus
-    ${GO_PROTOCOL_A}
-    Threads::Threads)
+# 界面自检：无头可跑，验那些「截图看不出、按下去才知道」的部分（托盘快捷键、
+# Esc 收起浮层、焦点环真的画出来）。不进安装包，只是开发时跑。
+add_executable(flowgrid-uitest tests/uitest.cpp ${FLOWGRID_SOURCES} ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
+flowgrid_configure_target(flowgrid-uitest)
 
-target_compile_options(flowgrid-deepin PRIVATE -Wall -Wextra)
+# 自检要造「自发键事件」才能让 Qt 去查快捷键表，而 QEvent::setSpontaneous() 在
+# Qt 6 里是私有的——公开的转发头在 QtTest 模块里（纯头文件，不链接任何库）。
+# 没有 QtTest 开发包时自检降级为「只核对绑定，不核对派发」，并如实打印说明。
+find_package(Qt6 QUIET COMPONENTS Test)
+if(TARGET Qt6::Test)
+    target_link_libraries(flowgrid-uitest PRIVATE Qt6::Test)
+    target_compile_definitions(flowgrid-uitest PRIVATE FLOWGRID_HAVE_QTTEST=1)
+else()
+    message(STATUS "未找到 Qt6Test：界面自检将跳过快捷键派发检查（只核对绑定）")
+endif()
 
-# 应用身份：深链接、任务栏与单实例都按这个 id。
-target_compile_definitions(flowgrid-deepin PRIVATE
-    FLOWGRID_APP_ID="io.github.asdshuaishuai.flowgrid"
-    FLOWGRID_VERSION="${PROJECT_VERSION}")
+enable_testing()
+add_test(NAME uitest COMMAND flowgrid-uitest)
 
 install(TARGETS flowgrid-deepin RUNTIME DESTINATION bin)
 install(FILES resources/flowgrid-deepin.desktop

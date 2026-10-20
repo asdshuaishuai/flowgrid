@@ -11,10 +11,12 @@
 #include "core/designtokens.h"
 #include "core/devicemanager.h"
 #include "core/hosttheme.h"
+#include "core/settings.h"
 #include "core/theme.h"
 #include "ui/clipboardpanel.h"
 #include "ui/connectionspanel.h"
 #include "ui/filespanel.h"
+#include "ui/hotkeys.h"
 #include "ui/keymappanel.h"
 #include "ui/latencypanel.h"
 #include "ui/pairingpanel.h"
@@ -43,6 +45,7 @@
 #include <QMimeData>
 #include <QPixmap>
 #include <QScreen>
+#include <QShortcut>
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QVariantAnimation>
@@ -69,6 +72,8 @@ PairingPanel *g_pairing = nullptr;
 ClipboardPanel *g_clipboard = nullptr;
 FilesPanel *g_files = nullptr;
 QSystemTrayIcon *g_trayIcon = nullptr;
+// 托盘快捷键：唤起哪块浮板，它就挂在哪块浮板下面（见 ui/hotkeys.h 的说明）。
+TrayHotkeys *g_hotkeys = nullptr;
 
 // 托盘图标几何：托盘面板以图标为中心、上方留 8px。拿不到图标几何时
 // 退化到主屏右上角，保证功能不丢。
@@ -117,6 +122,11 @@ void showPanel(QWidget *panel)
     } else {
         placePopup(panel, anchorPoint());
         animatePopupIn(panel);
+    }
+    // 快捷键跟着当前这块浮板走：Qt 的快捷键表按窗口分，挂在别的窗口上，
+    // 在这里按就没反应。
+    if (g_hotkeys != nullptr) {
+        g_hotkeys->attachTo(panel);
     }
 }
 
@@ -320,12 +330,31 @@ int main(int argc, char *argv[])
         qCWarning(lcApp) << "系统托盘不可用，托盘浮层无法唤出";
     }
 
-    // 托盘底部那几行快捷键提示（Ctrl+1/2/3 切设备、Ctrl+K 键位映射、Ctrl+,
-    // 设置、Ctrl+Q 退出）是设计稿 ui.css .tray__kbd 的一部分，界面照设计留着；
-    // 但客户端一处全局快捷键都还没注册，这些提示目前按下去不会有反应。
-    // 全局热键要 X11 抓键或独立热键服务，不在 UI 范围内，先把边界写清楚，
-    // 别让「界面上写着 Ctrl+Q」被当成已经能用。
-    qCInfo(lcApp) << "托盘快捷键提示为设计稿占位，尚未注册全局热键（Ctrl+1/2/3、K、,、Q 均未生效）";
+    // ── 托盘快捷键 ─────────────────────────────────────────────────────
+    //
+    // 设计稿 ui.css .tray__kbd：托盘底部几行右侧摆着键位提示（Ctrl+1/2/3
+    // 切设备、Ctrl+K 键位映射、Ctrl+, 设置、Ctrl+Q 退出）。界面上写了就得
+    // 真按得动——先前这些只是静态文字，按下去毫无反应，等于界面在骗人。
+    // 绑定规则与边界见 ui/hotkeys.h。
+    TrayHotkeys hotkeys(
+        g_trayPopup,
+        [&manager](int slot) {
+            for (const Device &d : manager.devices()) {
+                if (d.hotkeyIndex == slot && d.online) {
+                    manager.setActive(d.id);
+                    return;
+                }
+            }
+            qCInfo(lcApp) << "没有分配给" << slot << "号热键的在线设备";
+        },
+        [] { showPanel(g_keymap); },
+        [] { showPanel(g_settings); },
+        // 退出走托盘那一行同一条路径，不另起一个 exit。
+        [] { g_trayPopup->quitRequested(); });
+    // 设置屏改了「切换热键」，这里跟着改，托盘上显示的键位提示也是同一处改的。
+    QObject::connect(&Settings::instance(), &Settings::changed, &app,
+                     [&hotkeys](const QString &) { hotkeys.rebind(); });
+    g_hotkeys = &hotkeys;
 
     // 截图模式：依次渲染八块界面并退出，供无头环境验收（文件传输屏多出一张
     // 轮询后的画面，理由见下面那张 shot）。

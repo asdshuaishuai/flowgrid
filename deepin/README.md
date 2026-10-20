@@ -56,6 +56,27 @@ export QT_PLUGIN_PATH="$HOME/.local/dd-sysroot/usr/lib/x86_64-linux-gnu/qt6/plug
 QT_QPA_PLATFORM=offscreen ./deepin/build/flowgrid-deepin --snapshot /tmp/fgshot/s
 ```
 
+### 界面自检
+
+快照看的是「长什么样」，看不出「按下去有没有反应」。界面自检走真实控件与真实
+事件路径，验后者：
+
+```bash
+./deepin/build/flowgrid-uitest     # 或：cd deepin/build && ctest --output-on-failure
+```
+
+覆盖：托盘快捷键（Ctrl+K / Ctrl+, / Ctrl+Q / Ctrl+1..3）按下去真的触发、
+托盘上显示的键位与实际注册的键位是同一套、裸按键不误触发、Esc 真的收起浮层、
+焦点环真的画出来了。
+
+两个前提，缺一不可：
+
+- **键事件必须标成「自发」**（`QEvent::setSpontaneous()`）。Qt 6 里这个函数是私有的，
+  公开的转发头 `QtTest/qtestspontaneevent.h` 在 QtTest 模块里（纯头文件，不链接库）。
+  没有 QtTest 开发包时自检降级为「只核对绑定、不核对派发」，并如实打印跳过原因。
+- **offscreen 平台不会自动激活窗口**：得手动 `QApplication::setActiveWindow()` +
+  `setFocus()`，否则没有焦点部件，Qt 根本不会去查快捷键表。
+
 ## 安装
 
 ```bash
@@ -97,7 +118,9 @@ src/ui/      浮板与自绘组件
   widgets.*       StatusDot / Badge / ToggleSwitch / LatencyChip / ProgressTrack /
                  BarChart / FgButton / IconButton / DeviceCard / NavRow / ListRow
   panel.*         Panel 基类 + 浮板定位/入场动效
+  hotkeys.*       托盘快捷键：绑在当前浮板上，修饰键跟着设置走
   *panel.*        8 块浮板
+tests/       界面自检（真实控件 + 真实事件路径）
 resources/   图标、desktop 文件、DConfig meta（flowgrid-deepin.json）
 ```
 
@@ -137,6 +160,24 @@ resources/   图标、desktop 文件、DConfig meta（flowgrid-deepin.json）
   无头截图里恒为假，焦点环就永远审不到。`focusIn/focusOut` 是控件自己收到的事件。
   配套的焦点样张快照是 `--snapshot` 产出的 `s-focus.png`。
 
+## 托盘快捷键
+
+设计稿 `ui.css .tray__kbd` 在托盘浮层底部摆着键位提示（Ctrl+1/2/3 切设备、
+Ctrl+K 键位映射、Ctrl+, 设置、Ctrl+Q 退出）。这些提示先前只是静态文字，按下去
+毫无反应——界面写了却按不动，等于骗人。现在是真的：
+
+- 修饰键跟着设置屏的「切换热键」走（1=Ctrl / 2=Alt），**托盘上显示的键位提示和
+  实际注册的键位是同一套**：两边都取 `core/settings.h` 的 `switchModifierName`。
+- **快捷键挂在当前唤出的那块浮板下面**。Qt 的快捷键表是按窗口分的：`QShortcut`
+  只有挂在某个部件上，才会出现在那个窗口所属的快捷键表里；挂在 `QObject`
+  （比如 application）上则哪里都查不到，按了没反应。浮板是彼此独立的顶层窗口，
+  所以 `showPanel()` 每次都把快捷键挪到新浮板下面（`TrayHotkeys::attachTo`）。
+- 生效范围是「FlowGrid 的任一浮板开着的时候」。要做到**任何时候**都能按，需要全局
+  热键：X11 抓键在 Wayland 下只对 XWayland 客户端有效，真正的路子是
+  `org.freedesktop.portal.GlobalShortcuts`（要 DBus 会话 + 用户在系统弹窗里二次
+  确认），超出 UI 范围，此处不铺。浮板全收起时提示也不在屏幕上，界面上不会出现
+  按不动的键位。
+
 ## 当前边界（尚未接通的部分）
 
 这些是**有意留白**，不是遗漏。传输层（L3：DTLS / UDP / mDNS / BLE）完全未实现，
@@ -158,6 +199,7 @@ resources/   图标、desktop 文件、DConfig meta（flowgrid-deepin.json）
    会话跑过。
 2. **托盘唤出**：offscreen 下 `QSystemTrayIcon::isSystemTrayAvailable()` 为 false。
    需在真实桌面点击托盘图标确认 300px 浮层能弹出。
-3. **键盘链路**：offscreen 下浮板拿不到真实焦点，Esc 关闭与 Tab 焦点环只做过
-   逻辑与样张层面的验证（`s-focus.png`）。需在真实桌面确认：浮板内 Tab 能走遍
-   控件、Esc 能收起浮板、Tab 走到某个控件时焦点环清晰可见。
+3. **键盘链路在真实桌面上的观感**：Esc 关闭、Tab 焦点环、托盘快捷键都已在无头
+   环境用真实事件路径验过（`flowgrid-uitest` + `s-focus.png`），但真实 DDE 会话下
+   还要看一遍：浮板内 Tab 能走遍控件、Esc 能收起浮板、焦点环在真桌面底色上够清楚、
+   Ctrl+K 这些快捷键按下去确实换板。
