@@ -130,10 +130,21 @@ clean_theme_dir() {
     find "${d}" -maxdepth 1 -type f -name '*.png' -delete
 }
 
+# 数一遍这轮落了几张 PNG：少落就是没成功，不能像以前那样「命令返回 0 就算过」。
+# 八屏 + 两张全高 + hover + icons + focus + toast + files-polled，实际十余张。
+check_png_count() {
+    local d="$1" label="$2"
+    local count
+    count=$(find "${d}" -maxdepth 1 -type f -name '*.png' | wc -l)
+    if [ "${count}" -lt 8 ]; then
+        die "${label}快照只落了 ${count} 张 PNG（预期至少 8 张），快照没成功。看上面的日志。"
+    fi
+    ok "${label} 落盘 ${count} 张 PNG"
+}
+
 snapshot() {
     local theme="$1" dir="$2"
     mkdir -p "${dir}"
-    local count=0
     if [ "${theme}" = "both" ]; then
         clean_theme_dir "${dir}/light"
         clean_theme_dir "${dir}/dark"
@@ -143,21 +154,19 @@ snapshot() {
             >"${dir}/light.log" 2>&1
         QT_QPA_PLATFORM=offscreen "${BUILD_DIR}/${BIN_NAME}" --snapshot "${dir}/dark/s" --theme dark \
             >"${dir}/dark.log" 2>&1
-        count=$(find "${dir}" -name '*.png' | wc -l)
         ok "浅色快照：${dir}/light/    日志：${dir}/light.log"
         ok "深色快照：${dir}/dark/    日志：${dir}/dark.log"
+        # 数 PNG 要**分主题数**：只跑一个主题时，目录里可能还留着另一个主题的旧图，
+        # 整树一起数会把上次的算进来，报出来的数字比这轮实际落的还多。
+        check_png_count "${dir}/light" "浅色"
+        check_png_count "${dir}/dark" "深色"
     else
         clean_theme_dir "${dir}/${theme}"
         QT_QPA_PLATFORM=offscreen "${BUILD_DIR}/${BIN_NAME}" --snapshot "${dir}/${theme}/s" --theme "${theme}" \
             >"${dir}/${theme}.log" 2>&1
-        count=$(find "${dir}" -name '*.png' | wc -l)
         ok "${theme} 快照：${dir}/${theme}/    日志：${dir}/${theme}.log"
+        check_png_count "${dir}/${theme}" "${theme}"
     fi
-    # 八屏 + 两张全高 + hover + icons + focus + toast + files-polled，明暗各十余张。
-    if [ "${count}" -lt 8 ]; then
-        die "只落了 ${count} 张 PNG（预期至少 8 张），快照没成功。看上面的日志。"
-    fi
-    ok "落盘 ${count} 张 PNG"
 }
 
 # ── 3. 各模式 ──────────────────────────────────────────────────────────
