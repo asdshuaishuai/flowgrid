@@ -41,6 +41,7 @@
 #include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFont>
 #include <QFocusEvent>
 #include <QLoggingCategory>
 #include <QMimeData>
@@ -95,6 +96,32 @@ QPoint anchorPoint()
     }
     const QRect avail = screen->availableGeometry();
     return QPoint(avail.right() - 32, avail.bottom() - 32);
+}
+
+// 深色主题下关掉 LCD 次像素抗锯齿。
+//
+// Qt 会不会用次像素渲染，取决于它读到的**系统调色板**明暗；而这个应用的界面
+// 底色跟的是 DTK 主题（可以跟系统明暗走，也可以在设置中心被切成另一种），
+// 两者不一定对得上。对不上时，深色界面上每个字的边缘都会带上橙蓝彩边——
+// 实测浮板标题「设备与连接」四个字所在的 100×22 区域里有 212 个高饱和度
+// 彩色像素，在深底上非常扎眼，一眼看去像文字发虚、像渲染坏了。
+//
+// 灰度抗锯齿没有彩边，代价只是边缘略软一点；深色底上这笔买卖划算。浅色
+// 主题下彩边本来就看不出来（浅底黑字），保留次像素渲染，那边字更清楚。
+//
+// Qt 6.8 起渲染提示挂在 QFont::StyleStrategy 的位标志上：PreferAntialias 是
+// 灰度，NoSubpixelAntialias 明确关掉次像素。界面上的字都是从
+// QApplication::font() 派生的（见 uiFont），改应用默认字体就一次改到位。
+static void applyFontRenderHints()
+{
+    QFont f = QApplication::font();
+    if (fg::Theme::instance().isDark()) {
+        f.setStyleStrategy(static_cast<QFont::StyleStrategy>(QFont::PreferAntialias
+                                                            | QFont::NoSubpixelAntialias));
+    } else {
+        f.setStyleStrategy(QFont::PreferDefault);
+    }
+    QApplication::setFont(f);
 }
 
 void showPanel(QWidget *panel)
@@ -318,6 +345,11 @@ int main(int argc, char *argv[])
     }
     HostTheme::instance().probe();   // 内部已订阅 Appearance1 的 PropertiesChanged
     Theme::instance().refresh();
+    // 字体渲染提示要跟着 DTK 主题走（见 applyFontRenderHints）。主题在设置中心
+    // 被切走时重新判一次：改了渲染提示得让已经开着的窗口重画一遍。
+    applyFontRenderHints();
+    QObject::connect(&fg::Theme::instance(), &fg::Theme::changed, &app,
+                     [] { applyFontRenderHints(); });
 
     auto &manager = DeviceManager::instance();
     manager.setSource(makeLocalSampleSource(&app));
