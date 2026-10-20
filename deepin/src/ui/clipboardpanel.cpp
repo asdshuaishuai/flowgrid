@@ -1,5 +1,6 @@
 #include "clipboardpanel.h"
 #include "core/designtokens.h"
+#include "core/hostinfo.h"
 #include "core/settings.h"
 #include "core/theme.h"
 #include "icons.h"
@@ -8,11 +9,15 @@
 #include <QLoggingCategory>
 
 #include <QApplication>
+#include <QClipboard>
+#include <QDateTime>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMimeData>
 #include <QStringList>
 #include <QTextLayout>
+#include <QTimer>
 #include <QVBoxLayout>
 
 Q_LOGGING_CATEGORY(lcClipboard, "flowgrid.clipboard")
@@ -96,6 +101,16 @@ QString agoText(int secs)
         return QStringLiteral("%1m").arg(secs / 60);
     }
     return QStringLiteral("%1h").arg(secs / 3600);
+}
+
+// 条目年龄：从产生时刻算，不是从入库时抄下来的那个数。
+// 没有时间戳的（协议侧入站的旧条目）退回 agoSecs。
+int ageSecsOf(const ClipEntry &e)
+{
+    if (e.atMs <= 0) {
+        return e.agoSecs;
+    }
+    return static_cast<int>((QDateTime::currentMSecsSinceEpoch() - e.atMs) / 1000);
 }
 
 QString humanSize(qint64 bytes)
@@ -203,6 +218,102 @@ ClipboardPanel::ClipboardPanel(QWidget *parent) : Panel(tr("剪贴板"), parent)
     QObject::connect(&Theme::instance(), &Theme::changed, this, &ClipboardPanel::refreshSyncState);
     refreshSyncState();
     reloadHistory();
+
+    // 本机剪贴板：用户复制一次，这里就多一条**真实**记录。
+    // dataChanged 在「写入本地」那条路径上也会触发（那正是我们要的：写入后
+    // 历史里应该出现这条），去重靠下面 captureLocalClipboard 里的内容比对。
+    if (QClipboard *clip = QApplication::clipboard()) {
+        connect(clip, &QClipboard::dataChanged, this, &ClipboardPanel::captureLocalClipboard);
+    }
+    captureLocalClipboard();
+
+    // 「12s」这类时间标记是算出来的，得有人按秒去重算。整块历史重建一次
+    // 成本不高（列表上限 50 条），但只在浮板可见时做，藏着的时候不浪费。
+    auto *ageTimer = new QTimer(this);
+    ageTimer->setInterval(5000);
+    connect(ageTimer, &QTimer::timeout, this, [this] {
+        if (isVisible() && !history_.isEmpty()) {
+            rebuildHistory();
+        }
+    });
+    ageTimer->start();
+}
+
+void ClipboardPanel::captureLocalClipboard()
+{
+    QClipboard *clip = QApplication::clipboard();
+    if (clip == nullptr) {
+        return;
+    }
+    const QMimeData *mime = clip->mimeData();
+    if (mime == nullptr) {
+        return;
+    }
+
+    // MIME 的挑法：优先纯文本——富文本剪贴板里同时有 text/plain 与
+    // text/html，存纯文本那一路，用户看到的就是他复制的东西本身；
+    // 其次是链接（text/uri-list），再是 html；都没有才退到任意一种格式。
+    // 「任意一种」也只取一个：一次复制在历史里只算一条。
+    const QStringList formats = mime->formats();
+    QString type;
+    for (const QString &candidate : {QStringLiteral("text/plain"), QStringLiteral("text/uri-list"),
+                                     QStringLiteral("text/html")}) {
+        if (formats.contains(candidate)) {
+            type = candidate;
+            break;
+        }
+    }
+    if (type.isEmpty()) {
+        for (const QString &f : formats) {
+            if (!mime->data(f).isEmpty()) {
+                type = f;
+                break;
+            }
+        }
+    }
+    if (type.isEmpty()) {
+        return;
+    }
+
+    const QByteArray raw = mime->data(type);
+    if (raw.isEmpty()) {
+        return;
+    }
+
+    // 同一条内容不重复记。剪贴板一次复制常连发好几个 dataChanged
+    // （应用逐段设置 mime），不去重的话历史里会连着出现三条一样的。
+    if (!history_.isEmpty() && history_.first().raw == raw && history_.first().mime == type) {
+        return;
+    }
+
+    ClipEntry e;
+    e.mime = type;
+    e.raw = raw;
+    e.kind = kindOf(type, raw);
+    e.source = hostinfo::hostName();   // 真实来源：这台机器
+    e.atMs = QDateTime::currentMSecsSinceEpoch();
+    e.agoSecs = 0;
+    e.oversize = raw.size() > kClipSegLimit;
+    if (e.oversize) {
+        // 超限的条目推不出去，也不该占着「当前剪贴板」的位置——顶部预览
+        // 取的就是 history_.first()。
+        qCInfo(lcClipboard) << "本机剪贴板条目超单条上限" << raw.size()
+                            << QStringLiteral("B，不进历史");
+        return;
+    }
+    // 纯文本给原文；别的类型给「类型 + 体积」，总比一句假摘要强。
+    if (type == QLatin1String("text/plain") || type == QLatin1String("text/html")
+        || type == QLatin1String("text/uri-list")) {
+        e.text = oneLine(QString::fromUtf8(raw));
+    } else {
+        e.text = tr("%1 · %2").arg(type, humanSize(raw.size()));
+    }
+
+    // 历史的不变量是 history_[0] 最新（顶部预览取 first()，列表也按原序渲染）。
+    history_.prepend(e);
+    trimHistory();
+    rebuildHistory();
+    Q_EMIT transfersChanged();
 }
 
 // ── 当前剪贴板（设计稿 .preview：head / body / foot 三段）────────────────
@@ -508,6 +619,7 @@ void ClipboardPanel::reloadHistory()
         e.kind = kindOf(mime, data);
         e.source = tr("对端");
         e.agoSecs = 0;
+        e.atMs = QDateTime::currentMSecsSinceEpoch();
         e.oversize = data.size() > kClipSegLimit;
         if (e.oversize) {
             // 超限的条目协议侧已经不会送进来，这里再挡一道只是兜底；
@@ -539,41 +651,6 @@ void ClipboardPanel::trimHistory()
         // 队尾是最旧的（见 reloadHistory 的不变量），要淘汰的是它。
         history_.removeLast();
     }
-}
-
-void ClipboardPanel::seedForSnapshot()
-{
-    struct Seed {
-        const char *mime;
-        const char *text;
-        const char *source;
-        int ago;
-    };
-    // 条目取自 clipboard.html 的 .list，使截图与设计稿可以逐行对照。
-    const Seed seeds[] = {
-        {"text/plain", "cargo build --release --target x86_64-unknown-linux-gnu", "MacBook Pro", 12},
-        {"text/html", "fn handle_frame(buf: &[u8]) -> Result<()>", "Windows 11 Desktop", 60},
-        {"text/uri-list", "https://example.internal/review/4821", "Linux Workstation", 240},
-        {"image/png", "screenshot-2026-10-16.png", "Windows 11 Desktop", 540},
-    };
-    // 种子按显示顺序（最新在前）列出来，而历史的不变量是 history_[0] 最新——
-    // 所以从尾往头 prepend，铺出来的顺序和 reloadHistory 收到的那批一致。
-    for (int i = int(sizeof(seeds) / sizeof(seeds[0])) - 1; i >= 0; --i) {
-        const Seed &s = seeds[i];
-        ClipEntry e;
-        e.mime = QString::fromLatin1(s.mime);
-        e.raw = QByteArray(s.text);
-        // fromLatin1 只对 ASCII 安全：真收到中文条目时这里是乱码（截图里只要
-        // 有一条中文就藏不住）。剪贴板载荷按 UTF-8 走，和 send() 同一套编码。
-        e.text = QString::fromUtf8(s.text);
-        e.kind = kindOf(e.mime, e.raw);
-        e.source = QString::fromUtf8(s.source);
-        e.agoSecs = s.ago;
-        history_.prepend(e);
-    }
-    trimHistory();
-    rebuildHistory();
-    Q_EMIT transfersChanged();
 }
 
 void ClipboardPanel::setPreviewText(const QString &text)
@@ -685,8 +762,12 @@ void ClipboardPanel::rebuildHistory()
     if (shown.isEmpty()) {
         rowsLayout_->addWidget(
             history_.isEmpty()
-                ? new EmptyState(QStringLiteral("clipboard"), tr("还没有同步记录"),
-                                 tr("收到别的设备的剪贴板后会自动出现在这里"), host)
+                ? new EmptyState(QStringLiteral("clipboard"), tr("还没有剪贴板记录"),
+                                 // 这一屏现在也记**本机**复制的东西了（见
+                                 // captureLocalClipboard），所以空态要照实说：
+                                 // 复制一次就会出现在这里，不用等别的设备。
+                                 tr("本机复制一次就会出现在这里；收到别的设备的剪贴板后也会自动记下"),
+                                 host)
                 : new EmptyState(QStringLiteral("search"), tr("没有匹配的条目"),
                                  tr("换个类型或关键字再试试"), host));
         return;
@@ -697,7 +778,7 @@ void ClipboardPanel::rebuildHistory()
         auto *tl = new QHBoxLayout(trailing);
         tl->setContentsMargins(0, 0, 0, 0);
         tl->setSpacing(tokens::kS1);
-        auto *ago = new QLabel(agoText(e.agoSecs), trailing);
+        auto *ago = new QLabel(agoText(ageSecsOf(e)), trailing);
         ago->setFont(uiFont(tokens::kFont11));
         ago->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
         tl->addWidget(ago, 0, Qt::AlignVCenter);

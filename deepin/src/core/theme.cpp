@@ -100,7 +100,9 @@ Theme &Theme::instance()
 
 Quality Theme::qualityOf(double ms, bool online)
 {
-    if (!online) {
+    // ms < 0 = 没有读数（还没测到 / 设备离线）。这不是「良好」——
+    // 把「没测到」显示成绿色，等于告诉用户链路一切正常。
+    if (!online || ms < 0.0) {
         return Quality::Idle;
     }
     // 阈值取自设计稿 latency.html：告警阈值 20ms，且 3.1ms 仍属 good、

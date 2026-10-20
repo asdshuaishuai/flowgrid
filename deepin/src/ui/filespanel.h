@@ -96,11 +96,11 @@ public:
     void pollSessions();
 
     // 送出一个本地文件；走 Go 的 FileSender，UI 不碰帧结构。
+    //
+    // 没有已连接的对端时**不建记录**：早先这里不看对端，直接建一条「进行中」
+    // 再提示「已开始发送」——文件哪儿也没去，记录永远卡在「进行中」，托盘徽标
+    // 也就永远显示「1 项进行中」。现在如实提示「没有已连接的对端」。
     int offerFile(const QString &path);
-
-    // 仅 --snapshot 用。理由同 ClipboardPanel::seedForSnapshot()：无头环境没有
-    // 对端设备，.xfer 的进度条/速率/剩余、三种失败徽章一条都跑不到。
-    void seedForSnapshot();
 
     // 托盘徽标用的进行中路数（只读）。
     int activeCount() const;

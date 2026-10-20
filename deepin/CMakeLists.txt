@@ -135,6 +135,8 @@ set(FLOWGRID_SOURCES
     src/core/settings.h           src/core/settings.cpp
     src/core/theme.h              src/core/theme.cpp
     src/core/hosttheme.h          src/core/hosttheme.cpp
+    src/core/hostinfo.h           src/core/hostinfo.cpp
+    src/core/linkprobe.h          src/core/linkprobe.cpp
     src/core/protocolapi.h        src/core/protocolapi.cpp
     src/core/devicemanager.h      src/core/devicemanager.cpp
 
@@ -181,6 +183,16 @@ set(FLOWGRID_DCONFIG_META_ROOT "/usr/share/dsg" CACHE STRING
     "DConfig meta 根目录（dconfig 守护进程 DSG_DATA_DIRS 里的一个条目）")
 set(FLOWGRID_DCONFIG_META_DIR "${FLOWGRID_DCONFIG_META_ROOT}/configs/${FLOWGRID_DCONFIG_APPID}")
 
+# 应用图标的安装目录。install() 与运行期查找（main.cpp 的 installedIconPaths）
+# 用的是同一个值——写成两处字面量，早晚会对不上，而症状是「图标明明装好了，
+# 托盘里却没有」，属于最难查的一类。
+#
+# 必须是**绝对路径**：DDE 的 dock 画托盘图标是按 SNI 的 IconName 去它自己的
+# 图标主题里查的，查不到就不画、也不回退 IconPixmap。所以托盘图标最终给的是
+# 这个目录下的**文件绝对路径**，而不是主题名「flowgrid」。
+set(FLOWGRID_ICON_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/share/icons/hicolor/scalable/apps"
+    CACHE STRING "应用图标安装目录（install() 与运行期查找共用）")
+
 # 两个目标的公共配置：头文件路径、链接库、编译选项、宏。
 function(flowgrid_configure_target target)
     target_include_directories(${target} PRIVATE
@@ -197,7 +209,8 @@ function(flowgrid_configure_target target)
         FLOWGRID_APP_ID="io.github.asdshuaishuai.flowgrid"
         FLOWGRID_VERSION="${PROJECT_VERSION}"
         FLOWGRID_DCONFIG_APPID="${FLOWGRID_DCONFIG_APPID}"
-        FLOWGRID_DCONFIG_NAME="${FLOWGRID_DCONFIG_NAME}")
+        FLOWGRID_DCONFIG_NAME="${FLOWGRID_DCONFIG_NAME}"
+        FLOWGRID_INSTALL_ICON_DIR="${FLOWGRID_ICON_INSTALL_DIR}")
 endfunction()
 
 add_executable(flowgrid-deepin src/main.cpp ${FLOWGRID_SOURCES} ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
@@ -242,8 +255,7 @@ install(FILES resources/flowgrid-deepin.desktop
 install(FILES resources/flowgrid-deepin-autostart.desktop
         DESTINATION /etc/xdg/autostart)
 install(FILES resources/icons/flowgrid.svg
-        DESTINATION share/icons/hicolor/scalable/apps)
-
+        DESTINATION ${FLOWGRID_ICON_INSTALL_DIR})
 # DConfig（DSG）按固定约定定位 meta 文件：
 #     <FLOWGRID_DCONFIG_META_ROOT>/configs/<appId>/<name>.json
 # 根目录默认 /usr/share/dsg，是 DTK 自己给的（不是猜的）：

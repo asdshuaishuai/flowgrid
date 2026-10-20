@@ -8,6 +8,7 @@
 #define FLOWGRID_ICONS_H
 
 #include <QIcon>
+#include <QPixmap>
 #include <QString>
 #include <QStringList>
 
@@ -23,6 +24,16 @@ bool exists(const QString &name);
 
 // 全部图标名，按字母序。给 --snapshot 的图标总览图用。
 QStringList names();
+
+// 应用徽标（托盘 / 窗口图标）。
+//
+// 形状与颜色都取自内嵌的 resources/icons/flowgrid.svg——那是唯一真相源，
+// 改了 SVG 这里自动跟着变，不会出现「装出去的图标和托盘里的不是一枚」。
+// 用本项目自己的 SVG 子集渲染器画，不依赖 QtSvg 插件（那台机器上 Qt6Svg
+// 只有运行时库、没有开发包，QSvgRenderer 根本用不了）。
+//
+// 返回空位图表示内嵌资源读不到或画不出来，调用方据此走下一档候选。
+QPixmap logoPixmap(int size);
 
 } // namespace fg::icons
 

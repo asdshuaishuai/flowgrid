@@ -159,10 +159,10 @@ ConnectionsPanel::ConnectionsPanel(QWidget *parent) : Panel(tr("设备与连接"
     connect(&manager, &DeviceManager::sampled, this, &ConnectionsPanel::onSampled);
 
     refresh();
-    // 折叠区默认展开，而第一次真实采样要等到下一个周期才到：不做铺底的话
-    // 「网络延迟」一打开就是一块 70px 的空白。prime() 只在构造时调一次，
-    // 之后一律由 onSampled 推真实样本。
-    chart_->prime(manager.activeLatencyMs());
+    // 图表**不从假数据起手**。早先这里调 prime()，用当前读数加一段随机抖动
+    // 铺满 12 根柱子，好让折叠区一展开不是空白——可那 12 根柱子是从没量过
+    // 的数，整片图表都是假的。现在它从空开始，随真实采样一根根长出来
+    // （每 2 秒一根，24 秒填满）；空的时候画布上写「等待采样」。
 }
 
 QWidget *ConnectionsPanel::buildDeviceList()
@@ -760,10 +760,25 @@ void ConnectionsPanel::refresh()
     auto &manager = DeviceManager::instance();
     const Device *active = manager.activeDevice();
     const bool online = active != nullptr && active->online;
+    // 对端数：能连上的、且不是本机的设备。传输层没落地时这个数是 0。
+    int peers = 0;
+    for (const Device &d : manager.devices()) {
+        if (d.online && !d.isLocal) {
+            ++peers;
+        }
+    }
 
     if (statusLabel_ != nullptr) {
-        statusLabel_->setText(active != nullptr ? tr("已连接 %1").arg(active->name)
-                                                : tr("未连接"));
+        // 这一句必须说真话。早先写的是「已连接 <设备名>」——设备名是设计稿里
+        // 那台 fake 的「deepin 工作站」，于是这一屏顶上一上来就宣称连着一台
+        // 不存在的机器。现在：本机在线但没有对端，就写「本机在线 · 无对端」。
+        if (peers > 0) {
+            statusLabel_->setText(tr("已连接 %1").arg(active != nullptr ? active->name : ""));
+        } else if (online) {
+            statusLabel_->setText(tr("本机在线 · 无对端"));
+        } else {
+            statusLabel_->setText(tr("未联网"));
+        }
         const StatusColor sc = Theme::instance().color(
             Theme::qualityOf(manager.activeLatencyMs(), online));
         statusLabel_->setStyleSheet(QStringLiteral("color:%1").arg(css(sc.text)));

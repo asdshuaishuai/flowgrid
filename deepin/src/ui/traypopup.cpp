@@ -53,6 +53,13 @@ QString deviceHotkeyLabel(int index)
     return QStringLiteral("%1+%2").arg(switchModifier()).arg(index);
 }
 
+// 「修饰键 + 键」的纯文本键位串，给 tooltip 用——图标按钮没有行尾位置，
+// 快捷键提示只能写进 tooltip。
+QString kbdText(const QString &key)
+{
+    return QStringLiteral("%1+%2").arg(switchModifier()).arg(key);
+}
+
 // 快速切换按钮：设计稿里它就是一个「图标方块 + 快捷键」的可点块。
 // 做成类而不是裸 QWidget，是因为 QWidget::mouseReleaseEvent 是 protected，
 // 没法用 connect 直接挂——与其用事件过滤器绕，不如把点击语义收进类型里。
@@ -248,23 +255,17 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
     }
     root_->addWidget(buildSeparator());
 
-    // ── 底部入口 + 退出 ──
+    // ── 底部入口 ──
+    //
+    // 「设置」和「退出 FlowGrid」已经挪到浮板右上角做成图标按钮（见 buildHead），
+    // 底部只留「键位映射」这一行——它是功能入口，不是开关，留在列表里更合适。
     {
-        // 设计稿这两行右侧是 .tray__kbd 的快捷键提示（Ctrl K / Ctrl ,）。
+        // 设计稿这行右侧是 .tray__kbd 的快捷键提示（Ctrl K）。
         QList<QWidget *> rows{
             buildNavRow(QStringLiteral("keyboard"), tr("键位映射"), kbdHint("K"),
                         QStringLiteral("keymap")),
-            buildNavRow(QStringLiteral("settings"), tr("设置"), kbdHint(","),
-                        QStringLiteral("settings")),
         };
         root_->addWidget(buildGroup(QString(), rows));
-        root_->addWidget(buildSeparator());
-
-        // 设计稿这行右侧也有 .tray__kbd（Ctrl Q），早先传了 nullptr 空着。
-        auto *quit = buildNavRow(QStringLiteral("power"), tr("退出 FlowGrid"), kbdHint("Q"),
-                                 QStringLiteral("quit"));
-        qobject_cast<NavRow *>(quit)->setDanger(true);
-        root_->addWidget(buildGroup(QString(), {quit}));
     }
 
     // 设置屏改动（或「恢复默认」）后，托盘的快捷开关要跟着变。
@@ -315,6 +316,23 @@ QWidget *TrayPopup::buildHead()
     pill->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
                         .arg(css(p.ok.soft), QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
     hl->addWidget(pill);
+
+    // 右上角：设置 / 退出 两个图标按钮。
+    //
+    // 原先是底部两行带文字的导航行（「设置」「退出 FlowGrid」），占掉两行高度、
+    // 把「键位映射」挤到很下面，而这两个动作其实只是「看一眼就点」的事。改成
+    // 右上角的图标按钮后，底部只留「键位映射」一行。
+    //
+    // 快捷键提示从行尾的 .tray__kbd 挪进 tooltip——文字行没了，提示不能跟着
+    // 一起消失，tooltip 里写全（含修饰键，跟着设置屏的「切换热键」走）。
+    auto *settingsBtn = new IconButton(QStringLiteral("settings"),
+                                       tr("设置 (%1)").arg(kbdText(",")), head);
+    connect(settingsBtn, &IconButton::clicked, this, [this] { Q_EMIT openSettings(); });
+    auto *quitBtn = new IconButton(QStringLiteral("power"),
+                                    tr("退出 FlowGrid (%1)").arg(kbdText("Q")), head);
+    connect(quitBtn, &IconButton::clicked, this, [this] { Q_EMIT quitRequested(); });
+    hl->addWidget(settingsBtn);
+    hl->addWidget(quitBtn);
     return head;
 }
 
@@ -354,15 +372,13 @@ QWidget *TrayPopup::buildNavRow(const QString &iconName, const QString &label, Q
             Q_EMIT openPairing();
         } else if (kind == QLatin1String("keymap")) {
             Q_EMIT openKeymap();
-        } else if (kind == QLatin1String("settings")) {
-            Q_EMIT openSettings();
         } else if (kind == QLatin1String("clipboard")) {
             Q_EMIT openClipboard();
         } else if (kind == QLatin1String("files")) {
             Q_EMIT openFiles();
-        } else if (kind == QLatin1String("quit")) {
-            Q_EMIT quitRequested();
         }
+        // 「设置」和「退出」没有这一支了：它们现在是右上角的图标按钮，
+        // 直接连自己的信号（见 buildHead），不再走导航行。
     });
     return row;
 }
@@ -471,8 +487,10 @@ void TrayPopup::popupAt(const QPoint &anchor)
 void TrayPopup::refresh()
 {
     const Device *active = manager_.activeDevice();
-    const bool online = active != nullptr && active->online;
+    // 「有读数」和「设备在线」是两件事：设备在线但链路还没测通时，
+    // 读数是「无」而不是 0。界面上一个是「--」，一个是绿点。
     const double ms = manager_.activeLatencyMs();
+    const bool hasReading = ms >= 0.0;
 
     // 快捷开关跟随配置：「恢复默认」或设置屏改动后，托盘这几个不能还摆着旧值。
     {
@@ -487,26 +505,41 @@ void TrayPopup::refresh()
     }
 
     if (headLatency_ != nullptr) {
-        headLatency_->setText(online ? QStringLiteral("%1ms").arg(ms, 0, 'f', 1)
-                                     : QStringLiteral("--"));
+        headLatency_->setText(hasReading ? QStringLiteral("%1ms").arg(ms, 0, 'f', 1)
+                                          : QStringLiteral("--"));
         headLatency_->setStyleSheet(QStringLiteral("color:%1").arg(
-            css(Theme::instance().color(Theme::qualityOf(ms, online)).text)));
+            css(Theme::instance().color(Theme::qualityOf(ms, hasReading)).text)));
     }
     if (trayLatency_ != nullptr) {
-        trayLatency_->setLatency(ms, online);
+        trayLatency_->setLatency(ms, hasReading);
     }
 
     if (deviceCount_ != nullptr) {
-        // 在线设备数（不含离线）。设计稿写的是「3 台」，而这台机器上没有对端，
-        // 如实显示真实在线数——托盘常驻，给一个假的数字比显示 0 更糟。
-        int online = 0;
+        // 徽章讲的是**能切过去的对端**有几台在线（不含本机）。
+        // 传输层没落地时对端一台也没有，如实说「仅本机」——
+        // 写个「1 台在线」会让人以为有一台对端可以连。
+        int peers = 0;
+        bool localOnline = false;
         for (const Device &d : manager_.devices()) {
-            if (d.online) {
-                ++online;
+            if (!d.online) {
+                continue;
+            }
+            if (d.isLocal) {
+                localOnline = true;
+            } else {
+                ++peers;
             }
         }
-        deviceCount_->setText(online == 0 ? tr("0 台在线") : tr("%1 台在线").arg(online));
-        deviceCount_->setVariant(online > 0 ? Badge::Variant::Ok : Badge::Variant::Idle);
+        if (peers > 0) {
+            deviceCount_->setText(tr("%1 台在线").arg(peers));
+            deviceCount_->setVariant(Badge::Variant::Ok);
+        } else if (localOnline) {
+            deviceCount_->setText(tr("仅本机"));
+            deviceCount_->setVariant(Badge::Variant::Idle);
+        } else {
+            deviceCount_->setText(tr("未联网"));
+            deviceCount_->setVariant(Badge::Variant::Idle);
+        }
     }
 
     if (deviceName_ != nullptr) {
@@ -515,10 +548,17 @@ void TrayPopup::refresh()
                                      ? active->name.left(2).toUpper()
                                      : active->abbrev);
             deviceName_->setText(active->name);
-            deviceMeta_->setText(active->hotkeyIndex > 0
-                                     ? tr("%1 切换回来").arg(
-                                           deviceHotkeyLabel(active->hotkeyIndex))
-                                     : tr("未分配快捷键"));
+            // 这一行写的是这台机器**真实**的两件事：系统与地址。
+            // 早先这里写的是「Ctrl+2 切换回来」——那是在说「怎么切到这台」，
+            // 而本机根本不是切换目标，写它等于回答了一个没人问的问题。
+            QString meta = active->platformLabel;
+            if (!active->address.isEmpty()) {
+                meta += QStringLiteral(" · ") + active->address;
+            }
+            if (!active->online) {
+                meta = tr("未联网");
+            }
+            deviceMeta_->setText(meta);
         } else {
             deviceIcon_->setText(QStringLiteral("--"));
             deviceName_->setText(tr("无活动设备"));
@@ -530,6 +570,7 @@ void TrayPopup::refresh()
     // 而增量同步要处理的边界（上线、下线、热键变更）远比重建麻烦。
     if (quickRow_ != nullptr) {
         clearLayout(quickRow_);
+        int shown = 0;
         for (const Device &d : manager_.devices()) {
             if (!d.online || d.hotkeyIndex <= 0) {
                 continue;
@@ -553,6 +594,14 @@ void TrayPopup::refresh()
                 manager_.setActive(id);
             });
             quickRow_->addWidget(btn);
+            ++shown;
+        }
+        if (shown == 0) {
+            // 没有可切换的对端时说清楚，而不是留一行空白让人以为渲染坏了。
+            auto *hint = new QLabel(tr("暂无可切换的设备"), this);
+            hint->setFont(uiFont(tokens::kFont11));
+            hint->setStyleSheet(QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+            quickRow_->addWidget(hint);
         }
         quickRow_->addStretch(1);
     }

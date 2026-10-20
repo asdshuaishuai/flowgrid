@@ -2,9 +2,11 @@
 #include "core/theme.h"
 #include "svgsubset.h"
 
+#include <QFile>
 #include <QHash>
 #include <QPainter>
 #include <QPixmap>
+#include <QRegularExpression>
 #include <QStringList>
 
 namespace fg::icons {
@@ -237,6 +239,58 @@ const QHash<QString, QString> &paths()
 
 } // namespace
 
+namespace {
+
+// 24 网格 → 目标像素的通用绘制。图标表里的每一枚与徽标都走它，
+// 保证两者的描边粗细、圆头、底衬透明度是同一套规则。
+//
+// 2 倍渲染再交给 Qt 缩放：高分屏下 1.7 的描边直接按 1:1 画会糊成一条灰边。
+QPixmap render(const svg::Icon &g, int size, const QColor &stroke, qreal strokeWidth)
+{
+    if (size <= 0) {
+        return {};
+    }
+    const qreal dpr = 2.0;
+    const qreal edge = size * dpr;
+    const qreal scale = edge / 24.0;
+
+    QPixmap pm(QSize(qRound(edge), qRound(edge)));
+    pm.fill(Qt::transparent);
+    {
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.scale(scale, scale);
+
+        // 两层填充依次铺：底衬在下、实体在上，都从当前色压透明度，不引入第二个
+        // 颜色。派生而不是写死，是为了用户换主题色 / 状态色时这两层跟着走，
+        // 跟 theme.cpp 里派生 line-1/2/3 是同一条理由。
+        const auto paintFill = [&p, stroke](const QPainterPath &path, qreal ratio) {
+            if (path.isEmpty()) {
+                return;
+            }
+            QColor fill = stroke;
+            fill.setAlphaF(fill.alphaF() * ratio);
+            p.setPen(Qt::NoPen);
+            p.setBrush(fill);
+            p.drawPath(path);
+        };
+        paintFill(g.fill, kFillRatio);
+        paintFill(g.solid, kFillSolid);
+
+        QPen pen(stroke);
+        pen.setWidthF(strokeWidth);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(g.stroke);
+    }
+    pm.setDevicePixelRatio(dpr);
+    return pm;
+}
+
+} // namespace
+
 bool exists(const QString &name)
 {
     return paths().contains(name);
@@ -257,48 +311,69 @@ QIcon icon(const QString &name, int size, const QColor &color)
     }
     const QColor stroke = color.isValid() ? color : Theme::instance().palette().text1;
 
-    // 24 网格 → 目标像素；2 倍渲染再交给 Qt 缩放，高分屏下 1.7 描边才不糊。
-    const qreal dpr = 2.0;
-    const qreal edge = size * dpr;
-    const qreal scale = edge / 24.0;
-
-    QPixmap pm(QSize(qRound(edge), qRound(edge)));
-    pm.fill(Qt::transparent);
-    {
-        QPainter p(&pm);
-        p.setRenderHint(QPainter::Antialiasing, true);
-        p.scale(scale, scale);
-        const svg::Icon g = svg::parse(it.value());
-
-        // 两层填充依次铺：底衬在下、实体在上，都从当前色压透明度，不引入第二个
-        // 颜色。派生而不是写死，是为了用户换主题色 / 状态色时这两层跟着走，
-        // 跟 theme.cpp 里派生 line-1/2/3 是同一条理由。
-        const auto paintFill = [&p, stroke](const QPainterPath &path, qreal ratio) {
-            if (path.isEmpty()) {
-                return;
-            }
-            QColor fill = stroke;
-            fill.setAlphaF(fill.alphaF() * ratio);
-            p.setPen(Qt::NoPen);
-            p.setBrush(fill);
-            p.drawPath(path);
-        };
-        paintFill(g.fill, kFillRatio);
-        paintFill(g.solid, kFillSolid);
-
-        QPen pen(stroke);
-        pen.setWidthF(kStrokeWidth);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
-        p.setPen(pen);
-        p.setBrush(Qt::NoBrush);
-        p.drawPath(g.stroke);
+    QPixmap pm = render(svg::parse(it.value()), size, stroke, kStrokeWidth);
+    if (pm.isNull()) {
+        return {};
     }
-    pm.setDevicePixelRatio(dpr);
 
     QIcon result;
     result.addPixmap(pm);
     return result;
+}
+
+QPixmap logoPixmap(int size)
+{
+    if (size <= 0) {
+        return {};
+    }
+
+    // 徽标是**资源文件**，不是图标表里的一枚：形状、描边色、线宽都在
+    // resources/icons/flowgrid.svg 里。这里把它读出来、拆成「要画哪几段路径」
+    // 与「用什么颜色、什么线宽」，再交给同一个渲染器——
+    // 于是「装到系统里的图标」与「托盘里那一枚」永远是同一张图。
+    QFile f(QStringLiteral(":/icons/flowgrid.svg"));
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+    const QString text = QString::fromUtf8(f.readAll());
+
+    // 根标签上取 stroke / stroke-width。匹配的是 `stroke="..."`，
+    // 不会误伤 `stroke-width="..."`（那串里 "stroke" 后面跟的是 '-' 不是 '='）。
+    QColor stroke;
+    double strokeWidth = kStrokeWidth;
+    {
+        static const QRegularExpression reStroke(QStringLiteral("\\bstroke=\"([^\"]*)\""));
+        const auto m = reStroke.match(text);
+        if (m.hasMatch()) {
+            stroke = QColor(m.captured(1));
+        }
+        if (!stroke.isValid()) {
+            stroke = QColor(QStringLiteral("#0081ff"));
+        }
+        static const QRegularExpression reWidth(QStringLiteral("\\bstroke-width=\"([^\"]*)\""));
+        const auto w = reWidth.match(text);
+        if (w.hasMatch()) {
+            bool ok = false;
+            const double v = w.captured(1).toDouble(&ok);
+            if (ok && v > 0.0) {
+                strokeWidth = v;
+            }
+        }
+    }
+
+    // 收集要画的元素。徽标文件里只有 <path>，没有 rect/circle——
+    // 整段交给 svg::parse，它认得的元素类型比这里列的多。
+    static const QRegularExpression rePath(QStringLiteral("<path\\b[^>]*/>"));
+    QStringList fragments;
+    auto it = rePath.globalMatch(text);
+    while (it.hasNext()) {
+        fragments << it.next().captured(0);
+    }
+    if (fragments.isEmpty()) {
+        return {};
+    }
+
+    return render(svg::parse(fragments.join(QLatin1Char(' '))), size, stroke, strokeWidth);
 }
 
 } // namespace fg::icons

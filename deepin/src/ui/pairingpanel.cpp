@@ -69,15 +69,18 @@ PairingPanel::PairingPanel(QWidget *parent) : Panel(tr("添加设备"), parent)
     body->addWidget(buildManualSection());
     setFooterWidget(buildFooter());
 
-    // 设计稿列了三台：两台在线可发起配对，一台没在跑 FlowGrid、只给一个离线徽章。
-    // 早先只列了前两台，「离线」这个状态就没地方出现。
-    setDevices({
-        {QStringLiteral("deepin-laptop"), QStringLiteral("192.168.x.x"),
-         QStringLiteral("laptop"), 3, 8, true, false},
-        {QStringLiteral("office-pc"), QStringLiteral("192.168.x.x"),
-         QStringLiteral("monitor"), 2, 24, true, false},
-        {QStringLiteral("tablet-7f"), QString(), QStringLiteral("tablet"), 0, 0, false, false},
-    });
+    // 「网络中的设备」**不塞假设备**。
+    //
+    // 早先这里硬编码了三台：deepin-laptop / office-pc / tablet-7f，地址写成
+    // 「192.168.x.x」、信号写「强」、还带「已发现 8s」。那是设计稿里的示意数据，
+    // 在用户自己的网络上却长得像真的——用户会以为局域网里真有这么三台机器，
+    // 点「发起配对」却什么也不会发生。
+    //
+    // 设备发现（mDNS）还没接通，这一栏就该是空的：空列表 + 一句说清原因的
+    // 说明。要连设备，现在能走的是下面的「手动添加」（填地址）。
+    //
+    // setDevices 只空传一次：列表是它负责填的，不调它，那块框就空着。
+    setDevices({});
 }
 
 QWidget *PairingPanel::buildSteps()
@@ -334,12 +337,11 @@ void PairingPanel::rebuildDevices()
     auto *host = listLayout_->parentWidget();
 
     if (devices_.isEmpty()) {
-        auto *empty = new QLabel(tr("未发现设备"), host);
-        empty->setFont(uiFont(tokens::kFont12));
-        empty->setAlignment(Qt::AlignCenter);
-        empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
-        empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-        listLayout_->addWidget(empty);
+        // 空列表要说清**为什么**空。「未发现设备」四个字会被读成「网里没有」，
+        // 而实情是发现功能还没接通——两件事对用户的下一步完全不同。
+        listLayout_->addWidget(new EmptyState(QStringLiteral("lan"), tr("未发现设备"),
+                                               tr("设备发现尚未接通；可在下面的「手动添加」里填地址"),
+                                               host));
         return;
     }
 

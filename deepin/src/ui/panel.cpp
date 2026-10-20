@@ -47,15 +47,42 @@ bool placePopup(QWidget *w, const QPoint &anchor)
         w->show();
         return false;
     }
+    const QRect geo = screen->geometry();
     const QRect avail = screen->availableGeometry();
 
     // 先按内容算一次实际高度：窗口尚未显示，sizeHint 已可用。
     const int h = qMin(w->sizeHint().height(), avail.height() - tokens::kPanelScreenMargin);
     w->resize(w->width(), h);
 
-    // 锚点一般是托盘图标，其右侧即屏幕右边，所以先按「自身右缘贴锚点」试。
-    int x = anchor.x() - w->width();
-    int y = anchor.y();
+    // 贴着**任务栏**摆：下沿落在任务栏上沿，右沿贴着屏幕右缘。
+    //
+    // 原来拿托盘图标的中心当锚点（x = anchor.x() - width），有两个毛病：
+    //   1. DDE 的 dock 不提供 SNI 图标几何，QSystemTrayIcon::geometry() 恒为空，
+    //      于是走「退到主屏右上角」的兜底——浮板浮在屏幕靠边的上方，离任务栏
+    //      200 多像素。实测窗口落在 y=64，任务栏顶边在 y=1039，中间空一大截，
+    //      看着像「靠边居中」而不是「从菜单栏顶上长出来」。
+    //   2. 就算几何取得到，图标中心离屏幕右缘还有二十来像素（托盘区有内边距），
+    //      浮板右边也就跟着缺一截。
+    //
+    // 所以改成按「工作区（可用区）在任务栏那一侧的角」定位。任务栏在哪一侧由
+    // 「屏幕矩形 - 可用矩形」的差推出（X11 的 struts / Wayland 的工作区）。
+    const bool panelAtBottom = avail.bottom() < geo.bottom();
+    const bool panelAtTop = avail.top() > geo.top();
+    const bool panelAtLeft = avail.left() > geo.left();
+
+    // 横向贴哪一侧：托盘图标在哪一侧就贴哪一侧。图标几何时拿不到（DDE 上
+    // 就是拿不到），按「托盘通常在右」处理。
+    const bool anchorOnLeft = !anchor.isNull() && anchor.x() < avail.center().x();
+
+    int x = anchorOnLeft ? avail.left() : avail.right() - w->width();
+    // 任务栏在下（或者压根没有任务栏）→ 贴下沿；任务栏在上 → 贴上沿。
+    int y = (panelAtBottom || !panelAtTop) ? avail.bottom() - w->height() : avail.top();
+    // 任务栏在左：可用区已经右移过了任务栏，此时浮板左边贴 avail.left()
+    // 才是「从任务栏边上长出来」；否则保持上面算出的靠右/靠左。
+    if (panelAtLeft && !panelAtBottom && !panelAtTop) {
+        x = avail.left();
+    }
+
     if (x < avail.left()) {
         x = avail.left() + tokens::kS3;
     }

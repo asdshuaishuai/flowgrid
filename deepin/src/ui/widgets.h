@@ -194,10 +194,10 @@ public:
     void pushSample(double ms);
     void clear();
 
-    // 首屏铺底：第一次真实采样到达前图表是空的，折叠区一展开就是一片空白。
-    // 用当前读数填满一屏作为占位，抖动带与 devicemanager.cpp 的 mock 源一致，
-    // 首次 sampled() 到达后即被真实数据顶掉。seed <= 0（离线）时不铺。
-    void prime(double seed);
+    // 首屏**不铺底**。早先这里会用当前读数加一段随机抖动填满 12 根柱子，
+    // 好让折叠区一展开不是空白——但那 12 根柱子是从没量过的数，图表整片是假的。
+    // 现在图表从空开始，随真实采样一根根长出来（每 2 秒一根，24 秒填满）；
+    // 空的时候画布上写明「等待采样」，不留一根假柱子。
 
     QSize sizeHint() const override {
         return {120, tokens::kChartHeight};

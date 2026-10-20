@@ -47,6 +47,8 @@
 #include <QPixmap>
 #include <QScreen>
 #include <QShortcut>
+#include <QStandardPaths>
+#include <QStringList>
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QVariantAnimation>
@@ -77,7 +79,8 @@ QSystemTrayIcon *g_trayIcon = nullptr;
 TrayHotkeys *g_hotkeys = nullptr;
 
 // 托盘图标几何：托盘面板以图标为中心、上方留 8px。拿不到图标几何时
-// 退化到主屏右上角，保证功能不丢。
+// 退化到工作区右下角——托盘浮板最常见的落点（贴着任务栏）。
+// 注意别退到右上角：那会让浮板浮在屏幕靠边的上方，离任务栏 200 多像素。
 QPoint anchorPoint()
 {
     if (g_trayIcon != nullptr && QSystemTrayIcon::isSystemTrayAvailable()) {
@@ -91,7 +94,7 @@ QPoint anchorPoint()
         return QPoint(400, 200);
     }
     const QRect avail = screen->availableGeometry();
-    return QPoint(avail.right() - 32, avail.top() + 64);
+    return QPoint(avail.right() - 32, avail.bottom() - 32);
 }
 
 void showPanel(QWidget *panel)
@@ -156,8 +159,83 @@ void writeClipboardEntryToLocal(const ClipEntry &entry)
     QApplication::clipboard()->setMimeData(mime);
 }
 
+// 已安装的图标文件（绝对路径）。
+//
+// 目录与 CMakeLists.txt 里 install(FILES resources/icons/flowgrid.svg ...) 是同一处
+// ——编译期发成宏 FLOWGRID_INSTALL_ICON_DIR，两边不会各写一份字面量。
+// 之所以要「同一个源」：图标明明装好了却找不到，是最难查的一类问题，
+// 而它十有八九是「装到 A 目录、找的是 B 目录」。
+QStringList installedIconPaths()
+{
+    QStringList out;
+#ifdef FLOWGRID_INSTALL_ICON_DIR
+    out << QStringLiteral(FLOWGRID_INSTALL_ICON_DIR "/flowgrid.svg");
+#endif
+    // 再按 XDG 惯例搜一遍：自建安装（不经过 cmake --install）时图标可能落在
+    // ~/.local/share/icons 或 ~/.icons 下。
+    out << QStandardPaths::locateAll(QStandardPaths::GenericDataLocation,
+                                     QStringLiteral("icons/hicolor/scalable/apps/flowgrid.svg"));
+    out << QStandardPaths::locateAll(QStandardPaths::GenericDataLocation,
+                                     QStringLiteral("icons/flowgrid.svg"));
+    out.removeDuplicates();
+    return out;
+}
+
+// 托盘 / 窗口图标。
+//
+// 为什么不用主题名：实测过 DDE 的 dock 画托盘图标是**按 SNI 的 IconName 去它
+// 自己的主题里查**，查不到就**什么都不画**——连 IconPixmap 都不看。上一版把
+// IconName 设成主题名 "flowgrid"，IconPixmap 明明有 486 个非零字节，托盘里却
+// 一个图标都没有。（同一台机器上 cc-switch 报的是个绝对路径，dock 画得好好
+// 的；可 Qt6 的 QIcon 从文件路径构造时 name() 是空的，那条路在本客户端走不通。）
+//
+// 现在走的是**留空 IconName + 给出 IconPixmap** 这条：Qt6 把文件型 QIcon 的
+// 位图塞进 SNI 的 IconPixmap，IconName 留空，dock 就没有可查的主题名，只能
+// 直接用那份位图——图标因此出现在托盘里（已对着任务栏截图确认）。
+//
+// 顺序：
+//   1. 运行时目录里的 PNG —— 图标本体从这儿来（见下）
+//   2. 已安装的图标文件绝对路径 —— 没导出成功时的次选
+//   3. 主题名 —— 系统里恰好装好了同名图标时用
+//   4. 内嵌 SVG —— 最后的兜底，保证一定有图
 QIcon appIcon()
 {
+    // 1. 导出 PNG 到运行时目录。
+    //
+    // 用项目自己的 SVG 渲染器画（fg::icons::logoPixmap），不碰 QtSvg 插件：
+    // 那台机器上 Qt6Svg 只有运行时库，插件路径一旦对不上 QIcon 就是空的，
+    // 而「图标是空的」正是这轮要修的那个症状。
+    const QString runtimeDir =
+        QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    if (!runtimeDir.isEmpty()) {
+        const QString dir = runtimeDir + QStringLiteral("/flowgrid");
+        const QString png = dir + QStringLiteral("/tray-icon.png");
+        if (QDir().mkpath(dir)) {
+            const QPixmap pm = fg::icons::logoPixmap(64);
+            // 每次启动都重画：图标改了而磁盘上留着旧的那一份，dock 会一直
+            // 显示旧图标（它按路径缓存），排查起来像是「改了没生效」。
+            if (!pm.isNull() && pm.save(png, "PNG")) {
+                QIcon out(png);
+                if (!out.isNull()) {
+                    return out;
+                }
+            } else {
+                qCWarning(lcApp) << "托盘图标导出失败" << png;
+            }
+        }
+    }
+
+    // 2. 已安装的图标文件
+    for (const QString &path : installedIconPaths()) {
+        if (QFile::exists(path)) {
+            QIcon i(path);
+            if (!i.isNull()) {
+                return i;
+            }
+        }
+    }
+
+    // 3/4. 主题名 / 内嵌 SVG
     QIcon i = QIcon::fromTheme(QStringLiteral("flowgrid"));
     if (i.isNull()) {
         i = QIcon(QStringLiteral(":/icons/flowgrid.svg"));
@@ -220,7 +298,10 @@ int main(int argc, char *argv[])
 
     // 单实例：DTK6 的 setSingleInstance 返回 false 表示已有一份在跑。
     // 必须在创建任何长驻对象之前调用，否则会多起一套采样定时器。
-    if (!app.setSingleInstance(QStringLiteral("flowgrid-deepin"))) {
+    //
+    // 但 --snapshot 例外：那一路是**无头渲染**——不碰托盘、不连对端、不起定时器，
+    // 渲完就退出，抢单实例没有意义却会让它立刻退出（开发时应用正跑着就截不到图）。
+    if (!parser.isSet(snapshotOpt) && !app.setSingleInstance(QStringLiteral("flowgrid-deepin"))) {
         return 0;
     }
 
@@ -325,27 +406,35 @@ int main(int argc, char *argv[])
     QObject::connect(&manager, &DeviceManager::devicesChanged, g_trayPopup, &TrayPopup::refresh);
     QObject::connect(&manager, &DeviceManager::sampled, g_trayPopup, &TrayPopup::refresh);
 
-    g_trayIcon = new QSystemTrayIcon(appIcon(), &app);
-    g_trayIcon->setToolTip(QStringLiteral("FlowGrid"));
-    // 不设 ItemIsMenu：dde-dock 对菜单型条目只会弹菜单，而设计稿要的是
-    // 自绘的 300px 浮层，必须走 Activate 路径。
-    g_trayIcon->setProperty("Title", QStringLiteral("FlowGrid"));
-    g_trayIcon->setProperty("Id", QStringLiteral("flowgrid-deepin"));
-    QObject::connect(g_trayIcon, &QSystemTrayIcon::activated, g_trayIcon,
-            [](QSystemTrayIcon::ActivationReason reason) {
-                if (reason == QSystemTrayIcon::Trigger) {
-                    if (g_trayPopup != nullptr && g_trayPopup->isVisible()) {
-                        g_trayPopup->hide();
-                    } else {
-                        showPanel(g_trayPopup);
+    // 快照模式**不建托盘图标**。
+    //
+    // 快照是无头渲染：不弹窗、不驻留、渲完就退。可它在真显示器上跑时（为了能
+    // 读到真实剪贴板——offscreen 平台没有剪贴板）会真的往 dock 里注册一个 SNI
+    // 条目，用户桌面上凭空多出一个 FlowGrid 图标，又不是他启动的。
+    // 托盘在快照里没用（浮板是直接 showPanel 出来的），所以干脆不建。
+    if (!parser.isSet(snapshotOpt)) {
+        g_trayIcon = new QSystemTrayIcon(appIcon(), &app);
+        g_trayIcon->setToolTip(QStringLiteral("FlowGrid"));
+        // 不设 ItemIsMenu：dde-dock 对菜单型条目只会弹菜单，而设计稿要的是
+        // 自绘的 300px 浮层，必须走 Activate 路径。
+        g_trayIcon->setProperty("Title", QStringLiteral("FlowGrid"));
+        g_trayIcon->setProperty("Id", QStringLiteral("flowgrid-deepin"));
+        QObject::connect(g_trayIcon, &QSystemTrayIcon::activated, g_trayIcon,
+                [](QSystemTrayIcon::ActivationReason reason) {
+                    if (reason == QSystemTrayIcon::Trigger) {
+                        if (g_trayPopup != nullptr && g_trayPopup->isVisible()) {
+                            g_trayPopup->hide();
+                        } else {
+                            showPanel(g_trayPopup);
+                        }
                     }
-                }
-            });
+                });
+    }
 
     const bool trayAvailable = QSystemTrayIcon::isSystemTrayAvailable();
-    if (trayAvailable) {
+    if (g_trayIcon != nullptr && trayAvailable) {
         g_trayIcon->show();
-    } else {
+    } else if (!parser.isSet(snapshotOpt)) {
         qCWarning(lcApp) << "系统托盘不可用，托盘浮层无法唤出";
     }
 
@@ -387,7 +476,10 @@ int main(int argc, char *argv[])
         if (!QDir().mkpath(outDir)) {
             qCWarning(lcApp) << "快照输出目录建不出来：" << outDir;
         }
-        QTimer::singleShot(600, &app, [&app, base, syncTrayCounts] {
+        // 3000ms，不是 600ms：延迟读数是**真量出来的**——链路探测每 2 秒
+        // 采一个点，600ms 时连第一次 ping 都还没回来，截图里那一栏只能是「--」。
+        // 截屏要截的是真实状态，那就等它真的到。
+        QTimer::singleShot(3000, &app, [&app, base, syncTrayCounts] {
             // 走真实的 pop-up 定位（showPanel 内部会算 anchorPoint），而不是手调
             // 几何：截图与实际唤出同一条路径，否则「截图好看、实际错位」这类问题
             // 在无头环境里根本查不出来。
@@ -418,10 +510,11 @@ int main(int argc, char *argv[])
                 }
                 w->hide();
             };
-            // 连接屏的文件传输折叠区读的是 FilesPanel 的快照，而 FilesPanel
-            // 在下面才播种——顺序反了这一区会拍成「暂无传输」。
-            g_files->seedForSnapshot();
-            g_clipboard->seedForSnapshot();
+            // 不播种假数据。早先这里会往剪贴板历史与传输记录里塞一批
+            // 与设计稿同款的数据，好让截图能和 clipboard.html / files.html
+            // 逐项对照——但截图本身就是界面给人看的东西，摆在那里的
+            // 「deepin 平板 · 1.2 GB」从来就没发生过。现在这两屏拍的是真实
+            // 状态：本机剪贴板里复制过的东西、真正在传的传输；没有就是空态。
             syncTrayCounts();
             shot(g_trayPopup, QStringLiteral("tray"));
             shot(g_connections, QStringLiteral("connections"));

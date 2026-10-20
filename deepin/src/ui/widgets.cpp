@@ -19,7 +19,6 @@
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
-#include <QRandomGenerator>
 #include <QPropertyAnimation>
 #include <QResizeEvent>
 #include <QTimer>
@@ -604,28 +603,22 @@ void BarChart::clear()
     update();
 }
 
-void BarChart::prime(double seed)
-{
-    if (seed <= 0.0) {
-        return;
-    }
-    samples_.clear();
-    // 抖动带 -600~1400µs 与 devicemanager.cpp 的 mock 源保持一致，
-    // 这样首屏形状和随后到达的真实采样是连续的，不会突然「跳」一下。
-    auto *rng = QRandomGenerator::global();
-    for (int i = 0; i < tokens::kChartBars; ++i) {
-        const double jitterMs = rng->bounded(-600, 1400) / 1000.0;
-        samples_.push_back(qMax(0.5, seed + jitterMs));
-    }
-    update();
-}
-
 void BarChart::paintEvent(QPaintEvent *)
 {
+    const Palette &p = Theme::instance().palette();
     if (samples_.empty()) {
+        // 空图表照实说空。留一片空白会让人以为图挂了，写「等待采样」才
+        // 说得清是「还没采到」——而且这句话是真的：采样每 2 秒一个点，
+        // 采够 12 根要 24 秒。
+        QPainter pt(this);
+        pt.setRenderHint(QPainter::Antialiasing, true);
+        pt.setPen(p.text3);
+        QFont f = QApplication::font();
+        f.setPixelSize(tokens::kFont11);
+        pt.setFont(f);
+        pt.drawText(rect(), Qt::AlignCenter, tr("等待采样"));
         return;
     }
-    const Palette &p = Theme::instance().palette();
     QPainter pt(this);
     pt.setRenderHint(QPainter::Antialiasing, true);
 
@@ -1003,12 +996,16 @@ void DeviceCard::rebuild(const Device &device)
     QString meta = device.online ? device.platformLabel : tr("离线");
     if (device.online) {
         meta += QStringLiteral(" · ") + linkName(device.link);
+        if (!device.address.isEmpty()) {
+            meta += QStringLiteral(" · ") + device.address;
+        }
         if (device.isActive) {
             meta += tr(" · 当前控制端");
         }
     }
     meta_->setText(meta);
-    latency_->setLatency(device.latencyMs, device.online);
+    // 芯片显示的是延迟读数：没有真实读数就是「—」，不是 0.0ms。
+    latency_->setLatency(device.latencyMs, device.latencyMs >= 0.0);
 
 
 

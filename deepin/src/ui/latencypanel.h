@@ -44,6 +44,9 @@ private:
     StatusDot *bigDot_ = nullptr;
     QLabel *bigValue_ = nullptr;
     QLabel *linkLabel_ = nullptr;
+    // 读数底下那行小字：说明这个数**量的是谁**（传输层没落地时是本机到
+    // 默认网关的真实往返，不是到某台对端的延迟）。
+    QLabel *measureNote_ = nullptr;
     BarChart *chart_ = nullptr;
     Badge *chartBadge_ = nullptr;
 };

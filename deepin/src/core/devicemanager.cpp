@@ -1,9 +1,10 @@
 #include "devicemanager.h"
 #include "designtokens.h"
+#include "hostinfo.h"
+#include "linkprobe.h"
 
 #include <QDateTime>
 #include <QElapsedTimer>
-#include <QRandomGenerator>
 
 namespace fg {
 
@@ -65,7 +66,13 @@ Device *DeviceManager::deviceById(const QString &id)
 double DeviceManager::activeLatencyMs() const
 {
     const Device *d = activeDevice();
-    return (d != nullptr && d->online) ? d->latencyMs : -1.0;
+    // latencyMs < 0 表示「还没有真实读数」（没测到 / 设备离线）。
+    // 这种时候必须返回 -1 而不是 0：0 会被界面显示成「0.0ms」，
+    // 那是一个从没量过的数。
+    if (d == nullptr || !d->online || d->latencyMs < 0.0) {
+        return -1.0;
+    }
+    return d->latencyMs;
 }
 
 double DeviceManager::activeLatencyAvgMs() const
@@ -163,9 +170,18 @@ void DeviceManager::onSampleTick()
 } // namespace fg
 
 // ── 本地采样源 ────────────────────────────────────────────────────────
-// 传输层尚未实现时的数据源。它唯一「假」的地方是网络往返本身：
-// 延迟读数仍然经 Go 的 LatencyMonitor 完成记录与统计，UI 拿到的
-// 采样窗口、抖动、连续劣化次数都是协议库的真实计算结果。
+//
+// 传输层（L3：DTLS/UDP）还没落地，所以「有哪些对端」这件事现在无从谈起。
+// 这一层给的是**本机**的真实身份与本机链路的真实延迟：
+//   · 设备清单里只有本机一条，名字、发行版、IP 都是真的；
+//   · 延迟是 ping 一次默认网关量出来的真实往返（见 linkprobe.cpp），
+//     统计照旧交给 Go 的 LatencyMonitor——采样窗口、抖动、连续劣化次数
+//     仍然是协议库的真实计算结果。
+//
+// 早先这一层给的是设计稿里的四台示例机（deepin 工作站 / Windows 11 Desktop /
+// Linux Workstation / deepin Tablet）与随机摇出来的延迟（2.4 / 3.1 / 11.6ms）。
+// 那些数字在用户自己的机器上一条都不成立：托盘里摆着四台他不认识的电脑，
+// 「网络延迟」跳着一个从没量过的数。用户看到的是一份假清单，不是一份清单。
 namespace fg {
 
 class LocalSampleSource : public DeviceSource {
@@ -174,41 +190,49 @@ public:
 
     QList<Device> discover() override
     {
-        // 与设计稿 screens/connections.html 的设备清单一致，便于逐屏比对。
         QList<Device> list;
-        list.append(makeDevice(QStringLiteral("local"), QStringLiteral("deepin 工作站"),
-                               QStringLiteral("DP"), QStringLiteral("deepin 25"),
-                               QStringLiteral("laptop"), Link::IntelligentLink, true, true, 2));
-        list.append(makeDevice(QStringLiteral("win"), QStringLiteral("Windows 11 Desktop"),
-                               QStringLiteral("PC"), QStringLiteral("Windows 11"),
-                               QStringLiteral("monitor"), Link::IntelligentLink, false, true, 1));
-        list.append(makeDevice(QStringLiteral("lx"), QStringLiteral("Linux Workstation"),
-                               QStringLiteral("LX"), QStringLiteral("KDE Plasma 6"),
-                               QStringLiteral("monitor"), Link::DirectLink, false, true, 3));
-        list.append(makeDevice(QStringLiteral("tablet"), QStringLiteral("deepin Tablet"),
-                               QStringLiteral("TP"), QStringLiteral("deepin 25"),
-                               QStringLiteral("tablet"), Link::Offline, false, false, 0));
+
+        Device d;
+        d.id = QStringLiteral("local");
+        d.name = hostinfo::hostName();
+        d.abbrev = abbrevOf(d.name);
+        d.platformLabel = hostinfo::osLabel();
+        d.address = hostinfo::primaryIPv4();
+        // 设备种类图标：本机既不是笔记本也不是平板，用「显示器」这个通用形态。
+        d.icon = QStringLiteral("monitor");
+        d.isLocal = true;
+        d.isActive = true;
+        // 「在线」的意思是这台机器接在网里。没有可用网卡时标成在线是不对的——
+        // 那一栏的文案是「0 台在线」，数字得对得上。
+        const bool hasNet = !hostinfo::primaryIPv4().isEmpty();
+        d.online = hasNet;
+        // 链路类型：走的是本机这块网卡，也就是局域网直连。
+        d.link = hasNet ? Link::DirectLink : Link::Offline;
+        // 本机不是「快速切换」的目标——切的是对端，不是自己。
+        d.hotkeyIndex = 0;
+        // -1 = 还没有真实读数。0 会被界面显示成「0.0ms」，那是个假读数。
+        d.latencyMs = -1.0;
+        d.packetLoss = -1.0;
+        list.append(d);
         return list;
     }
 
     bool sample(Device *device, proto::LatencyMonitor &monitor) override
     {
-        // DirectLink 走局域网、基线更高；链路不同抖动区间不同，
-        // 与设计稿里 DirectLink 11.6ms / IntelligentLink 2~3ms 的观感一致。
-        const bool slow = device->link == Link::DirectLink;
+        // 真实往返时间：ping 一次默认网关就是一次真实往返，丢包也是真丢的。
         // 协议侧 LatencyMonitor 取的是「半 RTT」（heartbeat.go: latencyMs =
-        // rttUs / 2000），所以这里要按 2 倍单程延迟去造往返，才能得到设计稿
-        // 期望的读数（2.4 / 3.1 / 11.6ms）。
-        const qint64 oneWayUs = slow ? 11600 : (device->isLocal ? 2400 : 3100);
-        const qint64 baseUs = oneWayUs * 2;
-        const qint64 jitterUs = QRandomGenerator::global()->bounded(-600, 1400);
+        // rttUs / 2000），所以喂进去的是完整 RTT，读数自然是单程时延。
+        const qint64 rttUs = LinkProbe::instance()->lastRttUs();
+        if (rttUs < 0) {
+            // 还没测到（没有网关 / ping 不可用）：这一轮不产生样本。
+            // 界面保持「--」，而不是拿 0 顶上去。
+            return false;
+        }
 
-        // RTT 模型：ping 记在 sendUs，pong 原样回显该时间戳，而 nowUs 是
-        // 「收到 pong 的那一刻」——延迟由协议库用两者相减算出，这里不能自己算。
-        const quint64 sendUs = static_cast<quint64>(
-            QDateTime::currentMSecsSinceEpoch() * 1000LL);
-        const quint64 nowUs = static_cast<quint64>(
-            qMax<qint64>(1, static_cast<qint64>(sendUs) + baseUs + jitterUs));
+        // RTT 模型：ping 记在 sendUs，回包原样回显该时间戳，而 nowUs 是
+        // 「收到回包的那一刻」——延迟由协议库用两者相减算出，这里不能自己算。
+        const quint64 nowUs = static_cast<quint64>(QDateTime::currentMSecsSinceEpoch() * 1000LL);
+        const quint64 sendUs = nowUs > static_cast<quint64>(rttUs) ? nowUs - rttUs : 1;
 
         monitor.recordPing(sendUs);
         double ms = 0.0;
@@ -218,28 +242,25 @@ public:
             return false;
         }
         device->latencyMs = ms;
-        device->packetLoss = slow ? 0.4 : 0.0;
-        device->lastSeenMs = sendUs / 1000;
+        device->packetLoss = LinkProbe::instance()->lossPercent();
+        device->lastSeenMs = nowUs / 1000;
         return true;
     }
 
 private:
-    static Device makeDevice(const QString &id, const QString &name, const QString &abbrev,
-                             const QString &platform, const QString &icon, Link link,
-                             bool isLocal, bool online, int hotkey)
+    // 设备卡方块里的两字标识：从主机名里取前两个字母，凑不出就用「本」。
+    static QString abbrevOf(const QString &name)
     {
-        Device d;
-        d.id = id;
-        d.name = name;
-        d.abbrev = abbrev;
-        d.platformLabel = platform;
-        d.icon = icon;
-        d.link = link;
-        d.isLocal = isLocal;
-        d.online = online;
-        d.isActive = online && isLocal;
-        d.hotkeyIndex = hotkey;
-        return d;
+        QString letters;
+        for (const QChar &c : name) {
+            if (c.isLetterOrNumber()) {
+                letters.append(c);
+                if (letters.size() >= 2) {
+                    break;
+                }
+            }
+        }
+        return letters.isEmpty() ? QStringLiteral("本") : letters.toUpper();
     }
 };
 

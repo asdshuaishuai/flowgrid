@@ -510,68 +510,6 @@ QWidget *FilesPanel::buildFooter()
     return foot;
 }
 
-void FilesPanel::seedForSnapshot()
-{
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    struct Seed {
-        const char *name;
-        bool inbound;
-        int sent;
-        qint64 total;
-        qint64 ago;
-        int state;   // 0 进行中 1 完成 2 已拒绝 3 校验失败 4 超限
-    };
-    // 条目取自 files.html 的两个 .list，使截图可与设计稿逐行对照。
-    // 数组按**由旧到新**排：entries_ 是追加序，rebuildRecords() 倒着遍历取
-    // 「最新在前」，所以这里反过来写，截图里的行序才与设计稿一致。
-    const Seed seeds[] = {
-        {"ubuntu-24.04-desktop.iso", false, 0, 4509715660LL, 32 * 60, 4},
-        {"build-artifact.tar.zst", true, 3251712, 3251712, 41 * 60, 3},
-        {"salary-2026.xlsx", true, 655360, 655360, 28 * 60, 2},
-        {"protocol-notes.md", false, 24576, 24576, 12 * 60, 1},
-        {"design-spec-v3.pdf", true, 2202009, 2202009, 3 * 60, 1},
-        {"flowgrid-0.9.2-x86_64.AppImage", false, 8458240, 12451840, 0, 0},
-        {"keymap-tables.rs", true, 0, 18432, 0, 0},
-    };
-    for (const Seed &s : seeds) {
-        XferEntry e;
-        e.name = QString::fromLatin1(s.name);
-        e.inbound = s.inbound;
-        e.peer = s.inbound ? QStringLiteral("Linux Workstation") : QStringLiteral("Windows 11 Desktop");
-        e.totalBytes = s.total;
-        e.sentBytes = s.sent;
-        // 进行中的两条要有一个「已经跑了 3 秒」的起点，否则速率算出来是 0，
-        // 进度条与剩余时间那两段代码在截图里就看不出效果。
-        e.startedAtMs = s.state == 0 ? now - (s.inbound ? 1200 : 7000) : 0;
-        switch (s.state) {
-        case 1:
-            e.done = true;
-            e.verified = true;
-            break;
-        case 2:
-            e.rejected = true;
-            break;
-        case 3:
-            e.failed = true;
-            // 设计稿这一档是「SHA-256 不符」，对应协议的载荷/校验错误码。
-            e.errCode = proto::errorcode::kInvalidPayload;
-            break;
-        case 4:
-            e.oversize = true;
-            break;
-        default:
-            break;
-        }
-        e.finishedAtMs = s.state == 0 ? 0 : now - s.ago * 1000;
-        entries_.append(e);
-    }
-    rebuildTransfers();
-    rebuildRecords();
-    refreshPill();
-    // 播种也得通知：不发的话连接屏那一区与托盘徽标会一直停在播种前的空态。
-    Q_EMIT transfersChanged();
-}
-
 int FilesPanel::activeCount() const
 {
     int n = 0;
@@ -613,6 +551,24 @@ QList<XferSummary> FilesPanel::transferSummary() const
 
 int FilesPanel::offerFile(const QString &path)
 {
+    // 有没有能接的对端。
+    //
+    // 传输层（L3）还没落地，界面上一个对端设备也发现不了。可这一段早先不看
+    // 对端，直接建一条「进行中」的记录再提示「已开始发送」——那个提示是假的：
+    // 没有任何链路，文件哪儿也没去，记录还会永远卡在「进行中」，托盘徽标
+    // 也就永远显示「1 项进行中」。这里没有对端就直接说没有，不建假记录。
+    int peers = 0;
+    for (const Device &d : DeviceManager::instance().devices()) {
+        if (d.online && !d.isLocal) {
+            ++peers;
+        }
+    }
+    if (peers == 0) {
+        qCInfo(lcFiles) << "没有已连接的对端，传输未发起" << path;
+        toast(tr("没有已连接的对端，文件未发送"), ToastKind::Info);
+        return -1;
+    }
+
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
         qCWarning(lcFiles) << "无法读取" << path << f.errorString();

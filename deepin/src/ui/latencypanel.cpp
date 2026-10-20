@@ -1,6 +1,7 @@
 #include "latencypanel.h"
 #include "core/designtokens.h"
 #include "core/devicemanager.h"
+#include "core/linkprobe.h"
 #include "core/theme.h"
 #include "icons.h"
 #include "widgets.h"
@@ -80,6 +81,15 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         bigValue_->setFont(uiMonoFont(tokens::kFont28, QFont::Bold));
         col->addWidget(caption);
         col->addWidget(bigValue_);
+
+        // 读数底下那行小字：**说明这个数是量到谁的**。
+        // 传输层没落地时测的是本机到默认网关的真实往返（ICMP RTT÷2），
+        // 不写清楚就容易被当成「到某台对端的延迟」。
+        measureNote_ = new QLabel(row);
+        measureNote_->setFont(uiFont(tokens::kFont11));
+        measureNote_->setStyleSheet(
+            QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+        col->addWidget(measureNote_);
 
         // 设计稿：这一行是 align-items:flex-end——两列**底对齐**。
         // 早先两列都是顶对齐，链路名（大数字那列更高）被挤到行底之外，
@@ -183,13 +193,11 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
     connect(&manager, &DeviceManager::sampled, this, &LatencyPanel::onSampled);
 
     refresh();
-    // 首屏在第一次真实采样到达前没有历史；prime() 按 mock 源的抖动带铺一组
-    // 占位样本，全推同一个 seed 会让 12 根柱子齐平，既不像设计稿的 22~44px
-    // 起伏，也看不出「采样在动」。首次 sampled() 到达后即被真实数据顶掉。
-    chart_->prime(manager.activeLatencyMs());
-    // 徽章初值跟着 prime 的种子走：否则首屏要等第一个 2 秒采样才变，
-    // 展开图表区先看到的是一个「均值 --」的空徽章。
-    refreshChartBadge();
+    // 图表**不从假数据起手**。早先这里调 prime()，按 mock 源的抖动带铺一组
+    // 占位样本，理由是「不然一打开就是一块 70px 的空白」——可那些柱子是从没
+    // 量过的数，12 根齐平，看着像在动其实全是编的。现在图表从空开始，随真实
+    // 采样一根根长出来（每 2 秒一根，24 秒填满），空的时候画布上写「等待采样」。
+    // 徽章初值也跟着诚实：没有样本就是「均值 --」。
 }
 
 QWidget *LatencyPanel::buildThresholdSection()
@@ -305,25 +313,38 @@ void LatencyPanel::refresh()
 {
     auto &manager = DeviceManager::instance();
     const Device *active = manager.activeDevice();
-    const bool online = active != nullptr && active->online;
+    // 有读数 ≠ 设备在线：读数是「没测到」时是 --，不是 0.0ms。
     const double ms = manager.activeLatencyMs();
-    const Quality q = Theme::qualityOf(ms, online);
+    const bool hasReading = ms >= 0.0;
+    const Quality q = Theme::qualityOf(ms, hasReading);
 
     if (bigValue_ != nullptr) {
-        bigValue_->setText(online ? QStringLiteral("%1ms").arg(ms, 0, 'f', 1)
-                                  : QStringLiteral("--"));
+        bigValue_->setText(hasReading ? QStringLiteral("%1ms").arg(ms, 0, 'f', 1)
+                                      : QStringLiteral("--"));
         bigValue_->setStyleSheet(
             QStringLiteral("color:%1").arg(css(Theme::instance().color(q).text)));
     }
     if (linkLabel_ != nullptr) {
         linkLabel_->setText(active != nullptr ? linkName(active->link) : QStringLiteral("—"));
     }
+    if (measureNote_ != nullptr) {
+        // 这一行必须说清「量的是谁」。传输层落地前没有对端，测的是本机到
+        // 默认网关的 ICMP 往返；照实写，别让用户以为是到某台对端的延迟。
+        const QString gw = LinkProbe::instance()->target();
+        if (gw.isEmpty()) {
+            measureNote_->setText(tr("无默认路由，链路延迟不可测"));
+        } else if (hasReading) {
+            measureNote_->setText(tr("实测网关 %1 · ICMP RTT÷2").arg(gw));
+        } else {
+            measureNote_->setText(tr("等待对 %1 的采样").arg(gw));
+        }
+    }
     if (titleDot_ != nullptr) {
         titleDot_->setQuality(q);
-        titleDot_->setPulsing(online);
+        titleDot_->setPulsing(hasReading);
     }
     if (titleLatency_ != nullptr) {
-        titleLatency_->setLatency(ms, online);
+        titleLatency_->setLatency(ms, hasReading);
     }
 
     // 分设备列表
@@ -344,11 +365,17 @@ void LatencyPanel::refresh()
             QString hint = tr("离线");
             if (d.online) {
                 hint = (d.isLocal ? tr("本机") : d.platformLabel) +
-                       QStringLiteral(" · ") + linkName(d.link) +
-                       tr(" · 丢包 %1%").arg(d.packetLoss, 0, 'f', 1);
+                       QStringLiteral(" · ") + linkName(d.link);
+                if (!d.address.isEmpty()) {
+                    hint += QStringLiteral(" · ") + d.address;
+                }
+                // 丢包率 -1 = 还没统计到样本，写「丢包 0.0%」是编的。
+                if (d.packetLoss >= 0.0) {
+                    hint += tr(" · 丢包 %1%").arg(d.packetLoss, 0, 'f', 1);
+                }
             }
             auto *lat = new LatencyChip();
-            lat->setLatency(d.latencyMs, d.online);
+            lat->setLatency(d.latencyMs, d.latencyMs >= 0.0);
 
             // 设计稿每行名字前面带设备类型图标（笔记本 / 台式机 / 平板）。
             auto *title = new QWidget(this);

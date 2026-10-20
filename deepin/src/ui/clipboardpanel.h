@@ -22,8 +22,11 @@ struct ClipEntry {
     QString kind;         // text / code / link / image：分段控件的过滤依据
     QString text;         // 单行预览
     QByteArray raw;       // 原始载荷，推送时用
-    QString source;       // 「MacBook Pro」
+    QString source;       // 来源：本机主机名 / 「对端」
     int agoSecs = 0;
+    // 条目产生的时刻（毫秒）。列表上的「12s」是**算出来的**，不是写死的：
+    // 写死一个秒数，条目在历史里躺一小时也还写着「12s」。
+    qint64 atMs = 0;
     bool oversize = false;   // 超 63,240 B 上限，不入库（设计稿的「超限」）
 };
 
@@ -34,14 +37,16 @@ public:
 
     void reloadHistory();
 
+    // 把**本机系统剪贴板**当前的内容收进历史。
+    //
+    // 剪贴板同步在传输层落地前是没有对端的，可这一屏的内容并不需要等对端：
+    // 用户本机复制的东西就是真数据。以前这一屏在运行期永远是空的（历史只在
+    // --snapshot 里被塞过一批假的），看上去像坏了；现在它记的是用户自己
+    // 复制过的真实内容。
+    void captureLocalClipboard();
+
     // 托盘徽标用的条目数（只读）。
     int historyCount() const { return history_.size(); }
-
-    // 仅 --snapshot 用：无头环境没有对端设备，历史永远是空的，ClipRow 的双行
-    // 排版、分段控件的过滤、搜索框的匹配这三条路径一条都跑不到。种一批与
-    // clipboard.html 同款的数据进去，截图才能和设计稿逐项对照。正常运行
-    // 永远不会调它。
-    void seedForSnapshot();
 
 public Q_SLOTS:
     void clearHistory();

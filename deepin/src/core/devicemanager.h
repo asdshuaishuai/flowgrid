@@ -28,6 +28,9 @@ struct Device {
     QString name;
     QString abbrev;          // 设备卡方块里的两字标识，设计稿里由设备自带
     QString platformLabel;   // 「macOS 15」「Windows 11」…
+    // 设备的 IP。本机是真实的 IPv4，对端由发现层给出——界面上那行小字
+    // 写的是这台设备的地址，不能拿一条写死的字符串充数。
+    QString address;
     // 行首类型图标名：laptop / monitor / tablet。与配对屏的 DiscoveredDevice::icon
     // 同一套取值，由数据源给出——设备种类是发现层的信息，界面从 platformLabel
     // 反推只会把「KDE Plasma 6」这类字符串猜成桌面的概率和规则写死在 UI 里。
@@ -37,8 +40,12 @@ struct Device {
     bool isActive = false;
     bool online = false;
     int hotkeyIndex = 0;     // 1..3 快速切换位；0 表示未分配
-    double latencyMs = 0.0;
-    double packetLoss = 0.0;
+    // 最近一次延迟读数（毫秒）。**-1 表示还没有真实读数**——设备刚上线、
+    // 或链路还没测通。0 会被界面显示成「0.0ms」，那是个不存在的读数，
+    // 所以「无读数」必须用 -1 表达，不能用 0。
+    double latencyMs = -1.0;
+    // 丢包率（百分比）。-1 表示未知（还没统计到样本）。
+    double packetLoss = -1.0;
     qint64 lastSeenMs = 0;   // 0 表示从未连上
 };
 
