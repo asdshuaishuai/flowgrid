@@ -128,7 +128,14 @@ Go 协议库是 wire format 的唯一权威实现。未来任何平台的客户�
 > 日常改代码前先读这节。文档语言：中文为主 + 英文术语。
 
 ### 项目现状
-FlowGrid 是一套键鼠共享软件（类 Synergy/Logitech Flow）。仓库当前包含：**协议层**（Go 协议库：wire format 编解码 + 会话层 + cgo 桥）、**deepin 客户端**（`deepin/`，DTK6 C++，8 屏）、**Windows 客户端**（`windows/`：Go 会话核心 fgcore + WPF UI，骨架阶段）。客户端一律直接消费 protocol 的会话 API（FrameStream / ClipboardSession / FileSender / FileReceiver），只写 GUI 与传输绑定。最早的 kde/ 客户端与 deepin DTK 实践经验可从 git 历史（e8d205c / d1e71e4）找回。`CLAUDE.md` 保留设计期架构文档（双协议、五层模型仍有效），实现现状以本文件和实际代码为准。
+FlowGrid 是一套键鼠共享软件（类 Synergy/Logitech Flow）。仓库现含：
+
+- **Go 协议库**（`protocol/`）：wire format 编解码 + 会话层（剪贴板/文件传输）+ cgo 桥，仍是唯一权威实现；
+- **macOS 客户端**（`mac/`）：`design/unified/` 视觉体系 + Go 协议库 FFI 接线；**DirectLink TCP 传输与 HAL（CGEventTap 捕获/注入）已接通**（双实例实测：握手/剪贴板/文件/延迟）；DTLS/ECDH、mDNS/BLE 发现与多设备路由留接缝（见 `mac/README.md`）；
+- **Windows 客户端**（`windows/`）：Go 会话核心 fgcore + WPF UI，骨架阶段；
+- **deepin 客户端**（`deepin/`，DTK6 C++，8 屏）。
+
+客户端一律直接消费 protocol 的会话 API（FrameStream / ClipboardSession / FileSender / FileReceiver），只写 GUI 与传输绑定；协议库不写平台逻辑。旧 kde 客户端实现可从 git 历史（e8d205c / d1e71e4）找回。`CLAUDE.md` 保留设计期架构文档（双协议、五层模型仍有效），实现现状以本文件和实际代码为准。
 
 ### 目录地图
 ```
@@ -139,8 +146,11 @@ protocol/session.go       — FrameStream：会话层发送接缝（seq/时钟/t
 protocol/clipboard.go     — ClipboardSession：剪贴板收发会话（§5.3 分段/重组/超时）
 protocol/filetransfer.go  — FileSender/FileReceiver：文件传输状态机（§7.4，SHA-256 校验）
 protocol/cgo/bridge.go    — cgo 桥，构建产物 c-archive；句柄从 1 起，缓冲经 fg_free_buffer 释放
-deepin/                   — deepin 客户端（DTK6 C++ Widgets，8 屏）
+mac/                      — macOS 客户端（XcodeGen + SPM；构建入口与坑见 mac/README.md）
+mac/FlowGridCore/         — SPM 包：CFlowGrid（cgo 头）/ FlowGridCore（域模型）/ FlowGridGo（FFI + 传输 + HAL）
+mac/FlowGridUI/           — SPM 包：设计系统 / 图标引擎 / 组件 / 8 屏
 windows/                  — Windows 客户端：fgcore（Go 会话核心，直引 protocol）+ FlowGrid.UI（WPF）；IPC 契约见 openspec/changes/windows-client/specs/windows-ipc
+deepin/                   — deepin 客户端（DTK6 C++ Widgets，8 屏）
 openspec/                 — 规格驱动开发：changes/archive/<日期-名称>/ + specs/
 ```
 
@@ -150,18 +160,20 @@ openspec/                 — 规格驱动开发：changes/archive/<日期-名�
 
 ### 构建与测试
 ```bash
-cd protocol && go test .                  # 协议根包（110+ 用例）
-cd windows && go test ./...               # Windows 核心（IPC + mDNS 桥接）
-dotnet build windows/ui                   # WPF UI
+cd protocol && go test .                      # 协议根包（110+ 用例）
+cd protocol && CGO_ENABLED=1 go test ./cgo    # cgo 桥（需 C 工具链）
+cd windows && go test ./...                   # Windows 核心（IPC + mDNS 桥接）
+dotnet build windows/ui                       # WPF UI
 powershell -NoProfile -ExecutionPolicy Bypass -File windows/smoke.ps1
-                                          # IPC 端到端冒烟（需先起 windows/fgcore.exe）
+                                              # IPC 端到端冒烟（需先起 windows/fgcore.exe）
+cd mac && make test                           # swift test：域逻辑 + FFI/会话 + 真实 TCP 链路集成
+cd mac && make build                          # 构建 app（preBuildScript 自动按需编 c-archive）
 ```
 
-### 当前检出环境（Windows 开发机，2026-10）
-- **可跑**：`cd protocol && go test .`（全绿）；`cd windows && go test ./...`（全绿）；`dotnet build windows/ui`（.NET 8 SDK 本机已装）。
-- **不可跑**：`go test ./...` 会挂在 cgo 子包——bridge.go 是 cgo 文件，本机无 gcc 时 `CGO_ENABLED=0`，cgo 文件被整体排除，报 `undefined: registry`。装 MinGW-w64（gcc 入 PATH）后 cgo 测试与 c-archive 生成才可用；**新增/修改 cgo 导出后必须在 Linux 上重新生成 cgo.h**。
-- 本机直连 GitHub 不通，origin 暂指向 ghfast.top 镜像（只读加速）；**push 前必须** `git remote set-url origin https://github.com/asdshuaishuai/flowgrid.git`。
-- Shell 是 CMD（无 ls/cat/head/tail，用 dir/type/findstr）；控制台 GBK 编码下 git log 中文显示乱码，属显示问题（`chcp 65001` 可解）。
+### 当前检出环境
+- **macOS 开发机（本检出，2026-10）**：`cd protocol && go test ./...`（含 cgo 子包，clang 可用）；`cd mac && make test && make build` 全绿。测试 runner 打开**外置卷**上的测试包会阻塞在 `open`（TCC 已放行也卡）→ mac 测试无宿主、派生数据放内置盘（`~/Library/Caches/FlowGrid/DerivedData`）；全屏截图受屏幕录制权限限制，窗口级 `screencapture -l <windowID>` 可用。
+- **Windows 开发机（另一检出，2026-10）**：`cd protocol && go test .`、`cd windows && go test ./...`、`dotnet build windows/ui` 全绿；无 gcc 时 cgo 子包不可用（`CGO_ENABLED=0` 报 `undefined: registry`），装 MinGW-w64 后可跑且 c-archive 可用；该机直连 GitHub 不通时 origin 可临时指向 ghfast.top 镜像（**push 前必须**改回 `https://github.com/asdshuaishuai/flowgrid.git`）；Shell 为 CMD、GBK 乱码可用 `chcp 65001` 缓解。
+- **通用**：新增/修改 cgo 导出后必须在 Linux 上重新生成 `cgo.h`（本机同版本 Go 的生成结果可作预检，逐字节一致）。
 
 ### 架构边界（改动的固定顺序）
 wire format / 键码 / 握手有任何变动：**PROTOCOL.md → protocol/ Go 库 → protocol/cgo →（未来客户端）**。协议库不写平台专属逻辑——uinput / SendInput / IOKit / 传输加密（DTLS/TLS）都属于未来客户端的实现范围；协议库只做编解码、完整性与会话状态机。cgo 是未来 C/Rust 客户端的唯一 FFI 面：改 Go 导出签名必须同步 cgo.h。

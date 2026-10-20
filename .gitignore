@@ -34,6 +34,13 @@ protocol/cgo/*.a
 libflowgrid_*.a
 libflowgrid_*.h
 
+# mac client
+mac/Vendor/
+mac/*.xcodeproj/
+.build/
+.swiftpm/
+DerivedData/
+
 # .NET (windows/ui)
 windows/ui/bin/
 windows/ui/obj/

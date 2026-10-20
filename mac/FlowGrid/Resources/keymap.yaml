@@ -1,0 +1,29 @@
+version: "1.0"
+# FlowGrid 示例键位规则（协议 §11 格式）。
+# 键码为 USB HID Usage ID（0xE0 左 Ctrl / 0xE1 左 Shift / 0xE2 左 Alt / 0xE3 左 GUI）。
+rules:
+  - fromOS: windows
+    toOS: macos
+    fromKey: 0xE0   # Ctrl → ⌘（复制/粘贴）
+    toKey: 0xE3
+    context: global
+  - fromOS: windows
+    toOS: macos
+    fromKey: 0xE3   # Win → ⌥（系统快捷键）
+    toKey: 0xE2
+    context: global
+  - fromOS: windows
+    toOS: macos
+    fromKey: 0xE2   # Alt → Ctrl（终端应用）
+    toKey: 0xE0
+    context: global
+  - fromOS: linux
+    toOS: macos
+    fromKey: 0xE0   # Ctrl 直通
+    toKey: 0xE0
+    context: global
+  - fromOS: macos
+    toOS: windows
+    fromKey: 0xE3   # ⌘ → Ctrl（反向，回切 Windows）
+    toKey: 0xE0
+    context: global

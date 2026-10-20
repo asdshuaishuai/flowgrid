@@ -1,0 +1,65 @@
+name: FlowGrid
+
+options:
+  bundleIdPrefix: com.flowgrid
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  FlowGridCore:
+    path: FlowGridCore
+  FlowGridUI:
+    path: FlowGridUI
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEAD_CODE_STRIPPING: YES
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+
+targets:
+  FlowGrid:
+    type: application
+    platform: macOS
+    sources:
+      - path: FlowGrid
+    dependencies:
+      - package: FlowGridCore
+        product: FlowGridCore
+      - package: FlowGridCore
+        product: FlowGridGo
+      - package: FlowGridUI
+        product: FlowGridUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.flowgrid.FlowGrid
+        PRODUCT_NAME: FlowGrid
+        INFOPLIST_FILE: FlowGrid/Info.plist
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ENABLE_HARDENED_RUNTIME: NO
+        COMBINE_HIDPI_IMAGES: YES
+        LIBRARY_SEARCH_PATHS:
+          - "$(SRCROOT)/Vendor"
+        OTHER_LDFLAGS:
+          - "-lflowgrid"
+          - "-framework"
+          - "CoreFoundation"
+    preBuildScripts:
+      - name: Build Go protocol library (c-archive)
+        script: "\"$SRCROOT/scripts/build-go.sh\" --if-needed --no-smoke"
+        basedOnDependencyAnalysis: false
+
+schemes:
+  FlowGrid:
+    build:
+      targets:
+        FlowGrid: all
+    run:
+      config: Debug
