@@ -225,11 +225,23 @@ register_dsg_root() {
     fi
 
     local updated="${current}:${root}"
-    ${SUDO} mkdir -p "${dropin_dir}"
+    ${SUDO} mkdir -p "${dropin_dir}" || {
+        note "写不了 ${dropin_dir}，没法注册 ${root}"
+        return 1
+    }
     printf '[Service]\n# 由 deepin/install.sh 加的：把 %s 也列为 meta 根。\n# /usr 在本机是只读 overlay，规范根 /usr/share/dsg 建不出来。\nEnvironment=DSG_DATA_DIRS=%s\n' \
-        "${root}" "${updated}" | ${SUDO} tee "${dropin_file}" >/dev/null
-    ${SUDO} systemctl daemon-reload
-    ${SUDO} systemctl restart "${unit}"
+        "${root}" "${updated}" | ${SUDO} tee "${dropin_file}" >/dev/null || {
+        note "写不了 drop-in ${dropin_file}"
+        return 1
+    }
+    # daemon-reload / restart 失败不该让整个安装崩掉（set -e 会直接退出）——
+    # drop-in 已经落盘，管理员自己 systemctl restart 一下就行。
+    ${SUDO} systemctl daemon-reload || note "systemctl daemon-reload 失败"
+    if ! ${SUDO} systemctl restart "${unit}"; then
+        note "重启 ${unit} 失败——drop-in 已写好，手动执行："
+        note "  systemctl daemon-reload && systemctl restart ${unit}"
+        return 1
+    fi
     ok "已把 ${root} 注册进守护进程的 DSG_DATA_DIRS（并重启了服务）"
     ok "  DSG_DATA_DIRS=${updated}"
 }
