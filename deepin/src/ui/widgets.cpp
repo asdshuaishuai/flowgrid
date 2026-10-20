@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QGraphicsDropShadowEffect>
 #include <QGuiApplication>
+#include <QEasingCurve>
 #include <QEnterEvent>
 #include <QFocusEvent>
 #include <QGridLayout>
@@ -42,6 +43,56 @@ void applyBoxStyle(QWidget *w, const QString &declarations)
 
 
 namespace {
+
+// CSS cubic-bezier 缓动求值。
+//
+// 设计稿 --ease-state 是 cubic-bezier(.4, 0, .2, 1)，mac 端 FGMotion.chart 是
+// timingCurve(0.4, 0, 0.2, 1)——同一条曲线，两端必须一样。
+//
+// Qt 的 QEasingCurve::Type 里没有 CSS 的 cubic-bezier。最接近的是 BezierSpline：
+// addCubicBezierSegment(c1, c2, endPoint) 配 setType(BezierSpline) 算出来的
+// 数值跟 CSS 一致（t=0.25/0.5/0.75 → 0.236587 / 0.775561 / 0.959368，
+// 与浏览器同一条曲线）。
+//
+// 但这里没有直接用它：Qt 6.8 的 addCubicBezierSegment **不会**把 type 切成
+// BezierSpline（实测调用后 type 仍是 0 = Linear），必须自己再 setType 一次；
+// 忘了这一步，动画会静悄悄地退化成匀速线性——曲线看着「有点快」，说不清哪儿不对。
+//
+// 干脆按 CSS 的定义自己算一遍：把时间 t 映射到 (X(t), Y(t))，再对给定的进度 x
+// 反解出 t（X 单调，二分即可），输出 Y(t)。跟浏览器同一套语义，不依赖 Qt 的
+// type 切换时机。
+qreal cssCubicBezier(qreal progress, qreal x1, qreal y1, qreal x2, qreal y2)
+{
+    if (progress <= 0.0) {
+        return 0.0;
+    }
+    if (progress >= 1.0) {
+        return 1.0;
+    }
+    auto curve = [=](qreal t, qreal a, qreal b) {
+        const qreal mt = 1.0 - t;
+        return 3.0 * mt * mt * t * a + 3.0 * mt * t * t * b + t * t * t;
+    };
+    // 二分反解 t：X(t) 单调递增，32 次迭代精度约 2^-32，足够。
+    qreal lo = 0.0;
+    qreal hi = 1.0;
+    qreal t = progress;
+    for (int i = 0; i < 32; ++i) {
+        t = 0.5 * (lo + hi);
+        if (curve(t, x1, x2) < progress) {
+            lo = t;
+        } else {
+            hi = t;
+        }
+    }
+    return curve(t, y1, y2);
+}
+
+// 设计稿 --ease-state: cubic-bezier(.4, 0, .2, 1)
+qreal easeState(qreal progress)
+{
+    return cssCubicBezier(progress, 0.4, 0.0, 0.2, 1.0);
+}
 
 // 与面板侧同一个坑：柔和底色靠 alpha 叠出来，HexRgb 会把它压成实色。
 QString cssColor(const QColor &c)
@@ -630,13 +681,50 @@ void BarChart::pushSample(double ms)
     while (samples_.size() > tokens::kChartBars) {
         samples_.erase(samples_.begin());
     }
+    animateTo(samples_);
     update();
 }
 
 void BarChart::clear()
 {
     samples_.clear();
+    animateTo(samples_);
     update();
+}
+
+// 柱高过渡：设计稿 .chart__bar 的 transition 是 height 500ms var(--ease-state)，
+// mac 端 FGLatencyChart 也用 `.animation(FGMotion.chart, value: samples)`。
+//
+// 早先这里是瞬变——新样本一进来柱子直接蹦到位。两秒一根的采样节奏下，一根柱子
+// 每次都是「突然长高」，扫一眼图表根本看不出是「长」出来的，只看到一格格子在闪。
+// 过渡之后新柱从基线往上长，老柱同时平滑回落，图形才有连续感。
+void BarChart::animateTo(const std::vector<double> &target)
+{
+    // 起点 = 当前画出来的高度；长度按新的样本数补齐（多出来的槽位从 0 长起）。
+    from_ = shown_;
+    from_.resize(target.size(), 0.0);
+    shown_ = from_;
+
+    if (anim_ == nullptr) {
+        anim_ = new QVariantAnimation(this);
+        anim_->setDuration(tokens::kDurChart);
+        // 缓动曲线取设计稿 --ease-state: cubic-bezier(.4, 0, .2, 1)，
+        // 与 mac 端 FGMotion.chart 的 timingCurve(0.4, 0, 0.2, 1) 同一条。
+        QEasingCurve curve;
+        curve.setCustomType(&easeState);
+        anim_->setEasingCurve(curve);
+        connect(anim_, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
+            const qreal t = v.toReal();
+            for (size_t i = 0; i < shown_.size(); ++i) {
+                shown_[i] = from_[i] + (samples_[i] - from_[i]) * t;
+            }
+            update();
+        });
+    }
+    anim_->stop();
+    anim_->setStartValue(0.0);
+    anim_->setEndValue(1.0);
+    anim_->start();
 }
 
 void BarChart::paintEvent(QPaintEvent *)
@@ -657,12 +745,13 @@ void BarChart::paintEvent(QPaintEvent *)
     QPainter pt(this);
     pt.setRenderHint(QPainter::Antialiasing, true);
 
-    // 峰值取样本最大值，但至少按 5ms 归一：否则同一链路上几个几乎相同的
-    // 采样会被放大成满格起伏，看着剧烈其实没变。
-    double peak = 5.0;
-    for (double v : samples_) {
-        peak = qMax(peak, v);
-    }
+    // 满格 = 5ms，写死不随样本浮动。
+    //
+    // 参照 mac 端 FGLatencyChart：`fraction = min(max(value / fullScaleMs, 0), 1)`，
+    // fullScaleMs 默认 5.0，柱高 = fraction × 图高。刻度固定的好处是同一个数在
+    // 任何时刻都是同一根高度——早先按「样本最大值（至少 5ms）」归一，一根尖峰
+    // 就能把整幅图重新缩放，柱高会跟着时间漂移，两幅截图没法比。
+    constexpr double kFullScaleMs = 5.0;
     // 设计稿 ui.css .chart：padding 12px 12px 8px，柱子在内容盒里 flex:1 排开。
     // 这块内边距不能省——省掉之后柱子左右直接贴到卡片描边上，而下面 .chart__axis
     // 的「-60s / 现在」是带 12px 左右的，于是柱子和轴标签两行对不齐；柱子又因为
@@ -685,10 +774,12 @@ void BarChart::paintEvent(QPaintEvent *)
     constexpr int kSlots = 12;
     const qreal barW =
         qMax<qreal>(3.0, (innerW - gap * (kSlots - 1)) / kSlots);
-    // 内容盒高 50px，样例数据的柱高在 22~44px 之间波动。这里照抄这个区间而不是
-    // 按比例缩满，否则矮柱会被拉成近乎正方的色块。
-    const qreal maxBar = qMin(44.0, innerH);
-    const qreal minBar = qMin(22.0, maxBar * 0.5);
+    // 柱高纯按比例算，**不设最小高度**（mac 端 FGLatencyChart 的 .frame(height:
+    // fraction * plotHeight)，minHeight 为 0）。
+    //
+    // 早先这里保底 22px：延迟只有 0.9ms（满格 5ms，也就是 18%）也照样画成
+    // 半人高的一根，四四方方杵在图里——高度不再表示数值，看着像「延迟很高」。
+    // 按比例算下来同样 0.9ms 只有 9px，是一道贴着基线的矮条，读数才对得上。
     const qreal base = padTop + innerH;   // 柱底基线
 
     // 柱子**右对齐**：最新的一根贴着「现在」，没采够的格子空在左边。
@@ -699,13 +790,40 @@ void BarChart::paintEvent(QPaintEvent *)
     // 是一分钟前的。右对齐之后，缺的是历史（左边空白），不是当下。
     const int n = samples_.size();
     const int firstSlot = kSlots - n;
+
+    // shown_ 与 samples_ 始终同长（animateTo 里一起 resize）。万一不同长
+    // （比如外部直接动过 samples_），就退回真值，别让越界读把图画飞。
+    if (shown_.size() != samples_.size()) {
+        shown_ = samples_;
+    }
+
+    // 主色标在**最后一个非零样本**上，不是在最后一个样本上。
+    //
+    // 参照 mac 端 FGLatencyChart：`isRecent = index == samples.lastIndex(where: { $0 > 0 })`。
+    // 采集中断时（比如网络断了、采样线程停了）末尾会拖着一串 0；要是按「最后一个」
+    // 判定，那根 0 柱就被涂成主色，看起来像「刚刚有一次很棒的延迟」，实际是压根
+    // 没采到数。标在最后一个非零上，主色才真的等于「最近一次有效读数」。
+    int recentSlot = -1;
+    for (int i = n - 1; i >= 0; --i) {
+        if (samples_[i] > 0.0) {
+            recentSlot = i;
+            break;
+        }
+    }
+
     for (int i = 0; i < n; ++i) {
-        const qreal ratio = qBound(0.0, samples_[i] / peak, 1.0);
-        const qreal h = minBar + (maxBar - minBar) * ratio;
+        // 画出来的高度是插值中的 shown_，不是真值 samples_——真值直接画就成了瞬变。
+        const qreal ratio = qBound(0.0, shown_[i] / kFullScaleMs, 1.0);
+        const qreal h = ratio * innerH;
+        // 0 样本高度就是 0，整根看不见。早先保底 22px 时这一条走不到；去掉保底后
+        // 0 会画出一个半径为 0 的退化圆弧路径，留着只会让 arcTo 收到空矩形警告。
+        if (h <= 0.0) {
+            continue;
+        }
         const qreal x = padX + (firstSlot + i) * (barW + gap);
         const qreal y = base - h;
         pt.setPen(Qt::NoPen);
-        pt.setBrush(static_cast<size_t>(i) + 1 == samples_.size() ? p.accent : p.accentSoft);
+        pt.setBrush(i == recentSlot ? p.accent : p.accentSoft);
 
         // 设计稿是 border-radius: pill pill 0 0（两个上圆角 + 两个下直角）。
         // 早先用 addRoundedRect 再 addRect 去「削平底部」，但 QPainterPath 默认
@@ -948,10 +1066,17 @@ void IconButton::paintEvent(QPaintEvent *)
     pt.setRenderHint(QPainter::Antialiasing, true);
     if (hovered_) {
         pt.setPen(Qt::NoPen);
-        pt.setBrush(p.surfaceHi);
+        // 设计稿 .icon-btn:active 是 surface-press；之前只做了 hover 那一档，
+        // 按下去和松手是同一个颜色，按钮看着「没反应」。
+        pt.setBrush(isDown() ? p.surfacePress : p.surfaceHi);
         pt.drawRoundedRect(rect(), tokens::kRadiusCtl, tokens::kRadiusCtl);
     }
-    const int s = tokens::kIconButtonSize - 6;
+    // 盒子里那枚图标按设计稿的 .ic 默认档走（16px），不是把 26px 的控件画满。
+    //
+    // 设计稿 .icon-btn 是 --h-iconbtn(26px) 见方 + 里面一枚 .ic（16px），
+    // 留白 5px。之前这里写的是 kIconButtonSize - 6 = 20px：图标撑到离盒边只剩
+    // 3px，齿轮的齿、关闭叉的尖都顶在边上，看着像「贴边的一团」而不是一枚按钮。
+    const int s = tokens::kIconMd;
     pt.drawPixmap((width() - s) / 2, (height() - s) / 2,
                   icons::icon(iconName_, s, hovered_ ? p.text1 : p.text3).pixmap(s, s));
 

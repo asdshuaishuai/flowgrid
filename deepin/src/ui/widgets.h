@@ -255,7 +255,14 @@ protected:
     void paintEvent(QPaintEvent *) override;
 
 private:
+    void animateTo(const std::vector<double> &target);
+
+    // samples_ 是真值（刚从采样器拿到的数）；shown_ 是当前**画在屏幕上**的高度，
+    // 由 500ms 过渡（设计稿 .chart__bar transition: height 500ms）插值过来。
     std::vector<double> samples_;
+    std::vector<double> shown_;
+    std::vector<double> from_;
+    QVariantAnimation *anim_ = nullptr;
 };
 
 // ── 进度条：5px pill 轨道 + 主色填充（ui.css .bar）─────────────────────

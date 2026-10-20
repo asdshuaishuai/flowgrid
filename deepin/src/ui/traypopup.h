@@ -66,6 +66,7 @@ private:
     QWidget *buildToggleRow(const QString &label, bool on,
                             const std::function<void(bool)> &onWrite);
     QWidget *buildSeparator();
+    QWidget *buildBottomBar();
     void syncShadowPlate();
     void restyle();
 

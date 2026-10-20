@@ -267,8 +267,9 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
 
     // ── 底部入口 ──
     //
-    // 「设置」和「退出 FlowGrid」已经挪到浮板右上角做成图标按钮（见 buildHead），
-    // 底部只留「键位映射」这一行——它是功能入口，不是开关，留在列表里更合适。
+    // 「设置」和「退出 FlowGrid」做成底部工具条里的两个图标按钮（见
+    // buildBottomBar），这里只留「键位映射」这一行——它是功能入口，不是开关，
+    // 留在列表里更合适。
     {
         // 设计稿这行右侧是 .tray__kbd 的快捷键提示（Ctrl K）。
         QList<QWidget *> rows{
@@ -277,6 +278,10 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
         };
         cardLayout_->addWidget(buildGroup(QString(), rows));
     }
+
+    // 底部工具条（设置 / 退出），与 mac 端 TrayView.bottomBar 一致。
+    cardLayout_->addWidget(buildSeparator());
+    cardLayout_->addWidget(buildBottomBar());
 
     // 设置屏改动（或「恢复默认」）后，托盘的快捷开关要跟着变。
     QObject::connect(&Settings::instance(), &Settings::changed, this, &TrayPopup::refresh);
@@ -378,23 +383,45 @@ QWidget *TrayPopup::buildHead()
                         .arg(css(p.ok.soft), QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
     hl->addWidget(pill);
 
-    // 右上角：设置 / 退出 两个图标按钮。
+    // 头部只有「图标 + 标题 + 状态胶囊」，右上角不放别的。
     //
-    // 原先是底部两行带文字的导航行（「设置」「退出 FlowGrid」），占掉两行高度、
-    // 把「键位映射」挤到很下面，而这两个动作其实只是「看一眼就点」的事。改成
-    // 右上角的图标按钮后，底部只留「键位映射」一行。
-    //
-    // 快捷键提示从行尾的 .tray__kbd 挪进 tooltip——文字行没了，提示不能跟着
-    // 一起消失，tooltip 里写全（含修饰键，跟着设置屏的「切换热键」走）。
+    // 「设置 / 退出」两个图标按钮原先挂在头部右上角（见 buildBottomBar 的说明），
+    // 现在挪到了底部工具条——和 mac 端 TrayView.bottomBar 一致，也是设计稿
+    // .tray__head 的样子：头只负责「这是哪个应用 + 现在什么状态」。
+    return head;
+}
+
+// 底部工具条：右对齐的「设置 / 退出」两个图标按钮。
+//
+// 位置参照 mac 端 TrayView.bottomBar：托盘的头只留标题和状态胶囊，设置/退出
+// 这两个「看一眼就点」的动作放在底部工具条里（上方一条 hairline 隔开）。
+//
+// 之前这两个按钮挂在头部右上角，带来的问题：
+//   · 头部变成三段（图标 / 标题 / 胶囊 / 按钮），右边一坨按钮跟左边的标题
+//     不齐，标题栏看着像「塞了两排东西」；
+//   · 设计稿 .tray__head 与 mac 端都没有这两个按钮，浮层头部跟我们自己的
+//     参照实现对不上（「内外不一致」）；
+//   · 底部最后一行「键位映射」直接贴着卡片的圆角收口，没有留白，看着像被裁了。
+//
+// 快捷键提示写进 tooltip：文字行没了，提示不能跟着一起消失（tooltip 里写全，
+// 含修饰键，跟着设置屏的「切换热键」走）。
+QWidget *TrayPopup::buildBottomBar()
+{
+    auto *bar = new QWidget(this);
+    auto *bl = new QHBoxLayout(bar);
+    bl->setContentsMargins(tokens::kS3, tokens::kS2, tokens::kS3, tokens::kS2);
+    bl->setSpacing(tokens::kS1);
+    bl->addStretch(1);
+
     auto *settingsBtn = new IconButton(QStringLiteral("settings"),
-                                       tr("设置 (%1)").arg(kbdText(",")), head);
+                                       tr("设置 (%1)").arg(kbdText(",")), bar);
     connect(settingsBtn, &IconButton::clicked, this, [this] { Q_EMIT openSettings(); });
     auto *quitBtn = new IconButton(QStringLiteral("power"),
-                                    tr("退出 FlowGrid (%1)").arg(kbdText("Q")), head);
+                                    tr("退出 FlowGrid (%1)").arg(kbdText("Q")), bar);
     connect(quitBtn, &IconButton::clicked, this, [this] { Q_EMIT quitRequested(); });
-    hl->addWidget(settingsBtn);
-    hl->addWidget(quitBtn);
-    return head;
+    bl->addWidget(settingsBtn);
+    bl->addWidget(quitBtn);
+    return bar;
 }
 
 QWidget *TrayPopup::buildGroup(const QString &label, const QList<QWidget *> &rows)
@@ -438,8 +465,8 @@ QWidget *TrayPopup::buildNavRow(const QString &iconName, const QString &label, Q
         } else if (kind == QLatin1String("files")) {
             Q_EMIT openFiles();
         }
-        // 「设置」和「退出」没有这一支了：它们现在是右上角的图标按钮，
-        // 直接连自己的信号（见 buildHead），不再走导航行。
+        // 「设置」和「退出」没有这一支了：它们现在是底部工具条里的图标按钮，
+        // 直接连自己的信号（见 buildBottomBar），不再走导航行。
     });
     return row;
 }
