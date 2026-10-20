@@ -14,6 +14,7 @@ class QVBoxLayout;
 namespace fg {
 
 class Badge;
+class FgButton;
 class SegmentedControl;
 class StatusDot;
 
@@ -92,6 +93,10 @@ private:
     // 头部那颗 MIME 徽章跟着 current_ 走。设计稿上写死了 text/plain（示例数据），
     // 但这一屏是能拿到真实 MIME 的——收到一张图还挂着 text/plain 就是假话。
     Badge *mimeBadge_ = nullptr;
+    // 「写入本地」「推送」两个动作按钮。没有剪贴板内容时它们是禁用的——
+    // 点了没反应的控件比禁用更糟。
+    FgButton *writeBtn_ = nullptr;
+    FgButton *pushBtn_ = nullptr;
     QWidget *pill_ = nullptr;
     QLabel *pillLabel_ = nullptr;
     StatusDot *pillDot_ = nullptr;

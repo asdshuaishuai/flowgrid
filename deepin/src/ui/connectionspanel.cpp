@@ -626,6 +626,8 @@ void ConnectionsPanel::rebuildLayoutGrid()
             QStringLiteral("background:%1;color:%2;border:2px dashed %3;border-radius:%4px")
                 .arg(css(p.surface3), css(p.text3), css(p.line3))
                 .arg(QString::number(tokens::kRadiusCard)));
+        // 那个「+」看着像个能点的按钮，说清楚它是空位。
+        empty->setToolTip(tr("空位：设备上线后落在这里（布局拖动与持久化尚未接通）"));
         layoutGrid_->addWidget(empty, i / 3, i % 3, Qt::AlignCenter);
     }
 }
@@ -689,6 +691,17 @@ QWidget *ConnectionsPanel::buildLayoutSection()
     }
     lh->addStretch(1);
     vl->addWidget(legend);
+
+    // 这一整块是**示意**：拖动与持久化都还没接通，界面上必须写明白。
+    //
+    // 空槽画的是「+」，看上去就是个「添加设备」的按钮；在线设备那几格又能
+    // 悬停出「暂不可拖动」的提示。唯独空槽什么提示都没有——用户点下去什么
+    // 也不会发生，却以为这是能用的布局编辑器。按「未接通的功能要在界面上说
+    // 清楚」的要求，这里补一句。
+    auto *note = new QLabel(tr("布局拖动与持久化尚未接通，当前仅作示意"), body);
+    note->setFont(uiFont(tokens::kFont11));
+    note->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    vl->addWidget(note);
 
     auto *badge = new Badge(tr("拖动排布"), Badge::Variant::Neutral);
     return new Collapsible(tr("设备布局"), QStringLiteral("grid"), body, badge);

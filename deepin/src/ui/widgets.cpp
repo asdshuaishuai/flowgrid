@@ -829,6 +829,14 @@ void FgButton::paintEvent(QPaintEvent *)
     QPainter pt(this);
     pt.setRenderHint(QPainter::Antialiasing, true);
 
+    // ui.css .btn:disabled { opacity: .45 }。
+    //
+    // 这个按钮是自绘的，不吃样式表：只调 setEnabled(false) 的话按钮**长得跟
+    // 能点的一模一样**，用户点了才发现没反应。所以禁用态必须自己画出来。
+    if (!isEnabled()) {
+        pt.setOpacity(0.45);
+    }
+
     QColor bg = bg_;
     if (variant_ == Variant::Secondary) {
         bg = isDown() ? p.surfacePress : (hovered_ ? p.surfaceHi : p.surface);
@@ -1723,11 +1731,21 @@ EmptyState::EmptyState(const QString &iconName, const QString &title, const QStr
         d->setAlignment(Qt::AlignCenter);
         // .empty__desc 有 max-width:320px：不设上限的话一句说明能横穿整块浮板
         // （520 - 内容 14×2 = 492px），居中的一行字拉到那么宽很难看。
+        //
+        // 光设 maximumWidth 不够：QLabel 开了 wordWrap 之后，sizeHint 给出的宽度
+        // 是它自己「觉得能放几个字」的那个宽度（实测 12px 字约 13 个字 ≈ 156px），
+        // 于是说明文字在 156px 处折行——「从下面的拖放区选一个文件开 / 始」、
+        // 「传完或失败的文件会留在这 / 里」，断在词中间，一眼看过去像乱码。
+        //
+        // 这里按设计稿的语义自己定宽：短句就用它的自然宽（不折行），长句按
+        // 320px 上限折行。
+        const QFontMetrics fm(uiFont(tokens::kFont12));
+        const int natural = fm.horizontalAdvance(desc);
+        d->setFixedWidth(qMin(320, qMax(1, natural)));
         auto *holder = new QWidget(this);
         auto *hl = new QHBoxLayout(holder);
         hl->setContentsMargins(0, 0, 0, 0);
         hl->addStretch(1);
-        d->setMaximumWidth(320);
         hl->addWidget(d, 0, Qt::AlignTop);
         hl->addStretch(1);
         vl->addWidget(holder);

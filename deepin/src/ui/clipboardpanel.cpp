@@ -131,7 +131,12 @@ QString humanSize(qint64 bytes)
 QString specText(const ClipEntry &e)
 {
     if (e.raw.isEmpty()) {
-        return QStringLiteral("--");
+        // 空内容时照实说「暂无内容」。
+        //
+        // 早先这里写的是 "--"，界面上就只剩一个信息图标后面跟着两个横杠：
+        // 看不出是「没有内容」还是「有内容但取不到大小」，更看不出该按钮能不能
+        // 按。按「不假装已生效」的要求，空就是空，写明白。
+        return ClipboardPanel::tr("暂无内容");
     }
     const int perFrame = 248 - e.mime.toUtf8().size();
     if (perFrame <= 0) {
@@ -388,6 +393,7 @@ QWidget *ClipboardPanel::buildCurrent()
     fl->addStretch(1);
     auto *write = new FgButton(tr("写入本地"), FgButton::Variant::Ghost, true, foot);
     write->setIcon(QStringLiteral("copy"));
+    writeBtn_ = write;
     connect(write, &FgButton::clicked, this, [this] {
         if (current_.raw.isEmpty()) {
             return;
@@ -397,6 +403,7 @@ QWidget *ClipboardPanel::buildCurrent()
     });
     auto *push = new FgButton(tr("推送"), FgButton::Variant::Secondary, true, foot);
     push->setIcon(QStringLiteral("arrowRight"));
+    pushBtn_ = push;
     connect(push, &FgButton::clicked, this, [this] {
         if (current_.raw.isEmpty()) {
             return;
@@ -742,6 +749,18 @@ void ClipboardPanel::rebuildHistory()
         mimeBadge_->setText(current_.raw.isEmpty() ? QStringLiteral("--") : current_.mime);
     }
     spec_->setText(specText(current_));
+    // 没有内容时把两个动作按钮**禁用**。
+    //
+    // 早先它们一直是可点的，点了却在 lambda 里直接 return：既没有提示，也没
+    // 有任何变化——一个点了没反应的控件。禁用比「点了没反应」诚实得多，
+    // 而且按钮本身变灰，一眼就知道现在不能推。
+    const bool hasContent = !current_.raw.isEmpty();
+    if (writeBtn_ != nullptr) {
+        writeBtn_->setEnabled(hasContent);
+    }
+    if (pushBtn_ != nullptr) {
+        pushBtn_->setEnabled(hasContent);
+    }
 
     const QString kind = filter_ != nullptr ? filter_->currentData().toString()
                                             : QStringLiteral("全部");
