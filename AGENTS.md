@@ -172,7 +172,8 @@ cd mac && make build                          # 构建 app（preBuildScript 自�
 
 ### 当前检出环境
 - **macOS 开发机（本检出，2026-10）**：`cd protocol && go test ./...`（含 cgo 子包，clang 可用）；`cd mac && make test && make build` 全绿。测试 runner 打开**外置卷**上的测试包会阻塞在 `open`（TCC 已放行也卡）→ mac 测试无宿主、派生数据放内置盘（`~/Library/Caches/FlowGrid/DerivedData`）；全屏截图受屏幕录制权限限制，窗口级 `screencapture -l <windowID>` 可用。
-- **Windows 开发机（另一检出，2026-10）**：`cd protocol && go test .`、`cd windows && go test ./...`、`dotnet build windows/ui` 全绿；无 gcc 时 cgo 子包不可用（`CGO_ENABLED=0` 报 `undefined: registry`），装 MinGW-w64 后可跑且 c-archive 可用；该机直连 GitHub 不通时 origin 可临时指向 ghfast.top 镜像（**push 前必须**改回 `https://github.com/asdshuaishuai/flowgrid.git`）；Shell 为 CMD、GBK 乱码可用 `chcp 65001` 缓解。
+- **Windows 开发机（另一检出，2026-10）**：`cd protocol && go test .`、`cd windows && go test ./...`、`dotnet build windows/ui` 全绿；无 gcc 时 cgo 子包不可用（`CGO_ENABLED=0` 报 `undefined: registry`），装 MinGW-w64 后可跑且 c-archive 可用；Shell 为 CMD、GBK 乱码可用 `chcp 65001` 缓解。
+- **GitHub 连通性（2026-10-20 于 Windows 机实测）**：`api.github.com` 与 `ssh.github.com:443` 可达，`github.com:443` 间歇超时——push 失败先原样重试一次；旧的「origin 临时指向 ghfast.top 镜像」备注作废，origin 恒为 `https://github.com/asdshuaishuai/flowgrid.git`。备用通道：`~/.ssh/config` 已配 `github-flowgrid` 别名（ssh.github.com:443 + id_ed25519_flowgrid），但该密钥尚未注册到 GitHub 账号，需 `gh auth refresh -s admin:public_key` 后 `gh ssh-key add` 才可用。
 - **通用**：新增/修改 cgo 导出后必须在 Linux 上重新生成 `cgo.h`（本机同版本 Go 的生成结果可作预检，逐字节一致）。
 
 ### 架构边界（改动的固定顺序）

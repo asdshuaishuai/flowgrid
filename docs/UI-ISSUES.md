@@ -7,6 +7,40 @@
 > 条目编号：U=行为缺陷，G=全局性问题，CN/CB/TR/FL/SE/KM/LA/PA=逐屏。
 > 销账时保留条目并标注修复提交。
 
+## 修复记录（2026-10-20）
+
+> 决策背景见 openspec/changes/windows-ui-shell/design.md **D6**：托盘浮板冻结；
+> 其余各屏功能划分不变、形态按 Windows 设计美学自行优化。
+
+- **已修复**：U1（补 LatChipMinWidth=56 令牌）、U2（kind 三态过滤；DTO 无类型字段，
+  以 scheme 前缀启发判链接）、U3（删死绑定，进行中行补大小/方向/对端 meta）、
+  U4（记录行五态映射：完成/已拒绝/超时/校验失败/超限/失败兜底）、U6（均值 badge
+  改取 LatAvgMs）；
+  G1/G2/G3/G4/G5/G6/G7/G8 主体——四档延迟芯片、设备状态着色+状态中文化、离线
+  idle 行、D4 置灰项补齐（同步图片/忽略密码管理器/代码·图片过滤段/边缘切换阈值/
+  排除应用/接收设置四行/告警阈值区）、Toast 全接、DotPulse 落地、FontUi/FontMono
+  令牌+mono 反序修正、MaxHeight=工作区-48、按钮内边距/图表横轴/MakePill 令牌化、
+  顶部 1px 内高光、DeviceCard hover 浮起、Chevron 随折叠联动、ProgressBar 100% 变绿；
+  CN1/CN2/CN5-CN10/CN12-CN14、CB1-CB12/CB15（预览卡三段重构、列表卡形态、分区顺序、
+  分段过滤器、搜索占位与扩面、推送/写入/清空全接线）、FL1/FL5-FL11（接收设置区 D4、
+  记录行方向·对端·大小·校验说明、SHA-256 页脚、拖放可用）、SE1/SE3/SE4/SE7-SE13
+  （banner、分组标题卡内化、键帽热键、撤销死代码清理、事件泄漏修复）、KM1-KM3、
+  LA1-LA9（列表重做、阈值区、柱形顶部圆角+500ms 过渡+固定刻度、画刷资源引用）、
+  PA1-PA6（步骤三态、4 位配对码、发现设备列表接 devices.list 真数据）。
+- **按 D6 授权保留（不再算偏差）**：CN5 两段式列表、FL4 每行卡片、SE2 即时生效、
+  SE5 行序、LA10 事件驱动采样、CN4 面板页脚（设置入口由托盘承载）、CN11 标题栏
+  热区、设置行 13px 与设备卡间距 8。
+- **暂缓——等数据面/解冻**（原条目保留）：U5 托盘退出项与 TR 系（托盘冻结）；
+  CN3 设备布局（fgcore 无显示器数据）；CN2 切换遮罩（随托盘切换迁移待定）；
+  FL2 速度/ETA 与取消传输（无轮询节奏/无取消 API）；KM 冲突 banner（DTO 无冲突
+  字段）；LA 丢包率/链路类型（LinkInfo 无字段）；配对码生成与按地址直连（协议层
+  无配对码概念，PROTOCOL.md 已查证）；历史容量回读与 ClipEntryDto 类型字段
+  （CoreLink 待扩展，当前链接判定用 scheme 启发）。
+- **连带工程加固**：ConnectionsView 事件回 UI 线程（Dispatcher）、SettingsView
+  Unloaded 补退订、FilesView 拖放类型别名（GlobalUsings +3）、构建期修复
+  （XML 注释禁 `--`、Border 单子级、Spacing→Margin）。
+
+
 ## 结论速览
 
 - **令牌层 ~95-100%**：ThemeLight/Dark.xaml 对 tokens.css §2/§2b 的全部语义色
