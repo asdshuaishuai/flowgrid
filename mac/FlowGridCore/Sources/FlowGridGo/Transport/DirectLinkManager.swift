@@ -28,7 +28,11 @@ public final class DirectLinkManager: PeerConnectionControlling {
     private var listenerReady = false
 
     // 自动重连（§10.1：最多 5 次，200ms ×2 退避，±20% 抖动）
-    private var lastAddress: String?
+    private enum Target {
+        case address(String)
+        case service(NWEndpoint)
+    }
+    private var lastTarget: Target?
     private var lastCode: String?
     private var userInitiatedClose = false
     private var reconnectAttempt = 0
@@ -37,6 +41,12 @@ public final class DirectLinkManager: PeerConnectionControlling {
     private var localName: String {
         Host.current().localizedName ?? "Mac"
     }
+
+    // mDNS 发现（§3.2）
+    private var browser: NWBrowser?
+    private var advertisedServiceName: String?
+    public private(set) var discoveredPeers: [DiscoveredPeer] = []
+    private var discoveredEndpoints: [String: NWEndpoint] = [:]
 
     public init() {}
 
@@ -59,6 +69,7 @@ public final class DirectLinkManager: PeerConnectionControlling {
                     switch state {
                     case .ready:
                         self.listenerReady = true
+                        print("[FlowGrid] mDNS 广告就绪：\(self.advertisedServiceName ?? "?")")
                         if !self.isConnected {
                             self.updateStatus(.listening(port: self.listenPort))
                         }
@@ -73,8 +84,21 @@ public final class DirectLinkManager: PeerConnectionControlling {
                     }
                 }
             }
+            // mDNS 广告：_flowgrid._tcp + TXT（§3.2.1）
+            let serviceName = localName
+            var txt = NWTXTRecord()
+            txt["version"] = String(FGProtocolConstants.protocolVersion)
+            txt["platform"] = FGPlatform.macOS.mdnsName
+            txt["name"] = serviceName
+            txt["caps"] = "directlink,clipboard,filetransfer"
+            txt["port"] = String(port)
+            txt["encryption"] = "none"
+            listener.service = NWListener.Service(name: serviceName, type: "_flowgrid._tcp", txtRecord: txt)
+            advertisedServiceName = serviceName
+
             listener.start(queue: .main)
             self.listener = listener
+            startBrowsing()
             updateStatus(.listening(port: port))
         } catch {
             updateStatus(.failed(reason: "无法监听 \(port)：\(error.localizedDescription)"))
@@ -102,29 +126,53 @@ public final class DirectLinkManager: PeerConnectionControlling {
             updateStatus(.failed(reason: "请输入设备地址"))
             return
         }
+        resetReconnectState()
+        lastTarget = .address(trimmed)
+        lastCode = pairingCode
+        startClient(.address(trimmed), code: pairingCode)
+    }
+
+    /// 连接 mDNS 发现的设备（§3.2）。
+    public func connect(serviceName: String, pairingCode: String) {
+        guard session == nil else { return }
+        guard let endpoint = discoveredEndpoints[serviceName] else {
+            updateStatus(.failed(reason: "设备已离线，请等待重新发现"))
+            return
+        }
+        resetReconnectState()
+        lastTarget = .service(endpoint)
+        lastCode = pairingCode
+        startClient(.service(endpoint), code: pairingCode)
+    }
+
+    private func resetReconnectState() {
         userInitiatedClose = false
         reconnectAttempt = 0
         reconnectTask?.cancel()
         reconnectTask = nil
-        lastAddress = trimmed
-        lastCode = pairingCode
-        startClient(address: trimmed, code: pairingCode)
     }
 
-    /// 建立客户端连接（手动/自动重连共用）。
-    private func startClient(address: String, code: String) {
-        let (host, port) = Self.parseAddress(address)
-        guard let nwPort = NWEndpoint.Port(rawValue: port) else {
-            updateStatus(.failed(reason: "端口无效：\(port)"))
-            return
+    /// 建立客户端连接（手动/重连共用）。
+    private func startClient(_ target: Target, code: String) {
+        let connection: NWConnection
+        switch target {
+        case let .address(address):
+            let (host, port) = Self.parseAddress(address)
+            guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+                updateStatus(.failed(reason: "端口无效：\(port)"))
+                return
+            }
+            // 自身监听的就近地址：会与本进程的全局会话队列冲突
+            if listenerReady, port == listenPort, Self.isLoopback(host) {
+                updateStatus(.failed(reason: "不能连接本机自身（请使用另一台设备）"))
+                return
+            }
+            updateStatus(.connecting(address: "\(host):\(port)"))
+            connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
+        case let .service(endpoint):
+            updateStatus(.connecting(address: "Bonjour 端点"))
+            connection = NWConnection(to: endpoint, using: .tcp)
         }
-        // 自身监听的就近地址：会与本进程的全局会话队列冲突
-        if listenerReady, port == listenPort, Self.isLoopback(host) {
-            updateStatus(.failed(reason: "不能连接本机自身（请使用另一台设备）"))
-            return
-        }
-        updateStatus(.connecting(address: "\(host):\(port)"))
-        let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
         startSession(on: connection, role: .initiator, key: SessionKey.derive(code: code))
     }
 
@@ -133,12 +181,70 @@ public final class DirectLinkManager: PeerConnectionControlling {
         reconnectAttempt = 0
         reconnectTask?.cancel()
         reconnectTask = nil
-        lastAddress = nil
+        lastTarget = nil
         lastCode = nil
         session?.close(reason: nil)
         session = nil
         GoSession.setSink(false)
         updateStatus(listener == nil ? .idle : .listening(port: listenPort))
+    }
+
+    // MARK: - mDNS 浏览（§3.2）
+
+    /// 开始浏览 `_flowgrid._tcp`；随监听一起启动，也可单独用于发现。
+    public func startBrowsing() {
+        guard browser == nil else { return }
+        let browser = NWBrowser(for: .bonjour(type: "_flowgrid._tcp", domain: nil), using: .tcp)
+        browser.browseResultsChangedHandler = { [weak self] results, _ in
+            let snapshot = Array(results)
+            Task { @MainActor in
+                self?.applyDiscovery(snapshot)
+            }
+        }
+        browser.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                print("[FlowGrid] mDNS 浏览就绪")
+            case let .failed(error):
+                print("[FlowGrid] mDNS 浏览失败：\(error.localizedDescription)")
+            default:
+                break
+            }
+        }
+        browser.start(queue: .main)
+        self.browser = browser
+    }
+
+    public func stopBrowsing() {
+        browser?.cancel()
+        browser = nil
+        if !discoveredPeers.isEmpty {
+            discoveredPeers = []
+            discoveredEndpoints = [:]
+            onEvent?(.discovered([]))
+        }
+    }
+
+    private func applyDiscovery(_ results: [NWBrowser.Result]) {
+        var peers: [DiscoveredPeer] = []
+        var endpoints: [String: NWEndpoint] = [:]
+        for result in results {
+            guard case let .service(serviceName, _, _, _) = result.endpoint else { continue }
+            // 过滤自身广告（监听未就绪时不广告，不做过滤）
+            if listenerReady, serviceName == advertisedServiceName { continue }
+            var txt: NWTXTRecord?
+            if case let .bonjour(record) = result.metadata { txt = record }
+            let displayName = txt?["name"] ?? serviceName
+            let platform = txt?["platform"].flatMap(FGPlatform.init(mdnsName:))
+            let port = txt?["port"].flatMap { UInt16($0) }
+            peers.append(DiscoveredPeer(id: serviceName, name: displayName, platform: platform, port: port))
+            endpoints[serviceName] = result.endpoint
+        }
+        peers.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        print("[FlowGrid] mDNS 发现 \(peers.count) 台：\(peers.map(\.name).joined(separator: ", "))")
+        discoveredPeers = peers
+        discoveredEndpoints = endpoints
+        onEvent?(.discovered(peers))
     }
 
     // MARK: - 会话装配
@@ -192,7 +298,7 @@ public final class DirectLinkManager: PeerConnectionControlling {
     }
 
     private func scheduleReconnectIfNeeded() {
-        guard !userInitiatedClose, let address = lastAddress, let code = lastCode else { return }
+        guard !userInitiatedClose, let target = lastTarget, let code = lastCode else { return }
         guard reconnectAttempt < FGProtocolConstants.reconnectMaxAttempts else {
             updateStatus(.failed(reason: "重连失败（已尝试 \(FGProtocolConstants.reconnectMaxAttempts) 次）"))
             return
@@ -205,7 +311,7 @@ public final class DirectLinkManager: PeerConnectionControlling {
         reconnectTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(delayMs))
             guard let self, !Task.isCancelled, !self.userInitiatedClose, self.session == nil else { return }
-            self.startClient(address: address, code: code)
+            self.startClient(target, code: code)
         }
     }
 
@@ -245,6 +351,7 @@ public final class DirectLinkManager: PeerConnectionControlling {
 
     deinit {
         listener?.cancel()
+        browser?.cancel()
     }
 
     // MARK: - 工具

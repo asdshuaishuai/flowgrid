@@ -56,6 +56,7 @@ public enum ConnectionEvent: Sendable {
     case peer(PeerInfo)
     case latency(ms: Double, jitter: Double, quality: FGLatencyQuality)
     case latencyAlert(ms: Double)
+    case discovered([DiscoveredPeer])
     case clipboardIn(mime: String, data: Data)
     case transferProgress(id: UInt16, sent: Int, total: Int)
     case transferFinished(id: UInt16, name: String, errorCode: Int)
@@ -84,6 +85,8 @@ public protocol PeerConnectionControlling: AnyObject {
     func updateReceiveDirectory(_ path: String)
     /// 延迟告警配置（阈值 ms / 连续次数）。
     func updateLatencyAlert(thresholdMs: Double, consecutive: Int)
+    /// 连接 mDNS 发现的设备（service name 来自 `DiscoveredPeer.id`）。
+    func connect(serviceName: String, pairingCode: String)
     /// 捕获本机键鼠并发送到对端（需要辅助功能权限）。返回是否成功生效。
     @discardableResult
     func setCaptureEnabled(_ enabled: Bool) -> Bool

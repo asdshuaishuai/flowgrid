@@ -11,6 +11,7 @@
 | DirectLink 传输（TCP 24801，长度前缀 + 帧级 HMAC） | ✅ 已接通（双实例实测） |
 | IDENTIFY 双向握手 / 序列号防重放 / 心跳 / 延迟测量 | ✅ 已接通 |
 | 自动重连（5 次指数退避 ±20% 抖动；认证失败不重试） | ✅ |
+| mDNS 发现（广告 `_flowgrid._tcp` + 浏览 + 按 service 连接） | ✅ 已实现（受本地网络权限约束） |
 | 剪贴板同步（真会话层：分段/重组/5s 超时） | ✅ 已接通（推送与接收） |
 | 文件传输（真会话层：249 B 分块 / SHA-256 / 自动接收落盘） | ✅ 已接通（拖放或选择发送） |
 | HAL：CGEventTap 捕获（Host）+ CGEvent 注入（Target） | ✅ 已实现（需辅助功能权限） |
@@ -104,6 +105,10 @@ FlowGrid/              app target：MenuBarExtra / PanelController / DependencyC
   `~/Downloads/FlowGrid/`（重名自动改名 `name (2).ext`）；单方向同时仅一路（库内保证）。
 - **重连**：意外断开（对端掉线/网络中断）按 §10.1 自动重试 5 次（200ms 起指数退避 ±20%，上限 5s）；
   配对码错误/版本不兼容/对端拒绝属不可恢复错误，不重试并即时提示。
+- **发现（mDNS，§3.2）**：随监听广告 `_flowgrid._tcp`（TXT：version/platform/name/caps/port/encryption），
+  同时浏览局域网并把候选设备呈现在「连接设备」屏；点「连接」按 Bonjour 端点直连（配对码默认用本机码）。
+  注意：macOS 的本地网络隐私会静默拦截未授权应用的浏览 —— 首次使用请在
+  「系统设置 → 隐私与安全性 → 本地网络」中允许 FlowGrid；未授权时仍可用 IP 地址直连。
 
 ## FFI 说明
 

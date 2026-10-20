@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shortcutMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setvbuf(stdout, nil, _IONBF, 0) // 日志无缓冲，便于重定向收集
         panels = PanelController(model: container.model)
         container.model.openPanel = { [weak self] id in
             self?.panels.open(id)

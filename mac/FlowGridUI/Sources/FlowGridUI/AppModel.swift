@@ -118,6 +118,7 @@ public final class AppModel {
 
     public private(set) var connectionStatus: ConnectionStatus = .idle
     public private(set) var peerInfo: PeerInfo?
+    public private(set) var discoveredPeers: [DiscoveredPeer] = []
     public private(set) var accessibilityTrusted = false
     public private(set) var captureEnabled = false
 
@@ -259,6 +260,15 @@ public final class AppModel {
         }
         let trimmedCode = code.trimmingCharacters(in: .whitespaces)
         connection?.connect(address: trimmed, pairingCode: trimmedCode.isEmpty ? localPairingCode : trimmedCode)
+    }
+
+    /// 连接 mDNS 发现的设备；配对码为空时使用本机配对码。
+    public func connectDiscovered(_ peer: DiscoveredPeer, code: String) {
+        let trimmed = code.trimmingCharacters(in: .whitespaces)
+        connection?.connect(
+            serviceName: peer.id,
+            pairingCode: trimmed.isEmpty ? localPairingCode : trimmed
+        )
     }
 
     public func disconnectPeer() {
@@ -569,6 +579,9 @@ public final class AppModel {
 
         case let .latencyAlert(ms):
             toast.show("网络延迟连续超过阈值（当前 \(ms.latencyText)）", kind: .danger)
+
+        case let .discovered(peers):
+            discoveredPeers = peers
 
         case let .clipboardIn(mime, data):
             handleClipboardIn(mime: mime, data: data)

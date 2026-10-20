@@ -20,9 +20,10 @@ public struct PairingView: View {
                 "在两台设备上使用相同的配对码即可建立 DirectLink 链路（TCP 24801，帧级 HMAC 校验）。",
                 kind: .accent
             )
+            discoveryCard
             connectCard
             localCodeCard
-            FGBanner("自动发现（mDNS）将在后续版本提供；当前请通过 IP 地址连接。", kind: .neutral)
+            FGBanner("同一局域网会自动互相发现（mDNS `_flowgrid._tcp`）；跨网段请用下方地址直连。", kind: .neutral)
         } footer: {
             FGPanelFooter {
                 EmptyView()
@@ -33,6 +34,71 @@ public struct PairingView: View {
             }
         }
         .fgToastHost(model.toast)
+    }
+
+    // MARK: - 附近的设备（mDNS）
+
+    private var discoveryCard: some View {
+        VStack(alignment: .leading, spacing: FGSpacing.s2) {
+            HStack(spacing: FGSpacing.s2) {
+                Text("附近的设备")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(FGColor.text1)
+                Spacer(minLength: 0)
+                Text("mDNS")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(FGColor.text3)
+            }
+            if model.discoveredPeers.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text("正在搜索局域网内的 FlowGrid 设备…")
+                            .font(.system(size: 11))
+                            .foregroundStyle(FGColor.text3)
+                    }
+                    Text("看不到设备？请在 系统设置 → 隐私与安全性 → 本地网络 中允许 FlowGrid。")
+                        .font(.system(size: 10))
+                        .foregroundStyle(FGColor.text3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 2)
+            } else {
+                ForEach(model.discoveredPeers) { peer in
+                    HStack(spacing: FGSpacing.s2) {
+                        FGIcon("devices", size: 15, color: FGColor.accent)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(peer.name)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(FGColor.text1)
+                            Text(peerSubtitle(peer))
+                                .font(.system(size: 10))
+                                .foregroundStyle(FGColor.text3)
+                        }
+                        Spacer(minLength: 0)
+                        FGButton("连接", small: true) {
+                            model.connectDiscovered(peer, code: code)
+                        }
+                    }
+                    .padding(.vertical, 3)
+                }
+            }
+        }
+        .padding(FGSpacing.s3)
+        .background(FGColor.surface2)
+        .clipShape(RoundedRectangle(cornerRadius: FGRadius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: FGRadius.card, style: .continuous)
+                .strokeBorder(FGColor.line2, lineWidth: 1)
+        )
+    }
+
+    private func peerSubtitle(_ peer: DiscoveredPeer) -> String {
+        var parts: [String] = []
+        if let platform = peer.platform { parts.append(platform.displayName) }
+        if let port = peer.port { parts.append("端口 \(port)") }
+        return parts.isEmpty ? "DirectLink 设备" : parts.joined(separator: " · ")
     }
 
     // MARK: - 连接到对端

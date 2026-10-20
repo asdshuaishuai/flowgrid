@@ -26,6 +26,12 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_flowgrid._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>FlowGrid 需要访问局域网以发现并连接你的其他设备。</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

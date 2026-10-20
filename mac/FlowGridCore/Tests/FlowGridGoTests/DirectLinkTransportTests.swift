@@ -26,6 +26,7 @@ final class DirectLinkTransportTests {
         var onFrame: ((UInt8, Data, MockPeer) -> Void)?
         var identifyName = "Mock Peer"
         var acceptedConnections = 0
+        private(set) var advertisedService: String?
 
         init(code: String) throws {
             listener = try NWListener(using: .tcp, on: .any)
@@ -34,7 +35,17 @@ final class DirectLinkTransportTests {
 
         var port: UInt16? { listener.port?.rawValue }
 
-        func start() {
+        func start(advertiseAs serviceName: String? = nil) {
+            if let serviceName {
+                var txt = NWTXTRecord()
+                txt["version"] = "1"
+                txt["platform"] = "windows"
+                txt["name"] = identifyName
+                txt["caps"] = "directlink"
+                txt["port"] = String(port ?? 0)
+                listener.service = NWListener.Service(name: serviceName, type: "_flowgrid._tcp", txtRecord: txt)
+                advertisedService = serviceName
+            }
             listener.newConnectionHandler = { [weak self] connection in
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -288,6 +299,41 @@ final class DirectLinkTransportTests {
         #expect(received.2 == 0)
         let savedPath = try #require(received.1)
         #expect(try Data(contentsOf: URL(fileURLWithPath: savedPath)) == incomingData)
+    }
+
+    // MARK: - 用例：mDNS 发现并按 service 连接（§3.2）
+
+    @Test func discoversAndConnectsByServiceName() async throws {
+        let mock = try MockPeer(code: "1234")
+        let serviceName = "fg-test-\(UUID().uuidString.prefix(8))"
+        mock.start(advertiseAs: serviceName)
+        try await waitFor("mock 监听端口就绪", timeout: 8) { (mock.port ?? 0) > 0 }
+
+        let manager = DirectLinkManager()
+        let sink = EventSink()
+        manager.onEvent = { event in sink.events.append(event) }
+        defer {
+            manager.disconnect()
+            manager.stopBrowsing()
+            mock.stop()
+        }
+        manager.startBrowsing()
+
+        try await waitFor("Bonjour 发现 mock", timeout: 10) {
+            manager.discoveredPeers.contains { $0.id == serviceName }
+        }
+        let peer = try #require(manager.discoveredPeers.first { $0.id == serviceName })
+        // 部分执行环境（无 bundle 身份）不下发 TXT，名称回退为 service name、平台为空
+        #expect(peer.name == "Mock Peer" || peer.name == serviceName)
+        #expect(peer.platform == nil || peer.platform == .windows)
+
+        mock.onFrame = { type, _, peer in
+            if type == FGFrameType.heartbeat { peer.sendFrame(FGFrameType.heartbeat, Data()) }
+        }
+        manager.connect(serviceName: serviceName, pairingCode: "1234")
+        try await waitFor("经 Bonjour 端点握手", timeout: 8) {
+            sink.status()?.isConnected == true
+        }
     }
 
     // MARK: - 用例：对端掉线 → 按协议退避自动重连
