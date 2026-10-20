@@ -187,6 +187,11 @@ wire format / 键码 / 握手有任何变动：**PROTOCOL.md → protocol/ Go �
 - 新增协议文件后记得同步 PROTOCOL.md 目录映射与本文档的目录地图
 - 旧客户端相关 gotchas（deepin DTK 规范、udev 规则、SNI 托盘、cxx-qt 等）已随代码移除，需要时从 git 历史 e8d205c / d1e71e4 / 6b9aafa 找回
 
+### deepin：DConfig meta 的位置与格式（静默失效型坑）
+- **位置**是 `/usr/share/dsg/configs/<appId>/<name>.json`，由 DTK 自己给出（`DConfigMeta::applicationMetaDirs("", appId)`）。dconfig 守护进程（`dde-dconfig-daemon`，**系统总线**上的 `org.desktopspec.ConfigManager`）只扫 `DSG_DATA_DIRS=/usr/share/dsg:/var/lib/linglong/entries/share/dsg`。装到 `/usr/share/flowgrid/` 或 `/usr/local/share/` 一律看不见——CMake 的 `install(FILES ...)` 必须用**绝对路径** destination，相对路径会被拼到 `CMAKE_INSTALL_PREFIX` 下。
+- **格式**必须是 DSG（顶层 `magic`/`version`/`contents` 映射）。旧 dconfig 的 `fileName`+`keys` 数组会被拒收（`The meta magic does not match`）。
+- 两种错都**不报错**，只是 `create()` 返回不可用对象、设置静默回退默认值（开关能点、关掉进程就没了）。所以位置/格式/键表由 `flowgrid-uitest` 的「DConfig meta」一段盯着；`appId`/`name` 在 `deepin/CMakeLists.txt` 里定义一次、编译期发成宏，避免改了代码忘了改安装目录。详见 `deepin/README.md` 的「DConfig meta 装哪、什么格式」。
+
 ---
 
 *每条原则都对应着一个曾经踩过的坑。写下来，是为了以后不再踩。*  

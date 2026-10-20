@@ -28,13 +28,27 @@ constexpr auto kKeyE2E           = "security/e2e_encryption";
 constexpr auto kKeyConfirm       = "security/require_confirmation";
 
 // DConfig::create(appId, name, subpath) 的三段语义，别混：
-//   appId   —— meta 文件所在的目录名，即 /usr/share/<appId>/<name>.json；
-//   name    —— meta 文件名（不含 .json），要和 JSON 里的 fileName 一致；
+//   appId   —— meta 所在目录名，完整位置是
+//              /usr/share/dsg/configs/<appId>/<name>.json。
+//              这个路径是 DTK 自己给的，不是约定俗成：DConfigMeta::
+//              applicationMetaDirs("", appId) 返回的正是
+//              /usr/share/dsg/configs/<appId>。dconfig 守护进程只扫
+//              /usr/share/dsg 与 /var/lib/linglong/entries/share/dsg
+//              （dde-dconfig-daemon.service 的 DSG_DATA_DIRS），装到
+//              /usr/share/flowgrid/ 或 /usr/local/share/ 下它都看不见。
+//   name    —— meta 文件名（不含 .json）。
 //   subpath —— JSON 内部再往下的一层路径，通常留空，本工程的键已自带
 //              "connection/xxx" 这样的完整相对路径。
-// 三者对不上的表现不是报错，而是 create() 返回空指针、设置全部走默认值。
-constexpr auto kAppId   = "flowgrid";
-constexpr auto kName    = "flowgrid-deepin";
+// 三者对不上的表现不是报错，而是 create() 返回不可用对象、设置全部走默认值。
+//
+// appId / name 不在这里写死：CMakeLists 是唯一来源，编译期发下来，
+// 否则改了这里却忘了改安装目录，就会得到一次「设置静默失效」的回归。
+//
+// 另外 meta 文件本身必须是 DSG 格式（顶层 magic/version/contents 映射）。
+// 旧 dconfig 那种 fileName/keys 数组的写法，DDE 25 的 dconfig 直接拒收
+// （"The meta magic does not match"），表现同样是设置静默失效。
+constexpr auto kAppId   = FLOWGRID_DCONFIG_APPID;
+constexpr auto kName    = FLOWGRID_DCONFIG_NAME;
 constexpr auto kSubPath = "";
 
 } // namespace
@@ -53,7 +67,7 @@ Settings::Settings()
     // isValid() 与 nullptr 要分开判：后端建起来了但 meta 文件缺失时，
     // create() 仍会返回非空对象，此时 setValue 会被静默丢弃。
     if (config_ != nullptr && !config_->isValid()) {
-        reason_ = QStringLiteral("DConfig meta 未安装（缺少 /usr/share/%1/%2.json）")
+        reason_ = QStringLiteral("DConfig meta 未安装或格式不对（期望 /usr/share/dsg/configs/%1/%2.json，DSG 格式）")
                       .arg(QLatin1String(kAppId), QLatin1String(kName));
         qCWarning(lcSettings) << reason_;
         delete config_;
@@ -258,6 +272,21 @@ void Settings::resetToDefaults()
         fallback_.remove(key);
         Q_EMIT changed(key);
     }
+}
+
+QStringList Settings::managedKeys()
+{
+    // 就是上面那组常量，一处定义两处用：读写走它，自检拿它跟 meta 对表。
+    return {
+        QLatin1String(kKeyPreferredLink), QLatin1String(kKeyAutoRouting),
+        QLatin1String(kKeyAutoStart),    QLatin1String(kKeyKeymap),
+        QLatin1String(kKeySmoothing),     QLatin1String(kKeyEdgeThreshold),
+        QLatin1String(kKeySwitchHotkey),  QLatin1String(kKeyClipSync),
+        QLatin1String(kKeyClipHistory),   QLatin1String(kKeyClipImages),
+        QLatin1String(kKeyClipIgnorePwd), QLatin1String(kKeyClipAutoWrite),
+        QLatin1String(kKeyFileTransfer),  QLatin1String(kKeyE2E),
+        QLatin1String(kKeyConfirm),
+    };
 }
 
 } // namespace fg

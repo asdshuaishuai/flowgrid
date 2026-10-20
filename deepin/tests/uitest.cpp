@@ -21,13 +21,17 @@
 #include "ui/widgets.h"
 
 #include <QApplication>
+#include <QFile>
 #include <QFocusEvent>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QPixmap>
 #include <QShortcut>
 #include <QWidget>
 
 #include <DApplication>
+#include <dconfigfile.h>
 
 #include <cstdio>
 
@@ -84,6 +88,79 @@ void focusOn(QWidget *w)
     QApplication::setActiveWindow(w);
     QT_WARNING_POP
     w->setFocus();
+}
+
+// ── DConfig meta 自检 ─────────────────────────────────────────────────
+// 三件事：
+//   1. 装的**位置**跟 DTK 期望的位置一致（问 DTK 自己要，别靠记）；
+//   2. meta 是 **DSG 格式**（magic/version/contents）——旧 dconfig 那种
+//      fileName/keys 数组，DDE 25 的 dconfig 直接拒收（"The meta magic does
+//      not match"）；
+//   3. 应用管理的每个键在 meta 里都有——少一个就是「读写静默失效」。
+//
+// 这三件事在真实桌面上的表现都是同一个：设置屏的开关看着能点，关掉进程就没了。
+// 不报错，所以只能靠自检拦。
+void checkDConfigMeta()
+{
+    const QString metaPath = QStringLiteral(FLOWGRID_META_FILE);
+    const QString appId = QStringLiteral(FLOWGRID_DCONFIG_APPID);
+    const QString name = QStringLiteral(FLOWGRID_DCONFIG_NAME);
+
+    // 1. 位置：DTK 认的目录 vs CMake 装到的目录
+    const QStringList expectDirs =
+        Dtk::Core::DConfigMeta::applicationMetaDirs(QString(), appId);
+    check(expectDirs.value(0) == QStringLiteral(FLOWGRID_META_DIR),
+          QStringLiteral("DTK 认的 meta 目录是 %1（安装目标一致）")
+              .arg(expectDirs.value(0)));
+    check(expectDirs.value(0) == QStringLiteral("/usr/share/dsg/configs/") + appId,
+          QStringLiteral("meta 目录在 /usr/share/dsg/configs/ 下（dconfig 只扫这儿）"));
+
+    // 2/3. 格式与键表
+    QFile f(metaPath);
+    if (!f.open(QIODevice::ReadOnly)) {
+        check(false, QStringLiteral("读得到 meta 文件 %1").arg(metaPath));
+        return;
+    }
+    QJsonParseError err{};
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &err);
+    if (err.error != QJsonParseError::NoError) {
+        check(false, QStringLiteral("meta 是合法 JSON：%1").arg(err.errorString()));
+        return;
+    }
+    const QJsonObject root = doc.object();
+    check(root.value(QStringLiteral("magic")).toString()
+              == QStringLiteral("dsg.config.meta"),
+          QStringLiteral("meta 是 DSG 格式（magic = dsg.config.meta）"));
+    check(root.contains(QStringLiteral("version")), QStringLiteral("meta 有 version 字段"));
+    check(root.contains(QStringLiteral("contents")), QStringLiteral("meta 有 contents 字段"));
+
+    const QJsonObject contents = root.value(QStringLiteral("contents")).toObject();
+    check(!contents.isEmpty(), QStringLiteral("contents 非空（%1 个键）").arg(contents.size()));
+
+    // 应用管的每个键都得在 meta 里
+    const QStringList managed = fg::Settings::managedKeys();
+    QStringList missing;
+    for (const QString &key : managed) {
+        if (!contents.contains(key)) {
+            missing << key;
+        }
+    }
+    check(missing.isEmpty(),
+          missing.isEmpty()
+              ? QStringLiteral("应用管理的 %1 个键在 meta 里全都有").arg(managed.size())
+              : QStringLiteral("meta 缺这些键：%1").arg(missing.join(", ")));
+
+    // meta 里有但应用不管的键：不致命，但说明键表漂了，得看一眼
+    QStringList extra;
+    for (auto it = contents.constBegin(); it != contents.constEnd(); ++it) {
+        if (!managed.contains(it.key())) {
+            extra << it.key();
+        }
+    }
+    if (!extra.isEmpty()) {
+        std::printf("  [注意] meta 里有应用不管理的键：%s\n",
+                    extra.join(", ").toUtf8().constData());
+    }
 }
 
 } // namespace
@@ -194,6 +271,13 @@ int main(int argc, char **argv)
     const int after = accentPixels(button->grab());
     std::printf("  （主色像素 %d -> %d）\n", before, after);
     check(after >= before + 20, QStringLiteral("按钮获得焦点后画出了主色焦点环"));
+
+    // ── 4. DConfig meta：路径、格式、键表 ──────────────────────────────
+    // 这一段守的是「设置静默失效」那个坑。meta 装错位置或用了旧 dconfig 格式，
+    // dconfig 都不报错，只是当这个配置不存在——设置屏的开关看着能点，关掉进程
+    // 就没了。装到哪儿、什么格式，在这里问 DTK 自己，别靠记。
+    std::printf("DConfig meta\n");
+    checkDConfigMeta();
 
     std::printf(g_failures == 0 ? "\n全部通过\n" : "\n有 %d 项未通过\n", g_failures);
     return g_failures == 0 ? 0 : 1;

@@ -1,42 +1,156 @@
 {
-    "fileName": "flowgrid-deepin",
-    "name": "FlowGrid 设置",
-    "comment": "FlowGrid 键鼠共享（deepin 客户端）配置",
-    "org.deepin.dde.interface": "flowgrid",
-    "id": "io.github.asdshuaishuai.flowgrid",
-    "keys": [
-        { "key": "connection/preferred_link", "type": "s", "default": "IntelligentLink",
-          "name": "优先链路", "description": "IntelligentLink / DirectLink / IntelligentLinkOnly" },
-        { "key": "connection/auto_routing", "type": "b", "default": true,
-          "name": "自动路由", "description": "按延迟自动选择中转节点" },
-        { "key": "connection/auto_start", "type": "b", "default": true,
-          "name": "开机自启", "description": "登录后托盘常驻" },
-
-        { "key": "input/keymap_enabled", "type": "b", "default": true,
-          "name": "键位映射", "description": "跨平台修饰键转换" },
-        { "key": "input/mouse_smoothing", "type": "b", "default": false,
-          "name": "鼠标平滑", "description": "降低跨屏移动抖动" },
-        { "key": "input/edge_threshold", "type": "i", "default": 8,
-          "name": "边缘切换阈值", "description": "指针抵达屏幕边缘后触发的像素数" },
-        { "key": "input/switch_hotkey", "type": "i", "default": 1,
-          "name": "切换热键", "description": "按住后按数字键直切（1=Ctrl，2=Alt）" },
-
-        { "key": "sync/clipboard_enabled", "type": "b", "default": true,
-          "name": "剪贴板同步", "description": "文本与图片，单条上限 63,240 B（协议 §5.3）" },
-        { "key": "sync/clipboard_history", "type": "i", "default": 50,
-          "name": "历史条数", "description": "超出后按时间淘汰" },
-        { "key": "sync/clipboard_images", "type": "b", "default": true,
-          "name": "同步图片", "description": "关闭后入站的 image/* 条目直接丢弃" },
-        { "key": "sync/clipboard_ignore_passwords", "type": "b", "default": true,
-          "name": "忽略密码管理器内容", "description": "需协议提供来源应用标识后才生效" },
-        { "key": "sync/clipboard_auto_write", "type": "b", "default": false,
-          "name": "接收后自动写入本地", "description": "入站后自动写入本机剪贴板" },
-        { "key": "sync/file_transfer_enabled", "type": "b", "default": true,
-          "name": "自动接收文件", "description": "文件传输浮板的「自动接收来自已配对设备的文件」：关闭后入站文件一律不接受" },
-
-        { "key": "security/e2e_encryption", "type": "b", "default": true,
-          "name": "端到端加密", "description": "XChaCha20-Poly1305，强制开启不可关闭" },
-        { "key": "security/require_confirmation", "type": "b", "default": true,
-          "name": "新设备需确认", "description": "关闭后任何局域网设备可直接配对" }
-    ]
+    "magic": "dsg.config.meta",
+    "version": "1.0",
+    "contents": {
+        "connection/preferred_link": {
+            "value": "IntelligentLink",
+            "serial": 0,
+            "flags": [],
+            "name": "connection/preferred_link",
+            "name[zh_CN]": "优先链路",
+            "description": "IntelligentLink / DirectLink / IntelligentLinkOnly",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "connection/auto_routing": {
+            "value": true,
+            "serial": 0,
+            "flags": [],
+            "name": "connection/auto_routing",
+            "name[zh_CN]": "自动路由",
+            "description": "按延迟自动选择中转节点",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "connection/auto_start": {
+            "value": true,
+            "serial": 0,
+            "flags": [],
+            "name": "connection/auto_start",
+            "name[zh_CN]": "开机自启",
+            "description": "登录后托盘常驻",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "input/keymap_enabled": {
+            "value": true,
+            "serial": 0,
+            "flags": [],
+            "name": "input/keymap_enabled",
+            "name[zh_CN]": "键位映射",
+            "description": "跨平台修饰键转换",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "input/mouse_smoothing": {
+            "value": false,
+            "serial": 0,
+            "flags": [],
+            "name": "input/mouse_smoothing",
+            "name[zh_CN]": "鼠标平滑",
+            "description": "降低跨屏移动抖动",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "input/edge_threshold": {
+            "value": 8,
+            "serial": 0,
+            "flags": [],
+            "name": "input/edge_threshold",
+            "name[zh_CN]": "边缘切换阈值",
+            "description": "指针抵达屏幕边缘后触发的像素数",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "input/switch_hotkey": {
+            "value": 1,
+            "serial": 0,
+            "flags": [],
+            "name": "input/switch_hotkey",
+            "name[zh_CN]": "切换热键",
+            "description": "按住后按数字键直切（1=Ctrl，2=Alt）",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "sync/clipboard_enabled": {
+            "value": true,
+            "serial": 0,
+            "flags": [],
+            "name": "sync/clipboard_enabled",
+            "name[zh_CN]": "剪贴板同步",
+            "description": "文本与图片，单条上限 63,240 B（协议 §5.3）",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "sync/clipboard_history": {
+            "value": 50,
+            "serial": 0,
+            "flags": [],
+            "name": "sync/clipboard_history",
+            "name[zh_CN]": "历史条数",
+            "description": "超出后按时间淘汰",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "sync/clipboard_images": {
+            "value": true,
+            "serial": 0,
+            "flags": [],
+            "name": "sync/clipboard_images",
+            "name[zh_CN]": "同步图片",
+            "description": "关闭后入站的 image/* 条目直接丢弃",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "sync/clipboard_ignore_passwords": {
+            "value": true,
+            "serial": 0,
+            "flags": [],
+            "name": "sync/clipboard_ignore_passwords",
+            "name[zh_CN]": "忽略密码管理器内容",
+            "description": "需协议提供来源应用标识后才生效",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "sync/clipboard_auto_write": {
+            "value": false,
+            "serial": 0,
+            "flags": [],
+            "name": "sync/clipboard_auto_write",
+            "name[zh_CN]": "接收后自动写入本地",
+            "description": "入站后自动写入本机剪贴板",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "sync/file_transfer_enabled": {
+            "value": true,
+            "serial": 0,
+            "flags": [],
+            "name": "sync/file_transfer_enabled",
+            "name[zh_CN]": "自动接收文件",
+            "description": "文件传输浮板的「自动接收来自已配对设备的文件」：关闭后入站文件一律不接受",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "security/e2e_encryption": {
+            "value": true,
+            "serial": 0,
+            "flags": [],
+            "name": "security/e2e_encryption",
+            "name[zh_CN]": "端到端加密",
+            "description": "XChaCha20-Poly1305，强制开启不可关闭",
+            "permissions": "readwrite",
+            "visibility": "private"
+        },
+        "security/require_confirmation": {
+            "value": true,
+            "serial": 0,
+            "flags": [],
+            "name": "security/require_confirmation",
+            "name[zh_CN]": "新设备需确认",
+            "description": "关闭后任何局域网设备可直接配对",
+            "permissions": "readwrite",
+            "visibility": "private"
+        }
+    }
 }

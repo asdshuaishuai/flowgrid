@@ -3,11 +3,17 @@
 # FlowGrid deepin (DDE 25) 客户端 —— 系统级安装脚本。
 #
 # 为什么必须系统级（不能只装到 ~/.local）：
-#   DConfig 按固定约定定位 meta 文件，即 /usr/share/<appId>/<name>.json，
-#   本工程是 /usr/share/flowgrid/flowgrid-deepin.json。它不搜 ~/.local/share。
+#   DConfig（DSG）按固定约定定位 meta 文件，即
+#   /usr/share/dsg/configs/<appId>/<name>.json，
+#   本工程是 /usr/share/dsg/configs/flowgrid/flowgrid-deepin.json。
+#   它不搜 ~/.local/share，也不搜 /usr/local/share。
 #   装错位置的表现不是报错，而是 create() 返回不可用对象、设置全部静默回退
 #   默认值——设置屏的开关还能点、看起来是好的，但关掉进程就没了。
 #   所以下面最后会实打实校验这个文件在不在。
+#
+# 另外，meta 文件本身必须是 DSG 格式（顶层 magic/version/contents）。旧 dconfig
+# 那种 fileName/keys 数组的写法，DDE 25 的 dconfig 直接拒收（"The meta magic
+# does not match"），同样表现为设置静默失效。
 #
 # 用法：
 #   ./deepin/install.sh                 # 配置 + 编译 + 安装（需要 sudo 装系统位置）
@@ -23,7 +29,13 @@ BUILD_DIR="${SRC_DIR}/build"
 BIN_NAME="flowgrid-deepin"
 # 与 src/core/settings.cpp 的 DConfig::create(appId, name) 和
 # CMakeLists.txt 的 install(FILES ...) 三处必须一致。
-DCONFIG_META="/usr/share/flowgrid/flowgrid-deepin.json"
+#
+# 这个路径是 DTK 自己给的，不是猜的：DConfigMeta::applicationMetaDirs("", "flowgrid")
+# 返回的就是 /usr/share/dsg/configs/flowgrid，meta 文件名是 <name>.json。
+# dconfig 守护进程只扫 /usr/share/dsg 与 /var/lib/linglong/entries/share/dsg
+# （见 dde-dconfig-daemon.service 的 DSG_DATA_DIRS），装到 /usr/share/flowgrid/
+# 或 /usr/local/share/ 下它都看不见。
+DCONFIG_META="/usr/share/dsg/configs/flowgrid/flowgrid-deepin.json"
 
 BUILD=1
 LAUNCH=0
@@ -84,15 +96,17 @@ fi
 #   /usr/local/bin/flowgrid-deepin
 #   /usr/local/share/applications/flowgrid-deepin.desktop
 #   /usr/local/share/icons/hicolor/scalable/apps/flowgrid.svg
-#   /usr/local/share/flowgrid/flowgrid-deepin.json
+#   /usr/share/dsg/configs/flowgrid/flowgrid-deepin.json  ← 绝对路径，dconfig 只扫这儿
 #   /etc/xdg/autostart/flowgrid-deepin-autostart.desktop   ← 绝对路径，自启项只能在这
 ok "安装到系统位置（会提示输入 sudo 密码）"
 ${SUDO} "${CMAKE}" --install "${BUILD_DIR}"
 
 # ── 3. 清掉此前装到 ~/.local 的那份 ───────────────────────────────────
-# 放在安装成功之后：用户级副本虽然 DConfig 是断的（meta 在
-# ~/.local/share/flowgrid/，dconfig 不搜那里），但它至少能跑。万一是
-# sudo 失败被打断，先删它就等于两头都没了。
+# 这些副本都是「dconfig 看不见」的位置，留着只会让人误以为 meta 装好了
+# （尤其是 /usr/local/share/flowgrid/ 那个：文件确实在，dconfig 却扫不到）。
+# 放在安装成功之后：万一是 sudo 失败被打断，先删就等于两头都没了。
+#
+# 家目录那几份是自己的文件，用普通 rm——套 sudo 会白要一次密码。
 for stale in \
     "${HOME}/.local/bin/${BIN_NAME}" \
     "${HOME}/.local/share/applications/${BIN_NAME}.desktop" \
@@ -101,6 +115,21 @@ for stale in \
 do
     if [ -e "$stale" ]; then
         rm -f "$stale" && note "移除用户级残留：$stale"
+    fi
+done
+# 系统位置那几个是 root 的，要 sudo。
+for stale in \
+    "/usr/local/share/flowgrid/${BIN_NAME}.json" \
+    "/usr/share/flowgrid/${BIN_NAME}.json"
+do
+    if [ -e "$stale" ]; then
+        ${SUDO} rm -f "$stale" && note "移除装错位置的残留：$stale"
+    fi
+done
+# 装错位置时留下的空目录也一并清掉
+for stale_dir in "/usr/local/share/flowgrid" "/usr/share/flowgrid"; do
+    if [ -d "$stale_dir" ] && [ -z "$(ls -A "$stale_dir" 2>/dev/null)" ]; then
+        ${SUDO} rmdir "$stale_dir" && note "移除空目录：$stale_dir"
     fi
 done
 
@@ -122,11 +151,22 @@ ok "可执行文件：/usr/local/bin/${BIN_NAME}"
 
 if [ -f "${DCONFIG_META}" ]; then
     ok "DConfig meta：${DCONFIG_META}"
+    # 还得验格式：路径对了但格式是旧的 dconfig 那套，dconfig 照样拒收
+    # （"The meta magic does not match"），表现同样是设置静默失效。
+    if grep -q '"magic"[[:space:]]*:[[:space:]]*"dsg.config.meta"' "${DCONFIG_META}" 2>/dev/null; then
+        ok "meta 格式：DSG（magic/version/contents）"
+    else
+        die "DConfig meta 的格式不对（缺少 \"magic\": \"dsg.config.meta\"）
+  DDE 25 的 dconfig 只认 DSG 格式：顶层 magic/version/contents 映射。
+  旧 dconfig 那种 fileName/keys 数组的写法会被直接拒收（\"The meta magic does not match\"），
+  表现同样是设置静默回退默认值。检查 deepin/resources/flowgrid-deepin.json。"
+    fi
 else
     die "DConfig meta 不在 ${DCONFIG_META}
   设置会静默回退默认值（不报错，最难查的一种坏法）。
   检查 src/core/settings.cpp 的 DConfig::create() 与 CMakeLists.txt 的
-  install(FILES resources/flowgrid-deepin.json ...) 的 appId/name 是否一致。"
+  install(FILES resources/flowgrid-deepin.json ...) 的 appId/name 是否一致。
+  正确位置由 DTK 自己给：DConfigMeta::applicationMetaDirs(\"\", \"flowgrid\")"
 fi
 
 [ -f "/etc/xdg/autostart/${BIN_NAME}-autostart.desktop" ] \
@@ -139,7 +179,7 @@ printf '    %s\n' "/usr/local/bin/${BIN_NAME}"
 printf '    %s\n' "/usr/local/bin/${BIN_NAME} --snapshot /tmp/fgshot/s   # 无头渲染 8 屏验收"
 printf '\n'
 note "托盘常驻、无主窗口：启动后不弹窗，点托盘图标才出 300px 浮层。"
-note "要确认 DConfig 真的通了，启动日志里不该出现「DConfig meta 未安装」。"
+note "要确认 DConfig 真的通了，启动日志里不该出现「DConfig meta」。"
 
 # ── 6. 可选：直接拉起 ──────────────────────────────────────────────────
 if [ "${LAUNCH}" -eq 1 ]; then
@@ -148,8 +188,8 @@ if [ "${LAUNCH}" -eq 1 ]; then
     sleep 2
     if pgrep -x "${BIN_NAME}" >/dev/null; then
         ok "已在运行，日志：/tmp/flowgrid-deepin.log"
-        if grep -q "DConfig meta 未安装" /tmp/flowgrid-deepin.log 2>/dev/null; then
-            note "日志里仍有「DConfig meta 未安装」——meta 装上了但没被 dconfig 认到"
+        if grep -q "DConfig meta" /tmp/flowgrid-deepin.log 2>/dev/null; then
+            note "日志里仍有「DConfig meta …」——meta 装上了但没被 dconfig 认到（位置或格式不对）"
         fi
     else
         note "没能保持运行，看 /tmp/flowgrid-deepin.log"

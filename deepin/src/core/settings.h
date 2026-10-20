@@ -80,6 +80,13 @@ public:
     // 而不是在这里把 12 个默认值再抄一遍——抄一份就会漂移一份。
     void resetToDefaults();
 
+    // 应用实际管理的全部 DConfig 键（就是 settings.cpp 里那组常量）。
+    // 用途只有一个：界面自检拿它跟 meta 文件的 contents 对表——
+    // 应用读一个 meta 里没有的键，DConfig 会静默丢写入 / 回默认值，
+    // 表现是「设置屏的开关看着能点，关掉进程就没了」。这层漂移没有别的
+    // 地方能拦住，所以把它做成可自检的一条。
+    static QStringList managedKeys();
+
 Q_SIGNALS:
     void changed(const QString &key);
 

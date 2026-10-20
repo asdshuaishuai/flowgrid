@@ -67,7 +67,7 @@ QT_QPA_PLATFORM=offscreen ./deepin/build/flowgrid-deepin --snapshot /tmp/fgshot/
 
 覆盖：托盘快捷键（Ctrl+K / Ctrl+, / Ctrl+Q / Ctrl+1..3）按下去真的触发、
 托盘上显示的键位与实际注册的键位是同一套、裸按键不误触发、Esc 真的收起浮层、
-焦点环真的画出来了。
+焦点环真的画出来了，以及 **DConfig meta 的位置 / 格式 / 键表**（见下节）。
 
 两个前提，缺一不可：
 
@@ -119,7 +119,8 @@ QT_QPA_PLATFORM=offscreen ./deepin/build/flowgrid-deepin --snapshot /tmp/fgshot/
 
 装到 `/usr/local` **必须是系统级**，不能只装到 `~/.local`：
 
-- **DConfig meta 固定认 `/usr/share/flowgrid/flowgrid-deepin.json`**，不搜 `~/.local/share`。
+- **DConfig meta 固定认 `/usr/share/dsg/configs/flowgrid/flowgrid-deepin.json`**，
+  不搜 `~/.local/share`，也不搜 `/usr/local/share`。
   装错位置不报错——`create()` 返回不可用对象、设置静默回退默认值，设置屏的开关看着能点、
   实际上关掉进程就没了。这是本工程最难查的一种坏法，所以脚本末尾会实打实校验这个文件。
 - **自启项必须落 `/etc/xdg/autostart`**（`CMakeLists.txt` 里是绝对路径 destination，
@@ -130,7 +131,68 @@ QT_QPA_PLATFORM=offscreen ./deepin/build/flowgrid-deepin --snapshot /tmp/fgshot/
 （上面「运行」那两行是给 build 目录里的未安装产物用的）。
 
 启动后不弹窗——托盘常驻、无主窗口，点托盘图标才出 300px 浮层。启动日志里若出现
-「DConfig meta 未安装」，说明 meta 没被 dconfig 认到。
+「DConfig meta」，说明 meta 没被 dconfig 认到。
+
+## DConfig meta 装哪、什么格式
+
+这两件事错了都不会报错，只是「设置静默失效」：设置屏的开关能点、看着是好的，
+关掉进程就没了。所以位置和格式都由**自检**盯着（`flowgrid-uitest` 的「DConfig meta」
+一段），改坏了立刻会被拦下。
+
+### 位置：`/usr/share/dsg/configs/<appId>/<name>.json`
+
+这个路径不是约定俗成，是 DTK 自己给的：
+
+```cpp
+DConfigMeta::applicationMetaDirs("", "flowgrid")
+// → /usr/share/dsg/configs/flowgrid
+```
+
+dconfig 守护进程（`dde-dconfig-daemon`，跑在**系统总线**上，监听
+`org.desktopspec.ConfigManager`）只扫两个根，见它的 systemd 单元：
+
+```
+Environment=DSG_DATA_DIRS=/usr/share/dsg:/var/lib/linglong/entries/share/dsg
+```
+
+所以装到 `/usr/share/flowgrid/` 或 `/usr/local/share/flowgrid/` 都不行——文件确实在，
+守护进程却看不见。CMakeLists 里那条 `install(FILES ...)` 的 `DESTINATION` 必须写成
+**绝对路径**：相对路径会被拼到 `CMAKE_INSTALL_PREFIX` 下，变成
+`/usr/local/share/dsg/configs/flowgrid`，一样看不见。
+
+### 格式：DSG（顶层 magic / version / contents）
+
+DDE 25 的 dconfig 只认 DSG 格式。旧 dconfig 那种 `fileName` + `keys` 数组的写法，
+它直接拒收，日志里是 `The meta magic does not match`——同样表现为设置静默失效。
+
+```json
+{
+  "magic": "dsg.config.meta",
+  "version": "1.0",
+  "contents": {
+    "input/keymap_enabled": {
+      "value": true, "serial": 0, "flags": [],
+      "name": "input/keymap_enabled", "name[zh_CN]": "键位映射",
+      "description": "跨平台修饰键转换",
+      "permissions": "readwrite", "visibility": "private"
+    }
+  }
+}
+```
+
+键名里带 `/`（`connection/xxx`）没问题——DTK 的加载器实测接受。
+
+### appId / name 只有一处定义
+
+`CMakeLists.txt` 是唯一来源，编译期发成宏给两个目标：
+
+```cmake
+set(FLOWGRID_DCONFIG_APPID "flowgrid")
+set(FLOWGRID_DCONFIG_NAME  "flowgrid-deepin")
+```
+
+`settings.cpp` 的 `DConfig::create()`、meta 的安装目录、自检里的对表，三处都从这里来。
+否则改了 `settings.cpp` 里的 appId 却忘了改安装目录，又是一次静默失效。
 
 ## 目录
 
