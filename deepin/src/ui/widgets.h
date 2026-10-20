@@ -55,6 +55,34 @@ void clearLayout(QLayout *layout);
 // 收成一个函数免得每处各写一遍 QFontFamilies 的兜底顺序。
 QFont uiMonoFont(int px, int weight = QFont::Normal);
 
+// ── 分隔线：1px hairline，左右可内缩 ───────────────────────────────────
+//
+// 设计稿里各区之间的分隔是一道 hairline，两侧各留一点空。
+//
+// 早先它是「1px 高的 QWidget + 样式表 margin: 3px 12px」——样式表的 margin
+// 是在控件**内部**扣的：一个 1px 高的控件扣掉上下各 3px，内容区高度变成负数，
+// 那条线根本画不出来。分隔线看着像不存在，两个区块就黏在一起。
+// 这里自己画：控件整体高 7px（线上下各 3px），线本体 1px，左右按 inset 内缩。
+class Divider : public QWidget {
+    Q_OBJECT
+public:
+    explicit Divider(QWidget *parent = nullptr);
+
+    // 左右各内缩多少像素。
+    void setInset(int px);
+    int inset() const { return inset_; }
+
+    QSize sizeHint() const override { return {0, kDividerHeight}; }
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+
+private:
+    // 线本体 1px + 上下各 3px 留白。
+    static constexpr int kDividerHeight = 7;
+    int inset_ = 0;
+};
+
 // ── 状态点：7px 圆点，2s 呼吸 ────────────────────────────────────────
 class StatusDot : public QWidget {
     Q_OBJECT

@@ -121,6 +121,27 @@ QFont uiMonoFont(int px, int weight)
     return f;
 }
 
+// ── Divider ───────────────────────────────────────────────────────────
+Divider::Divider(QWidget *parent) : QWidget(parent)
+{
+    setFixedHeight(kDividerHeight);
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+}
+
+void Divider::setInset(int px)
+{
+    inset_ = qMax(0, px);
+    update();
+}
+
+void Divider::paintEvent(QPaintEvent *)
+{
+    const Palette &p = Theme::instance().palette();
+    QPainter pt(this);
+    // 线本体只有 1px，且落在整数行上——不抗锯齿，边缘才是干净的。
+    pt.fillRect(QRect(inset_, 3, qMax(0, width() - 2 * inset_), 1), p.hairline);
+}
+
 // ── StatusDot ─────────────────────────────────────────────────────────
 StatusDot::StatusDot(QWidget *parent) : QWidget(parent)
 {
@@ -394,19 +415,20 @@ Collapsible::Collapsible(const QString &title, const QString &iconName, QWidget 
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    // ui.css .section：1px line-2 描边 / r-card 圆角。
+    // ui.css .section：1px line-2 描边 / r-card 圆角 / surface-2 底。
     // 少了这一层，折叠区就只是几行浮在面板底色上的文字，与设计稿的层级完全
     // 对不上——五个屏十来个折叠区都靠它撑起分组。QFrame 默认不参与样式表
     // 绘制底色，必须显式打开（和 DropZone、托盘快速切换按钮同一个坑）。
     //
-    // 底色用 surface 而不是设计稿的 surface-2：面板页面底已经是 surface-2，
-    // 卡片必须是 surface 才浮得起来（见 panel.cpp 里 content_ 那段注释）。
+    // 底色用 surface-2（设计稿 .section 的 background），跟标题栏、页脚同一档。
+    // 早先用的是 card（浅色下是白），那三项就全成了白：折叠区跟内容区同色，
+    // 只剩一圈描边撑着，浮板里的分组看着像「一块白底上画了几条线」。
     setAttribute(Qt::WA_StyledBackground, true);
     applyBoxStyle(this,
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
                       .arg(cssColor(Theme::instance().palette().line2))
                       .arg(QString::number(tokens::kRadiusCard))
-                      .arg(cssColor(Theme::instance().palette().card)));
+                      .arg(cssColor(Theme::instance().palette().surface2)));
 
     head_ = new QWidget(this);
     auto *hl = new QHBoxLayout(head_);
@@ -425,7 +447,7 @@ Collapsible::Collapsible(const QString &title, const QString &iconName, QWidget 
                       QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
                           .arg(cssColor(p.line2))
                           .arg(QString::number(tokens::kRadiusCard))
-                          .arg(cssColor(p.card)));
+                          .arg(cssColor(p.surface2)));
     });
 
     if (!iconName.isEmpty()) {
@@ -639,18 +661,35 @@ void BarChart::paintEvent(QPaintEvent *)
     const qreal innerH = qMax<qreal>(1.0, height() - padTop - padBottom);
 
     const qreal gap = 4.0;
+    // 格子数**写死 12**，宽度按 12 格算。
+    //
+    // 设计稿两个屏的图表都是固定 12 格（connections.html / latency.html 各
+    // 12 个 .chart__bar），轴标的 -24s / -60s 就是这 12 格的时间跨度。
+    //
+    // 早先按实际采样点数量算宽度：只采到 1 个点时，那一根就占了整幅宽度，
+    // 画成一条满宽的实心蓝条——看着像一条进度条，而不是「12 格里的第 1 格」。
+    // 采样要 24 秒才填满，起步那一阵正好是最常被看到的时候。
+    constexpr int kSlots = 12;
     const qreal barW =
-        qMax<qreal>(3.0, (innerW - gap * (samples_.size() - 1)) / samples_.size());
+        qMax<qreal>(3.0, (innerW - gap * (kSlots - 1)) / kSlots);
     // 内容盒高 50px，样例数据的柱高在 22~44px 之间波动。这里照抄这个区间而不是
     // 按比例缩满，否则矮柱会被拉成近乎正方的色块。
     const qreal maxBar = qMin(44.0, innerH);
     const qreal minBar = qMin(22.0, maxBar * 0.5);
     const qreal base = padTop + innerH;   // 柱底基线
 
-    for (int i = 0; i < static_cast<int>(samples_.size()); ++i) {
+    // 柱子**右对齐**：最新的一根贴着「现在」，没采够的格子空在左边。
+    //
+    // 轴标两端是「-60s / 现在」，所以第 i 根代表的是「距今 (kSlots-1-i) 格」
+    // 之前的采样。点数不足 12 时（刚启动那一阵，采样每 2 秒一个），如果从
+    // 最左边开始摆，唯一那一根会落在「-60s」那一端——等于把最新的读数说成
+    // 是一分钟前的。右对齐之后，缺的是历史（左边空白），不是当下。
+    const int n = samples_.size();
+    const int firstSlot = kSlots - n;
+    for (int i = 0; i < n; ++i) {
         const qreal ratio = qBound(0.0, samples_[i] / peak, 1.0);
         const qreal h = minBar + (maxBar - minBar) * ratio;
-        const qreal x = padX + i * (barW + gap);
+        const qreal x = padX + (firstSlot + i) * (barW + gap);
         const qreal y = base - h;
         pt.setPen(Qt::NoPen);
         pt.setBrush(static_cast<size_t>(i) + 1 == samples_.size() ? p.accent : p.accentSoft);
@@ -1833,11 +1872,21 @@ QLabel *groupTitle(const QString &text, QWidget *parent)
     // letter-spacing 是 ui.css .list__group-title 的 --ls-caps: 0.04em，
     // 落在 11px 上约 0.44px。中文没有 uppercase 可转，caps 的实际观感全靠
     // 这点字距撑着——少了它，分组标题就只是「小一号的灰字」，跟普通 hint 混作一堆。
+    //
+    // 顶部两个角要跟着卡片走圆角：设计稿的 .list 是 `overflow:hidden` +
+    // `border-radius`，标题那条灰带被卡片裁过，所以它的上角是圆的。Qt 没有
+    // overflow:hidden，灰带就自己带上这两个圆角——不带上，灰带是方的，会把
+    // 卡片上沿的圆角整个盖成直角（描边是圆的、底是方的，又一种「不规则边框」）。
+    // 底色是 surface-2（设计稿 .list__group-title 的 background），
+    // 不是 well：well 是「卡内凹槽」，比 surface 低两档，浅色下压到 #ebebeb，
+    // 跟设计稿的 #f7f8fa 差了好几档，标题那条带看着像一块脏印子。
     label->setStyleSheet(QStringLiteral("color:%1;background:%2;padding:8px %3px 6px %3px;"
-                                        "border-bottom:1px solid %4;letter-spacing:0.4px")
-                             .arg(cssColor(p.text3), cssColor(p.well))
+                                        "border-bottom:1px solid %4;letter-spacing:0.4px;"
+                                        "border-top-left-radius:%5px;border-top-right-radius:%5px")
+                             .arg(cssColor(p.text3), cssColor(p.surface2))
                              .arg(QString::number(tokens::kS3))
-                             .arg(cssColor(p.hairline)));
+                             .arg(cssColor(p.hairline))
+                             .arg(QString::number(tokens::kRadiusCard)));
     return label;
 }
 

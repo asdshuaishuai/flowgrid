@@ -37,12 +37,18 @@ struct Palette {
     QColor surfacePress;   // pressed
     QColor edgeHi;         // 浮板顶部 1px 内高光
 
-    // 层级三角色：与主题无关，「卡浮在页之上」在明暗下都成立。
+    // 层级三角色 + 一档条带色：与主题无关，「卡浮在页之上」在明暗下都成立。
     // 取值见 theme.cpp 末尾的推导——直接从 surface 派生，别引别的中性档，
     // 否则深色下会把卡片画得比页面还暗，层次整个翻过来。
-    QColor page;           // 浮板内容区的底
+    //
+    // 与设计稿 tokens.css 的对应关系（这一组对不上，浮板就「内外不一致」）：
+    //   surface  = --fg-surface    浮板外壳底、内容区底、列表底
+    //   surface2 = --fg-surface-2  标题栏、页脚、折叠区（.section）、分组标题
+    //   card     = --fg-surface    内容区里浮起来的卡片（比列表底亮半档）
+    //   well     = 卡内凹槽
     QColor card;           // 卡片 / 列表的底
     QColor well;           // 卡内凹槽
+    QColor surface2;       // 条带底：标题栏 / 页脚 / 折叠区 / 分组标题
 
     // 边框：设计稿四档 hairline < line-1 < line-2 < line-3
     QColor hairline;

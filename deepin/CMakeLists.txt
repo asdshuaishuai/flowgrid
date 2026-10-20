@@ -143,6 +143,7 @@ set(FLOWGRID_SOURCES
     src/ui/svgsubset.h            src/ui/svgsubset.cpp
     src/ui/icons.h                src/ui/icons.cpp
     src/ui/widgets.h              src/ui/widgets.cpp
+    src/ui/surface.h              src/ui/surface.cpp
     src/ui/panel.h                src/ui/panel.cpp
     src/ui/traypopup.h            src/ui/traypopup.cpp
     src/ui/hotkeys.h              src/ui/hotkeys.cpp

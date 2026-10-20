@@ -116,6 +116,22 @@ inline constexpr int kShadowLiftR  = 10;
 // 所以卡片本体要收到控件上方，下方留这条空带来承接悬停投影。
 inline constexpr int kShadowLiftBand = kShadowLiftY + 2;
 
+// ── 6b. 阴影留白 ──────────────────────────────────────────────────────
+//
+// 浮板 / 托盘的**窗口**必须比「看得见的那块卡片」大一圈，这一圈透明边距
+// 是给阴影落脚的。Web 的 box-shadow 画在元素盒子之外，Qt 的窗口画不出
+// 界外的像素——阴影挂在顶层窗口上时会被窗口自己裁掉，于是浮板看着「没有
+// 阴影，只有一圈硬边」。所以改成：窗口留白，卡片缩在中间，阴影挂在卡片上。
+//
+// 数值按 CSS box-shadow 推：blur B 的可见扩散约为 B/2，向下偏移 Y 决定
+// 阴影往下挪多少。于是上/左/右各留 B/2，下方留 Y + B/2。
+inline constexpr int kShadowMarginX   = 21;  // 42 / 2
+inline constexpr int kShadowMarginTop  = 21;
+inline constexpr int kShadowMarginBot  = 39;  // 18 + 21
+inline constexpr int kShadowTrayMarginX  = 16;  // 32 / 2
+inline constexpr int kShadowTrayMarginTop = 16;
+inline constexpr int kShadowTrayMarginBot = 32;  // 16 + 16
+
 } // namespace fg::tokens
 
 #endif // FLOWGRID_DESIGN_TOKENS_H

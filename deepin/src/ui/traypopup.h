@@ -8,6 +8,7 @@
 #define FLOWGRID_TRAYPOPUP_H
 
 #include "core/devicemanager.h"
+#include "panel.h"
 
 #include <QWidget>
 
@@ -23,6 +24,8 @@ namespace fg {
 class Badge;
 class LatencyChip;
 class ToggleSwitch;
+class Surface;
+class ShadowPlate;
 
 class TrayPopup : public QWidget {
     Q_OBJECT
@@ -49,7 +52,8 @@ Q_SIGNALS:
     void quitRequested();
 
 protected:
-    void paintEvent(QPaintEvent *) override;
+    void showEvent(QShowEvent *) override;
+    void resizeEvent(QResizeEvent *) override;
     void keyPressEvent(QKeyEvent *) override;
 
 private:
@@ -62,9 +66,16 @@ private:
     QWidget *buildToggleRow(const QString &label, bool on,
                             const std::function<void(bool)> &onWrite);
     QWidget *buildSeparator();
+    void syncShadowPlate();
+    void restyle();
 
     DeviceManager &manager_;
+    ShellMargin margin_;
+    ShellMargin baseMargin_;   // 未按任务栏方向调整前的基准余白
     QVBoxLayout *root_ = nullptr;
+    QVBoxLayout *cardLayout_ = nullptr;
+    Surface *card_ = nullptr;
+    ShadowPlate *plate_ = nullptr;
     QHBoxLayout *quickRow_ = nullptr;
 
     QLabel *headLatency_ = nullptr;

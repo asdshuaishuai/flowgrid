@@ -7,13 +7,14 @@
 #include "widgets.h"
 
 #include <QApplication>
-#include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QResizeEvent>
+#include <QShowEvent>
 #include <QVBoxLayout>
 
 namespace fg {
@@ -178,25 +179,42 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
     setWindowFlags(Qt::FramelessWindowHint | Qt::Popup | Qt::Tool);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAttribute(Qt::WA_QuitOnClose, false);
-    setFixedWidth(tokens::kTrayWidth);
 
-    // 设计稿：托盘浮层阴影 0 16px 32px rgba(15,23,42,.16)
-    auto *shadow = new QGraphicsDropShadowEffect(this);
-    shadow->setBlurRadius(tokens::kShadowTrayR);
-    shadow->setOffset(0, tokens::kShadowTrayY);
-    shadow->setColor(Theme::instance().palette().shadowTray);
-    setGraphicsEffect(shadow);
+    // 外壳与 520px 浮板完全同一套：窗口留阴影边距 → 阴影板 → 圆角卡片。
+    // 托盘早先是「裸 QWidget 自己 paintEvent 画圆角+描边」，和浮板那套各画各的，
+    // 边框粗细、圆角、高光位置都不一样——两个浮层同屏出现就是「内外不一致」。
+    //
+    // 基准余白见 designtokens.h；真正用的时候贴任务栏那一侧会被去掉
+    // （edgeAdjustedMargin），否则托盘浮层会悬在任务栏上方 32px，而 520px
+    // 浮板悬 39px——两个浮层同屏时高度对不齐，又是「内外不一致」。
+    baseMargin_ = {tokens::kShadowTrayMarginX, tokens::kShadowTrayMarginTop,
+                    tokens::kShadowTrayMarginX, tokens::kShadowTrayMarginBot};
+    margin_ = baseMargin_;
+    setFixedWidth(tokens::kTrayWidth + margin_.left + margin_.right);
 
     root_ = new QVBoxLayout(this);
-    root_->setContentsMargins(0, 0, 0, 0);
+    root_->setContentsMargins(margin_.left, margin_.top, margin_.right, margin_.bottom);
     root_->setSpacing(0);
 
-    root_->addWidget(buildHead());
-    root_->addWidget(buildSeparator());
-    root_->addWidget(buildCurrentDevice());
-    root_->addWidget(buildSeparator());
-    root_->addWidget(buildQuickSwitch());
-    root_->addWidget(buildSeparator());
+    card_ = new Surface(this);
+    cardLayout_ = new QVBoxLayout(card_);
+    cardLayout_->setContentsMargins(0, 0, 0, 0);
+    cardLayout_->setSpacing(0);
+    root_->addWidget(card_);
+
+    // 设计稿：托盘浮层阴影 0 16px 32px rgba(15,23,42,.16)
+    plate_ = new ShadowPlate(this);
+    plate_->setRadius(tokens::kRadiusSurface);
+    plate_->setShadow(Theme::instance().palette().shadowTray, tokens::kShadowTrayR,
+                      0, tokens::kShadowTrayY);
+
+    QWidget *head = buildHead();
+    cardLayout_->addWidget(head);
+    cardLayout_->addWidget(buildSeparator());
+    cardLayout_->addWidget(buildCurrentDevice());
+    cardLayout_->addWidget(buildSeparator());
+    cardLayout_->addWidget(buildQuickSwitch());
+    cardLayout_->addWidget(buildSeparator());
 
     // ── 连接 ──
     {
@@ -216,9 +234,9 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
                         new Badge(tr("向导"), Badge::Variant::Neutral),
                         QStringLiteral("pairing")),
         };
-        root_->addWidget(buildGroup(tr("连接"), rows));
+        cardLayout_->addWidget(buildGroup(tr("连接"), rows));
     }
-    root_->addWidget(buildSeparator());
+    cardLayout_->addWidget(buildSeparator());
 
     // ── 数据与同步 ──
     {
@@ -230,9 +248,9 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
             buildNavRow(QStringLiteral("file"), tr("文件传输"), filesBadge_,
                         QStringLiteral("files")),
         };
-        root_->addWidget(buildGroup(tr("数据与同步"), rows));
+        cardLayout_->addWidget(buildGroup(tr("数据与同步"), rows));
     }
-    root_->addWidget(buildSeparator());
+    cardLayout_->addWidget(buildSeparator());
 
     // ── 快捷开关 ──
     //
@@ -251,9 +269,9 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
             buildToggleRow(tr("自动路由"), cfg.autoRouting(),
                            [](bool v) { Settings::instance().setAutoRouting(v); }),
         };
-        root_->addWidget(buildGroup(tr("快捷开关"), rows));
+        cardLayout_->addWidget(buildGroup(tr("快捷开关"), rows));
     }
-    root_->addWidget(buildSeparator());
+    cardLayout_->addWidget(buildSeparator());
 
     // ── 底部入口 ──
     //
@@ -265,21 +283,64 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
             buildNavRow(QStringLiteral("keyboard"), tr("键位映射"), kbdHint("K"),
                         QStringLiteral("keymap")),
         };
-        root_->addWidget(buildGroup(QString(), rows));
+        cardLayout_->addWidget(buildGroup(QString(), rows));
     }
 
     // 设置屏改动（或「恢复默认」）后，托盘的快捷开关要跟着变。
     QObject::connect(&Settings::instance(), &Settings::changed, this, &TrayPopup::refresh);
+    // 系统主题被切走时，卡片底、band、描边、投影都要跟着换色。
+    QObject::connect(&Theme::instance(), &Theme::changed, this, [this] { restyle(); });
+    restyle();
     refresh();
+}
+
+void TrayPopup::restyle()
+{
+    if (plate_ != nullptr) {
+        plate_->setShadow(Theme::instance().palette().shadowTray, tokens::kShadowTrayR,
+                          0, tokens::kShadowTrayY);
+    }
+    if (card_ != nullptr) {
+        // 托盘头部是**外壳底自己**（设计稿 .tray__head 没有自己的 background，
+        // 直接继承 .tray 的 surface），下面一条 line-1 分隔。
+        //
+        // 别跟 520px 浮板的标题栏学：那条是 surface-2（灰），因为 .titlebar
+        // 明确写了 background。两个浮层同屏出现时，头部一灰一白，看着像两个
+        // 不同控件拼的——「内外不一致」。
+        card_->setBandColor(Theme::instance().palette().surface);
+    }
+    update();
+}
+
+void TrayPopup::showEvent(QShowEvent *e)
+{
+    QWidget::showEvent(e);
+    syncShadowPlate();
+}
+
+void TrayPopup::resizeEvent(QResizeEvent *e)
+{
+    QWidget::resizeEvent(e);
+    syncShadowPlate();
+}
+
+void TrayPopup::syncShadowPlate()
+{
+    if (plate_ == nullptr || card_ == nullptr) {
+        return;
+    }
+    plate_->setGeometry(rect());
+    plate_->setCardRect(card_->geometry());
+    plate_->lower();
 }
 
 QWidget *TrayPopup::buildSeparator()
 {
-    auto *sep = new QWidget(this);
-    sep->setFixedHeight(1);
-    sep->setStyleSheet(QStringLiteral("background:%1;margin:3px %2;")
-                           .arg(css(Theme::instance().palette().hairline))
-                           .arg(tokens::kS3));
+    // 真正的分隔线控件：早先这里是「1px 高的 QWidget + 样式表 margin」，
+    // 样式表的 margin 是在控件内部扣的，1px 高的控件扣掉上下各 3px 之后
+    // 内容区变成负数，那条线**根本没画出来**——两个区块看着就黏在一起。
+    auto *sep = new Divider(this);
+    sep->setInset(tokens::kS3);
     return sep;
 }
 
@@ -290,6 +351,14 @@ QWidget *TrayPopup::buildHead()
     auto *hl = new QHBoxLayout(head);
     hl->setContentsMargins(tokens::kS3, 10, tokens::kS3, 10);
     hl->setSpacing(tokens::kS3);
+    // 头部高度定死：里面的图标按钮 26px，上下各 10px 留白 = 46。
+    // 卡片顶部的 band 就按这个高度画（band 与 520px 浮板的标题栏同一档底色），
+    // 所以头部的底色和下边那道 hairline 都由卡片来画，头部自己保持透明——
+    // 头部要是自己画方形底色，卡片顶部的圆角就被顶成直角了。
+    head->setFixedHeight(46);
+    if (card_ != nullptr) {
+        card_->setBandHeight(46);
+    }
 
     auto *icon = new QLabel(head);
     icon->setFixedSize(tokens::kIconMd, tokens::kIconMd);
@@ -480,7 +549,10 @@ QWidget *TrayPopup::buildToggleRow(const QString &label, bool on,
 
 void TrayPopup::popupAt(const QPoint &anchor)
 {
-    placePopup(this, anchor);
+    // 贴任务栏那一侧不留投影余白，理由与 520px 浮板完全一致（edgeAdjustedMargin）。
+    margin_ = edgeAdjustedMargin(baseMargin_);
+    root_->setContentsMargins(margin_.left, margin_.top, margin_.right, margin_.bottom);
+    placePopup(this, anchor, margin_);
     animatePopupIn(this);
 }
 
@@ -620,30 +692,6 @@ void TrayPopup::setCounts(int clipEntries, int activeTransfers)
         filesBadge_->setVariant(activeTransfers > 0 ? Badge::Variant::Ok
                                                     : Badge::Variant::Idle);
     }
-}
-
-void TrayPopup::paintEvent(QPaintEvent *e)
-{
-    const Palette &p = Theme::instance().palette();
-    QPainter pt(this);
-    pt.setRenderHint(QPainter::Antialiasing, true);
-
-    QPainterPath path;
-    path.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
-                        tokens::kRadiusSurface, tokens::kRadiusSurface);
-    pt.setPen(QPen(p.line2, 1));
-    pt.setBrush(p.page);
-    pt.drawPath(path);
-
-    pt.save();
-    pt.setClipPath(path);
-    QLinearGradient edge(0, 0, 0, 2);
-    edge.setColorAt(0.0, p.edgeHi);
-    edge.setColorAt(1.0, QColor(0, 0, 0, 0));
-    pt.fillRect(QRectF(1, 1, width() - 2, 2), edge);
-    pt.restore();
-
-    QWidget::paintEvent(e);
 }
 
 void TrayPopup::keyPressEvent(QKeyEvent *e)

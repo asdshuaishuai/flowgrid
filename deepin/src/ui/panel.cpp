@@ -1,18 +1,21 @@
 #include "panel.h"
 #include "core/designtokens.h"
 #include "core/theme.h"
+#include "widgets.h"
 
 #include <QApplication>
 #include <QCloseEvent>
 #include <QFocusEvent>
-#include <QGraphicsDropShadowEffect>
+#include <QFrame>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPropertyAnimation>
+#include <QResizeEvent>
 #include <QScreen>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -37,7 +40,31 @@ QFont titleFont()
 
 } // namespace
 
-bool placePopup(QWidget *w, const QPoint &anchor)
+ShellMargin edgeAdjustedMargin(const ShellMargin &base)
+{
+    QScreen *screen = QGuiApplication::primaryScreen();
+    if (screen == nullptr) {
+        return base;
+    }
+    const QRect geo = screen->geometry();
+    const QRect avail = screen->availableGeometry();
+
+    // 任务栏在哪一侧：屏幕矩形 - 可用矩形的差（X11 的 struts / Wayland 的工作区）。
+    const bool atBottom = avail.bottom() < geo.bottom();
+    const bool atTop = avail.top() > geo.top();
+
+    ShellMargin m = base;
+    if (atBottom || !atTop) {
+        // 贴下沿：底部不留投影余白。
+        m.bottom = 0;
+    } else {
+        // 贴上沿：顶部不留余白（投影本来就朝下，顶部那圈余白给不出东西）。
+        m.top = 0;
+    }
+    return m;
+}
+
+bool placePopup(QWidget *w, const QPoint &anchor, const ShellMargin &margin)
 {
     if (w == nullptr) {
         return false;
@@ -50,11 +77,15 @@ bool placePopup(QWidget *w, const QPoint &anchor)
     const QRect geo = screen->geometry();
     const QRect avail = screen->availableGeometry();
 
-    // 先按内容算一次实际高度：窗口尚未显示，sizeHint 已可用。
-    const int h = qMin(w->sizeHint().height(), avail.height() - tokens::kPanelScreenMargin);
-    w->resize(w->width(), h);
+    // 窗口高度 = 卡片高 + 上下留白。sizeHint 给的是整块窗口的高度。
+    const int winH = qMin(w->sizeHint().height(), avail.height() - tokens::kPanelScreenMargin);
+    w->resize(w->width(), winH);
+    // 卡片（看得见的那块）在窗口里的尺寸。
+    const int cardW = w->width() - margin.left - margin.right;
+    const int cardH = winH - margin.top - margin.bottom;
 
-    // 贴着**任务栏**摆：下沿落在任务栏上沿，右沿贴着屏幕右缘。
+    // 贴着**任务栏**摆：卡片下沿落在任务栏上沿，右沿离屏幕右缘一个阴影留白
+    // （留白正好给投影落脚，卡片就不会被屏幕边缘切出一圈硬边）。
     //
     // 原来拿托盘图标的中心当锚点（x = anchor.x() - width），有两个毛病：
     //   1. DDE 的 dock 不提供 SNI 图标几何，QSystemTrayIcon::geometry() 恒为空，
@@ -74,28 +105,35 @@ bool placePopup(QWidget *w, const QPoint &anchor)
     // 就是拿不到），按「托盘通常在右」处理。
     const bool anchorOnLeft = !anchor.isNull() && anchor.x() < avail.center().x();
 
-    int x = anchorOnLeft ? avail.left() : avail.right() - w->width();
-    // 任务栏在下（或者压根没有任务栏）→ 贴下沿；任务栏在上 → 贴上沿。
-    int y = (panelAtBottom || !panelAtTop) ? avail.bottom() - w->height() : avail.top();
+    int cardX = anchorOnLeft ? avail.left() + margin.left : avail.right() - margin.right - cardW;
     // 任务栏在左：可用区已经右移过了任务栏，此时浮板左边贴 avail.left()
     // 才是「从任务栏边上长出来」；否则保持上面算出的靠右/靠左。
     if (panelAtLeft && !panelAtBottom && !panelAtTop) {
-        x = avail.left();
+        cardX = avail.left() + margin.left;
+    }
+    // 任务栏在下（或者压根没有任务栏）→ 贴下沿；任务栏在上 → 贴上沿。
+    //
+    // 卡片的**下沿**正好压在可用区的最后一行上（任务栏的第一行）。用
+    // avail.bottom() - cardH + 1 而不是 avail.bottom() - cardH：QRect 的
+    // bottom() 是「最后一行」，差这一像素卡片就与任务栏之间多出一条缝。
+    int cardY = (panelAtBottom || !panelAtTop) ? avail.bottom() - cardH + 1 : avail.top();
+
+    if (cardX < avail.left()) {
+        cardX = avail.left();
+    }
+    if (cardX + cardW > avail.right()) {
+        cardX = avail.right() - cardW;
+    }
+    if (cardY < avail.top()) {
+        cardY = avail.top();
+    }
+    // 卡片的**最后一行**不能越过可用区的最后一行（inclusive 比较）。
+    if (cardY + cardH - 1 > avail.bottom()) {
+        cardY = avail.bottom() - cardH + 1;
     }
 
-    if (x < avail.left()) {
-        x = avail.left() + tokens::kS3;
-    }
-    if (x + w->width() > avail.right()) {
-        x = avail.right() - w->width();
-    }
-    if (y + w->height() > avail.bottom()) {
-        y = avail.bottom() - w->height();
-    }
-    if (y < avail.top()) {
-        y = avail.top() + tokens::kS3;
-    }
-    w->move(x, y);
+    // 窗口 = 卡片 + 四周留白（贴边那一侧不留，见 edgeAdjustedMargin）。
+    w->move(cardX - margin.left, cardY - margin.top);
     w->show();
     w->raise();
     return true;
@@ -133,23 +171,46 @@ Panel::Panel(const QString &title, QWidget *parent) : QWidget(parent)
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAttribute(Qt::WA_QuitOnClose, false);
     setFocusPolicy(Qt::StrongFocus);
-    setFixedWidth(tokens::kPanelWidth);
 
-    // 设计稿：0 18px 42px rgba(24,30,44,.14)
-    shadow_ = new QGraphicsDropShadowEffect(this);
-    shadow_->setBlurRadius(tokens::kShadowPanelR);
-    shadow_->setOffset(0, tokens::kShadowPanelY);
-    shadow_->setColor(Theme::instance().palette().shadowPanel);
-    setGraphicsEffect(shadow_);
+    // 窗口四周的阴影留白。数值见 designtokens.h：按 CSS box-shadow 推，
+    // blur 42 的可见扩散约 21px，向下偏移 18px，于是左右上各留 21、下留 39。
+    //
+    // 「下留 39」是**基准值**：真正用的时候，贴任务栏那一侧会被去掉（见
+    // edgeAdjustedMargin），因为 DDE 上 popup 窗口不能越出工作区，留着就等于
+    // 让卡片悬在任务栏上方。先记下基准值，popupAt 每次按当前任务栏方向重算。
+    baseMargin_ = {tokens::kShadowMarginX, tokens::kShadowMarginTop,
+                    tokens::kShadowMarginX, tokens::kShadowMarginBot};
+    margin_ = baseMargin_;
+    // 窗口比卡片宽两圈留白；卡片本身仍然定宽 520（设计稿的 --w-panel）。
+    setFixedWidth(tokens::kPanelWidth + margin_.left + margin_.right);
 
     root_ = new QVBoxLayout(this);
-    root_->setContentsMargins(0, 0, 0, 0);
+    root_->setContentsMargins(margin_.left, margin_.top, margin_.right, margin_.bottom);
     root_->setSpacing(0);
 
+    // 卡片：圆角底 + 唯一一条描边 + 顶部高光，全部由 Surface 负责。
+    card_ = new Surface(this);
+    cardLayout_ = new QVBoxLayout(card_);
+    cardLayout_->setContentsMargins(0, 0, 0, 0);
+    cardLayout_->setSpacing(0);
+    root_->addWidget(card_);
+
+    // 阴影板：投影由它自己画（见 surface.h 的说明）。
+    //
+    // 设计稿：0 18px 42px rgba(24,30,44,.14)。早先把投影挂在顶层窗口上——
+    // Qt 画不出窗口之外的像素，投影被窗口边界切成一圈硬边，浮板看着像贴了
+    // 一张纸片；挂到卡片上又会随内容滚动反复重算。
+    plate_ = new ShadowPlate(this);
+    plate_->setRadius(tokens::kRadiusSurface);
+    plate_->setShadow(Theme::instance().palette().shadowPanel, tokens::kShadowPanelR,
+                      0, tokens::kShadowPanelY);
+
     if (!title.isEmpty()) {
-        titleBar_ = new QWidget(this);
+        titleBar_ = new QWidget(card_);
         auto *hl = new QHBoxLayout(titleBar_);
-        hl->setContentsMargins(tokens::kS3, 0, tokens::kS3, 0);
+        // 左右内边距与内容列一致（都是 14），标题左边缘因此和下面那张卡片
+        // 的左边缘对齐——早先标题栏是 12、内容是 14，标题看着比内容往左飘。
+        hl->setContentsMargins(tokens::kContentPadding, 0, tokens::kContentPadding, 0);
         hl->setSpacing(tokens::kS2);
         titleLabel_ = new QLabel(title, titleBar_);
         titleLabel_->setFont(titleFont());
@@ -165,42 +226,49 @@ Panel::Panel(const QString &title, QWidget *parent) : QWidget(parent)
         titleRight_->setVisible(false);
         hl->addWidget(titleRight_);
         titleBar_->setFixedHeight(tokens::kTitlebarHeight);
-        root_->addWidget(titleBar_);
+        cardLayout_->addWidget(titleBar_);
+        card_->setBandHeight(tokens::kTitlebarHeight);
     }
 
-    auto *scroll = new QScrollArea(this);
+    auto *scroll = new QScrollArea(card_);
     scroll_ = scroll;
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    // 滚动条样式与内容区底色一起在 restyle() 里设（含系统主题变更时的重刷）。
-    // 关键：viewport 默认 autoFillBackground=true，会拿 QPalette::Window 自己填一层，
-    // 于是 Panel 画好的深色底被白色盖住——浅色主题下看不出来（都是白的），
-    // 深色主题下内容区就是一整块白板。必须显关掉。
+    // 滚动区自己**不能刷底色**。
+    //
+    // QWidget 默认 autoFillBackground=true，会拿 QPalette::Window 铺一层。那一
+    // 档是应用的默认调色板（白），不是 DDE 的面色——于是滚动区把卡片画好的
+    // 深色底整个盖成一块白板。浅色主题下两者都是白，看不出来；深色主题下
+    // 内容区就是一整块白板，浮板看着像两张皮拼在一起。
+    scroll->setAutoFillBackground(false);
+    scroll->setAttribute(Qt::WA_TranslucentBackground, true);
+    // 视口同理保持透明：底色由内容区自己铺（内容区始终盖住视口，滚动时不会
+    // 露出上一次画面的旧像素）。
     scroll->viewport()->setAutoFillBackground(false);
-    scroll->setAttribute(Qt::WA_TranslucentBackground, false);
 
     content_ = new QWidget(scroll);
-    // 内容区自己刷 surface 底色。早先是靠 Panel::paintEvent 那张圆角矩形
-    // 「透」上来的，实际测下来这块一直是全透明的（截图 alpha=0）：深色主题下
-    // 透明和 surface-2 差不了多少，肉眼看不出来；一换浅色主题整块浮板直接
-    // 没有底。子控件不透传、滚动区也不画底，能兜住底色的就只剩内容区自己。
+    // 内容区自己刷页面底色。
+    //
+    // 这张底色是方的，所以它的下沿必须**让出卡片的圆角**（见 applyContentMargins）：
+    // 方形底色盖到卡片下沿，就把两个底角盖成直角，描边是圆的、底是方的——
+    // 又是一种「不规则边框」。
     content_->setObjectName(QStringLiteral("panelContent"));
     content_->setAttribute(Qt::WA_StyledBackground, true);
     content_->setAutoFillBackground(false);
-    restyle();
-    auto *cl = new QVBoxLayout(content_);
-    cl->setContentsMargins(tokens::kContentPadding, tokens::kContentPadding,
-                            tokens::kContentPadding, tokens::kContentPadding);
-    cl->setSpacing(tokens::kS3);
+    contentLayout_ = new QVBoxLayout(content_);
+    contentLayout_->setContentsMargins(tokens::kContentPadding, tokens::kContentPadding,
+                                       tokens::kContentPadding, tokens::kContentPadding);
+    contentLayout_->setSpacing(tokens::kS3);
     scroll->setWidget(content_);
-    root_->addWidget(scroll, 1);
+    cardLayout_->addWidget(scroll, 1);
 
     // 系统主题在运行中被设置中心切走时，浮板自身的外框、投影、底色必须跟着换，
     // 否则里面 Badge / 开关 / 按钮都换成深色了，浮板还顶着一圈浅色描边和白色
-    // 内容底——整块面板像坏掉一样。paintChrome 本来就是每帧现取调色板的，
-    // 真正卡住的是这里烘死进样式表和阴影里的几个颜色。
+    // 内容底——整块面板像坏掉一样。
+    applyContentMargins();
     connect(&Theme::instance(), &Theme::changed, this, [this] { restyle(); });
+    restyle();
 }
 
 void Panel::setTitleBarWidget(QWidget *widget)
@@ -216,21 +284,52 @@ void Panel::setTitleBarWidget(QWidget *widget)
 void Panel::setFooterWidget(QWidget *widget)
 {
     if (footer_ != nullptr) {
-        root_->removeWidget(footer_);
+        cardLayout_->removeWidget(footer_);
         footer_->deleteLater();
         footer_ = nullptr;
+        card_->setFootHeight(0);
     }
     if (widget == nullptr) {
+        restyle();
         return;
     }
     footer_ = widget;
     footer_->setFixedHeight(44);   // 设计稿页脚 10px 上下边距 + 控件高度
-    root_->addWidget(footer_);
+    cardLayout_->addWidget(footer_);
+    card_->setFootHeight(footer_->height());
+    applyContentMargins();
+    restyle();
+}
+
+// 内容区与滚动区的下边距。
+//
+// 没有页脚时，底部要**让出卡片圆角那么一条（12px）**：内容区自己刷底色，
+// 而那张底色是方的，直接铺到卡片下沿就会把两个底角盖成直角。��出这 12px
+// 之后，内容的方角落在卡片直边内侧，看不出来；而最后一行到卡片下沿的
+// 距离仍是设计稿的 14px（内容区自己留 2px + 让出的 12px）。
+//
+// 有页脚时，页脚下沿就是卡片下沿，页脚那条带由卡片自己画（裁在圆角路径里），
+// 内容区与滚动区都不用让。
+void Panel::applyContentMargins()
+{
+    if (contentLayout_ == nullptr) {
+        return;
+    }
+    const bool foot = footer_ != nullptr;
+    const int bottom = foot ? tokens::kContentPadding
+                             : tokens::kContentPadding - tokens::kRadiusSurface;
+    contentLayout_->setContentsMargins(tokens::kContentPadding, tokens::kContentPadding,
+                                       tokens::kContentPadding, bottom);
+    cardLayout_->setContentsMargins(0, 0, 0, foot ? 0 : tokens::kRadiusSurface);
 }
 
 void Panel::popupAt(const QPoint &anchor)
 {
-    placePopup(this, anchor);
+    // 贴任务栏那一侧不留投影余白（理由见 edgeAdjustedMargin）。余白变了，
+    // 窗口根布局的边距要跟着改，否则卡片会被挤在窗口里比该在的位置高/低一截。
+    margin_ = edgeAdjustedMargin(baseMargin_);
+    root_->setContentsMargins(margin_.left, margin_.top, margin_.right, margin_.bottom);
+    placePopup(this, anchor, margin_);
     animatePopupIn(this);
 }
 
@@ -241,7 +340,6 @@ QSize Panel::sizeHint() const
     // heightForWidth(0) 会把每个可换行标签都当成「窄到每个字一行」来算，
     // 于是浮板凭空高出几百像素（实测设置屏首报 1594、稳定值 1054）。
     // 这里按「浮板宽度 - 内容左右内边距」算，布局状态无关，结果稳定。
-    const int w = qMax(1, width());
     const int contentW = qMax(1, tokens::kPanelWidth - 2 * tokens::kContentPadding);
     int body = 0;
     if (content_ != nullptr && content_->layout() != nullptr) {
@@ -252,13 +350,36 @@ QSize Panel::sizeHint() const
     }
     const int chrome = (titleBar_ != nullptr ? titleBar_->height() : 0)
                        + (footer_ != nullptr ? footer_->height() : 0);
-    return QSize(w, qMax(body + chrome, QWidget::sizeHint().height()));
+    const int cardH = qMax(body + chrome, QWidget::sizeHint().height());
+    // 返回的是**窗口**尺寸（含四周阴影留白），摆位与限高都按这个来。
+    return QSize(tokens::kPanelWidth + margin_.left + margin_.right,
+                 cardH + margin_.top + margin_.bottom);
 }
 
 void Panel::showEvent(QShowEvent *e)
 {
     QWidget::showEvent(e);
+    // 阴影板要压在卡片**下面**：它和卡片画的是同一块圆角底，被卡片整个盖住，
+    // 只有溢出卡片的那圈投影露出来。
+    syncShadowPlate();
     setFocus(Qt::OtherFocusReason);
+}
+
+void Panel::resizeEvent(QResizeEvent *e)
+{
+    QWidget::resizeEvent(e);
+    syncShadowPlate();
+}
+
+void Panel::syncShadowPlate()
+{
+    if (plate_ == nullptr || card_ == nullptr) {
+        return;
+    }
+    // 板子铺满整个窗口：投影要能溢到卡片之外（窗口四周的留白就是给它的）。
+    plate_->setGeometry(rect());
+    plate_->setCardRect(card_->geometry());
+    plate_->lower();
 }
 
 bool Panel::eventFilter(QObject *watched, QEvent *event)
@@ -269,12 +390,6 @@ bool Panel::eventFilter(QObject *watched, QEvent *event)
         QTimer::singleShot(0, this, &QWidget::hide);
     }
     return QWidget::eventFilter(watched, event);
-}
-
-void Panel::paintEvent(QPaintEvent *)
-{
-    QPainter p(this);
-    paintChrome(p);
 }
 
 void Panel::keyPressEvent(QKeyEvent *e)
@@ -299,105 +414,59 @@ void Panel::keyPressEvent(QKeyEvent *e)
 void Panel::restyle()
 {
     const Palette &pal = Theme::instance().palette();
-    if (shadow_ != nullptr) {
-        shadow_->setColor(pal.shadowPanel);
+    if (plate_ != nullptr) {
+        plate_->setShadow(pal.shadowPanel, tokens::kShadowPanelR, 0, tokens::kShadowPanelY);
     }
     if (titleLabel_ != nullptr) {
         titleLabel_->setStyleSheet(QStringLiteral("color:%1").arg(colorHex(pal.text1)));
     }
-    if (content_ == nullptr) {
-        return;
+    if (card_ != nullptr) {
+        // 标题栏与页脚都是 **surface-2** 底（设计稿 .titlebar / .panel__foot）：
+        // 比外壳底低半档，于是浮板是「外壳白 → 条带灰 → 内容白 → 折叠区灰」。
+        // 这四层各差半档，浮板才有「壳 / 条 / 内容 / 卡片」的层次。
+        //
+        // 早先用 card（浅色下是白），结果浅色主题下标题栏和页脚跟外壳一样白，
+        // 三层糊成一层，只剩一条 hairline 分着——浮板看着像没有标题栏。
+        card_->setBandColor(pal.surface2);
     }
-    // 左右各留 1px 描边：内容铺满整宽，不自己描边会把面板那圈 1px 边框盖掉
-    // （CSS 里子元素是裁在 padding box 内的，Qt 没有这个盒模型）。
-    //
-    // 底色取 surface-2 而不是 surface：这一层是「页面」，卡片（设备卡、折叠卡、
-    // 设置卡……）都是 surface。原先这里是 surface，于是白卡浮在白底上、只靠
-    // 1px 边框撑着，而折叠卡用了 surface-2、反而比背景深——同屏两种卡片两种
-    // 底色，层次是反的，整个浮板看着像一张没分层的网页。
-    // DDE 控制中心的惯例是「页面最灰、卡片最白」，卡片靠明度差浮起来而不是
-    // 靠边框硬撑，这里照此对齐。
-    const Palette &p = Theme::instance().palette();
-    content_->setStyleSheet(
-        QStringLiteral("#panelContent{border-left:1px solid %1;border-right:1px solid %1;"
-                       "background:%2;}")
-            .arg(colorHex(p.line2), colorHex(p.page)));
+    if (content_ != nullptr) {
+        // 内容区自己刷外壳档底色。
+        //
+        // 这层底色同时是**消除滚动残影**的关键：视口在滚动时只是把旧像素
+        // 往上搬，露出来的那一条得有人重铺。内容区始终盖住整个视口（能滚
+        // 的时候它比视口高），所以那一条每次都被重新铺一遍，旧像素不会留
+        // 下来——「残影」就是这么没的。
+        content_->setStyleSheet(
+            QStringLiteral("#panelContent{background:%1;}").arg(colorHex(pal.surface)));
+    }
     if (scroll_ != nullptr) {
-        // 设计稿 ui.css .content::-webkit-scrollbar：10px 宽、line-3 色、pill 形，
-        // 靠 3px 透明边框把滑块收成 4px 的细条。DTK 自带的是一根 8px 亮灰粗条，
-        // 深色浮板上比稿子亮一大截，浅色下又压过卡片描边，所以按稿子显式画一根；
-        // 行末的箭头按钮一并去掉——设计稿没有。
+        // 滚动条样式**下在滚动条自己身上**。
         //
-        // 「3px 透明边框」在 Qt 里不能用 handle 的 margin 收窄：一旦给滑块加了
-        // margin，Qt 的滚动条样式引擎会把整根条判成无效直接不画（实测滑块连轨道
-        // 一起消失，右边缘只剩面板描边）。改用等价的 background-clip:content-box
-        // + 透明 border，视觉效果一致且引擎认。
+        // 早先是把整段样式表设在 QScrollArea 上，规则写成
+        // `QScrollArea QScrollBar::handle:vertical` —— 这种带祖先限定的选择器
+        // 在 Qt 里要求 QScrollArea 祖先是**样式表宿主之外**的祖先，而宿主就是
+        // 那个 QScrollArea 自己，于是规则一条都没匹配上：滑块退回 DTK 默认样式，
+        // 变成一根 10px 宽的灰板子，夹在浮板外边框和内容区之间，像贴了块补丁。
         //
-        // 圆角是 --r-pill：对 kScrollbarWidth 宽的条即「宽的一半」。这里原先写死
-        // 5px，而宽度是另一处字面量 10——两者是「10÷2」的两半，宽度一改圆角就不
-        // 跟着变，药丸直接破形。交给 pillRadius() 从宽度推导。
-        scroll_->setStyleSheet(
-            QStringLiteral("QScrollArea{background:transparent;}"
-                           "QScrollArea QScrollBar:vertical{width:%1px;background:transparent;"
+        // 挂在滚动条自己身上就没有这个坑：宿主即滚动条，`QScrollBar::handle`
+        // 直接命中。滑块左右各留 3px margin，10px 的槽里露出来的就是设计稿
+        // 要的 4px 细药丸。
+        scroll_->verticalScrollBar()->setStyleSheet(
+            QStringLiteral("QScrollBar:vertical{width:%1px;background:transparent;"
                            "margin:0px;border:none;}"
-                           "QScrollArea QScrollBar::handle:vertical{background:%2;"
-                           "background-clip:content-box;border:3px solid transparent;"
-                           "border-radius:%3px;min-height:32px;}"
-                           "QScrollArea QScrollBar::add-line:vertical,"
-                           "QScrollArea QScrollBar::sub-line:vertical{height:0px;"
+                           "QScrollBar::handle:vertical{background:%2;border-radius:%3px;"
+                           "min-height:32px;margin:0px %4px;}"
+                           "QScrollBar::add-line:vertical,"
+                           "QScrollBar::sub-line:vertical{height:0px;"
                            "border:none;background:transparent;}"
-                           "QScrollArea QScrollBar::add-page:vertical,"
-                           "QScrollArea QScrollBar::sub-page:vertical{background:transparent;}")
+                           "QScrollBar::add-page:vertical,"
+                           "QScrollBar::sub-page:vertical{background:transparent;}")
                 .arg(tokens::kScrollbarWidth)
-                .arg(colorHex(p.line3))
-                .arg(tokens::pillRadius(tokens::kScrollbarWidth)));
+                .arg(colorHex(pal.line3))
+                .arg(tokens::pillRadius((tokens::kScrollbarWidth - 4) / 2))
+                .arg((tokens::kScrollbarWidth - 4) / 2));
     }
     update();
-}
-
-void Panel::paintChrome(QPainter &p)
-{
-    const Palette &pal = Theme::instance().palette();
-    const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
-    const qreal radius = tokens::kRadiusSurface;
-
-    QPainterPath path;
-    path.addRoundedRect(r, radius, radius);
-
-    p.setRenderHint(QPainter::Antialiasing, true);
-    p.setPen(QPen(pal.line2, 1));
-    p.setBrush(pal.page);
-    p.drawPath(path);
-
-    // 标题栏底色（surface-2）+ 与内容之间的 hairline 分隔
-    if (titleBar_ != nullptr && titleBar_->isVisible()) {
-        p.save();
-        p.setClipPath(path);
-        p.fillRect(QRectF(0, 0, width(), tokens::kTitlebarHeight), pal.page);
-        p.setPen(QPen(pal.hairline, 1));
-        p.drawLine(0, tokens::kTitlebarHeight, width(), tokens::kTitlebarHeight);
-        p.restore();
-    }
-
-    // 页脚同理
-    if (footer_ != nullptr) {
-        const QRect footRect(0, height() - footer_->height(), width(), footer_->height());
-        p.save();
-        p.setClipPath(path);
-        p.fillRect(footRect, pal.page);
-        p.setPen(QPen(pal.hairline, 1));
-        p.drawLine(footRect.top(), footRect.top(), width(), footRect.top());
-        p.restore();
-    }
-
-    // 设计稿的「精致度打磨」：顶部 1px 内高光，叠加在边框之上而非替换它。
-    p.save();
-    p.setClipPath(path);
-    QLinearGradient edge(0, 0, 0, 2);
-    edge.setColorAt(0.0, pal.edgeHi);
-    edge.setColorAt(1.0, QColor(0, 0, 0, 0));
-    p.fillRect(QRectF(1, 1, width() - 2, 2), edge);
-    p.restore();
 }
 
 } // namespace fg

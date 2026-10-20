@@ -124,7 +124,11 @@ void showPanel(QWidget *panel)
     } else if (auto *t = qobject_cast<TrayPopup *>(panel)) {
         t->popupAt(anchorPoint());
     } else {
-        placePopup(panel, anchorPoint());
+        // 兜底：不是 Panel / TrayPopup 的浮板也按同一套留白摆位，
+        // 否则它会紧贴屏幕边缘，投影被切成一圈硬边。
+        const fg::ShellMargin m{tokens::kShadowMarginX, tokens::kShadowMarginTop,
+                                tokens::kShadowMarginX, tokens::kShadowMarginBot};
+        placePopup(panel, anchorPoint(), m);
         animatePopupIn(panel);
     }
     // 快捷键跟着当前这块浮板走：Qt 的快捷键表按窗口分，挂在别的窗口上，
@@ -632,7 +636,7 @@ static QWidget *buildFocusSheet()
     // 落在透明底上会糊成一片，看不出形状。
     sheet->setAutoFillBackground(true);
     QPalette qp = sheet->palette();
-    qp.setColor(QPalette::Window, p.page);
+    qp.setColor(QPalette::Window, p.surface);
     qp.setColor(QPalette::WindowText, p.text1);
     sheet->setPalette(qp);
 
