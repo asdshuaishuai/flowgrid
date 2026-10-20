@@ -24,9 +24,11 @@ public partial class ShellWindow : Window
 
     private readonly ConnectionsView _connectionsView = new();
     private readonly Dictionary<string, Func<UserControl>> _views;
+    private readonly Dictionary<string, RadioButton> _navItems = new();
     private DispatcherTimer? _toastTimer;
     private DispatcherTimer? _pillTimer;
     private string _currentKey = "connections";
+    private bool _syncingNav;
 
     public ShellWindow()
     {
@@ -43,8 +45,13 @@ public partial class ShellWindow : Window
             ["settings"] = () => new SettingsView(),
         };
 
-        // tokens.css §0 --panel-max-h: calc(100vh - 48px)；WPF 无 calc，按工作区换算
-        MaxHeight = SystemParameters.WorkArea.Height - 48;
+        _navItems["connections"] = NavConnections;
+        _navItems["clipboard"] = NavClipboard;
+        _navItems["files"] = NavFiles;
+        _navItems["latency"] = NavLatency;
+        _navItems["keymap"] = NavKeymap;
+        _navItems["pairing"] = NavPairing;
+        _navItems["settings"] = NavSettings;
 
         // 停留在文件/剪贴板屏时标题 pill 也要跟随数据刷新
         _pillTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
@@ -67,7 +74,48 @@ public partial class ShellWindow : Window
             ScreenTitle.Text = meta.Title;
             Title = meta.Title;
         }
+        // 托盘菜单等外部入口切屏时，导航面板选中态要跟上
+        _syncingNav = true;
+        if (_navItems.TryGetValue(key, out var item))
+        {
+            item.IsChecked = true;
+        }
+        _syncingNav = false;
         RefreshTitleRight(key);
+    }
+
+    private void OnNavChecked(object sender, RoutedEventArgs e)
+    {
+        // XAML 解析期初始 IsChecked 也会触发；那时 ContentHost 还不存在
+        if (_syncingNav || ContentHost == null)
+        {
+            return;
+        }
+        if (sender is RadioButton { Tag: string key })
+        {
+            Navigate(key);
+        }
+    }
+
+    private void OnMinClick(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    private void OnMaxClick(object sender, RoutedEventArgs e) =>
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    /// <summary>无边框窗口最大化会溢出屏幕：根边距补偿，圆角置直角。</summary>
+    protected override void OnStateChanged(EventArgs e)
+    {
+        base.OnStateChanged(e);
+        if (WindowState == WindowState.Maximized)
+        {
+            RootBorder.Margin = new Thickness(7);
+            RootBorder.CornerRadius = new CornerRadius(0);
+        }
+        else
+        {
+            RootBorder.Margin = new Thickness(0);
+            RootBorder.CornerRadius = (CornerRadius)FindResource("RadiusSurface");
+        }
     }
 
     /// <summary>面板入场动画（panelIn：opacity 0→1 + 内部 Border translateY/scale）。</summary>

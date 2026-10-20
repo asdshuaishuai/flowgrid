@@ -596,17 +596,18 @@
         <Setter Property="Background" Value="{DynamicResource BrushSurface3}"/>
     </Style>
 
-    <!-- ── 导航轨条目（壳层适配） ────────────────────────────────────────── -->
-    <Style x:Key="NavRailItem" TargetType="RadioButton">
+    <!-- ── 导航面板条目（D7 桌面壳层：icon + label，选中 accent-soft） ──── -->
+    <Style x:Key="NavPaneItem" TargetType="RadioButton">
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Focusable" Value="False"/>
+        <Setter Property="Margin" Value="0,1,0,1"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">
-                    <Border x:Name="Root" Margin="4,2" CornerRadius="{StaticResource RadiusCtl}"
-                            Background="Transparent">
-                        <ContentPresenter x:Name="Text" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                          TextElement.FontSize="{StaticResource Font11}"
+                    <Border x:Name="Root" Height="36" CornerRadius="{StaticResource RadiusCtl}"
+                            Background="Transparent" Padding="12,0,12,0">
+                        <ContentPresenter x:Name="Text" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                          TextElement.FontSize="{StaticResource Font12}"
                                           TextElement.Foreground="{DynamicResource BrushText2}"/>
                     </Border>
                     <ControlTemplate.Triggers>
@@ -618,6 +619,31 @@
                             <Setter TargetName="Root" Property="Background" Value="{DynamicResource BrushAccentSoft}"/>
                             <Setter TargetName="Text" Property="TextElement.Foreground" Value="{DynamicResource BrushAccentText}"/>
                             <Setter TargetName="Text" Property="TextElement.FontWeight" Value="SemiBold"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ── 标题栏系统钮（最小化/最大化；关闭钮另用 TitlebarClose 红色变体） ── -->
+    <Style x:Key="TitlebarSystemButton" TargetType="Button">
+        <Setter Property="Width" Value="42"/>
+        <Setter Property="Height" Value="{StaticResource HTitlebar}"/>
+        <Setter Property="Foreground" Value="{DynamicResource BrushText2}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Root" Background="Transparent">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource BrushSurfaceHi}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource BrushText1}"/>
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="{DynamicResource BrushSurfacePress}"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

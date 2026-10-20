@@ -39,6 +39,9 @@
 - **连带工程加固**：ConnectionsView 事件回 UI 线程（Dispatcher）、SettingsView
   Unloaded 补退订、FilesView 拖放类型别名（GlobalUsings +3）、构建期修复
   （XML 注释禁 `--`、Border 单子级、Spacing→Margin）。
+- **追记（同日）**：主面板窗口按 openspec D7 重构为桌面形态——980×640 可调
+  大小 + 左导航面板（icon+label）+ 最小化/最大化，解除 520 窄竖浮板约束；
+  托盘浮板仍冻结。
 
 
 ## 结论速览

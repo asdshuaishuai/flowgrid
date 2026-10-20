@@ -2,19 +2,24 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        Title="FlowGrid" Width="{StaticResource WPanel}" SizeToContent="Height"
-        MinWidth="{StaticResource WPanel}" MaxWidth="{StaticResource WPanel}"
-        FontFamily="{DynamicResource FontUi}"
+        xmlns:views="clr-namespace:FlowGrid.UI.Views"
+        Title="FlowGrid" Width="980" Height="640"
+        MinWidth="760" MinHeight="540"
         WindowStartupLocation="CenterScreen"
-        WindowStyle="None" ResizeMode="NoResize" Background="Transparent"
-        AllowsTransparency="True">
+        WindowStyle="None" ResizeMode="CanResize" Background="Transparent"
+        AllowsTransparency="True"
+        FontFamily="{DynamicResource FontUi}">
     <WindowChrome.WindowChrome>
         <WindowChrome CaptionHeight="{StaticResource RowTitlebarNum}"
-                      ResizeBorderThickness="0" GlassFrameThickness="0" CornerRadius="0"
+                      ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0"
                       UseAeroCaptionButtons="False"/>
     </WindowChrome.WindowChrome>
 
-    <!-- .panel：radius surface / border line-2 / surface 底 / 顶部 1px 内高光 -->
+    <!--
+      主面板窗口（openspec windows-ui-shell D7）：桌面形态——默认 980×640、可调
+      大小、左导航面板 + 内容区。设计稿的 520 窄竖浮板形态只约束托盘浮板；
+      本窗口的令牌与组件仍取自 design/unified。
+    -->
     <Border x:Name="RootBorder" Background="{DynamicResource BrushSurface}"
             BorderBrush="{DynamicResource BrushLine2}" BorderThickness="1"
             CornerRadius="{StaticResource RadiusSurface}">
@@ -22,38 +27,107 @@
             <DropShadowEffect BlurRadius="42" ShadowDepth="18" Opacity="0.14"/>
         </Border.Effect>
         <Grid>
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="{StaticResource RowTitlebar}"/>
-                    <RowDefinition Height="*"/>
-                </Grid.RowDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="{StaticResource RowTitlebar}"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
 
-            <!-- .titlebar：surface-2 底 + hairline 底边 + 左标题/右元素/关闭 -->
+            <!-- .titlebar：surface-2 底 + hairline 底边 + 标题/右侧 pill/窗口钮 -->
             <Grid Grid.Row="0" Background="{DynamicResource BrushSurface2}">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
                 <Border VerticalAlignment="Bottom" Height="1" Background="{DynamicResource BrushHairline}"/>
-                <ContentControl x:Name="TitleRightHost" HorizontalAlignment="Right"
-                                VerticalAlignment="Center" Margin="0,0,42,0"
-                                shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
                 <TextBlock x:Name="ScreenTitle" Text="设备与连接" FontWeight="SemiBold"
                            FontSize="{StaticResource Font12}"
                            Foreground="{DynamicResource BrushText1}"
-                           VerticalAlignment="Center" Margin="12,0,0,0"/>
-                <Button Style="{StaticResource TitlebarClose}" Content="✕"
-                        VerticalAlignment="Top" HorizontalAlignment="Right"
-                        shell:WindowChrome.IsHitTestVisibleInChrome="True"
-                        Click="OnCloseClick"/>
+                           VerticalAlignment="Center" Margin="14,0,0,0"/>
+                <ContentControl x:Name="TitleRightHost" HorizontalAlignment="Right"
+                                VerticalAlignment="Center" Margin="0,0,132,0"
+                                shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
+                <StackPanel HorizontalAlignment="Right" Orientation="Horizontal"
+                            shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button Style="{StaticResource TitlebarSystemButton}" Click="OnMinClick" ToolTip="最小化">
+                        <views:IconGlyph Data="{StaticResource IconMinus}" Size="12"/>
+                    </Button>
+                    <Button Style="{StaticResource TitlebarSystemButton}" Click="OnMaxClick" ToolTip="最大化 / 还原">
+                        <views:IconGlyph Data="{StaticResource IconMaximize}" Size="10"/>
+                    </Button>
+                    <Button Style="{StaticResource TitlebarClose}" Click="OnCloseClick" ToolTip="关闭">
+                        <views:IconGlyph Data="{StaticResource IconClose}" Size="12"/>
+                    </Button>
+                </StackPanel>
             </Grid>
 
-            <!-- .content：各屏自带 14 边距，滚动容器 -->
-            <ScrollViewer Grid.Row="1" Grid.ColumnSpan="2" VerticalScrollBarVisibility="Auto">
-                <ContentControl x:Name="ContentHost"/>
-            </ScrollViewer>
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="208"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- 导航面板：图标 + 文字条目，托盘直达与页内导航同一目的地 -->
+                <Border Grid.Column="0" Background="{DynamicResource BrushSurface2}"
+                        BorderBrush="{DynamicResource BrushHairline}" BorderThickness="0,1,1,0">
+                    <StackPanel Margin="8,10">
+                        <RadioButton x:Name="NavConnections" Style="{StaticResource NavPaneItem}"
+                                     Tag="connections" GroupName="nav" IsChecked="True" Checked="OnNavChecked">
+                            <StackPanel Orientation="Horizontal">
+                                <views:IconGlyph Data="{StaticResource IconLan}" Size="15" VerticalAlignment="Center"/>
+                                <TextBlock Text="设备与连接" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="NavClipboard" Style="{StaticResource NavPaneItem}"
+                                     Tag="clipboard" GroupName="nav" Checked="OnNavChecked">
+                            <StackPanel Orientation="Horizontal">
+                                <views:IconGlyph Data="{StaticResource IconClipboard}" Size="15" VerticalAlignment="Center"/>
+                                <TextBlock Text="剪贴板" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="NavFiles" Style="{StaticResource NavPaneItem}"
+                                     Tag="files" GroupName="nav" Checked="OnNavChecked">
+                            <StackPanel Orientation="Horizontal">
+                                <views:IconGlyph Data="{StaticResource IconFile}" Size="15" VerticalAlignment="Center"/>
+                                <TextBlock Text="文件传输" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="NavLatency" Style="{StaticResource NavPaneItem}"
+                                     Tag="latency" GroupName="nav" Checked="OnNavChecked">
+                            <StackPanel Orientation="Horizontal">
+                                <views:IconGlyph Data="{StaticResource IconActivity}" Size="15" VerticalAlignment="Center"/>
+                                <TextBlock Text="网络延迟" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="NavKeymap" Style="{StaticResource NavPaneItem}"
+                                     Tag="keymap" GroupName="nav" Checked="OnNavChecked">
+                            <StackPanel Orientation="Horizontal">
+                                <views:IconGlyph Data="{StaticResource IconKeyboard}" Size="15" VerticalAlignment="Center"/>
+                                <TextBlock Text="键位映射" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="NavPairing" Style="{StaticResource NavPaneItem}"
+                                     Tag="pairing" GroupName="nav" Checked="OnNavChecked">
+                            <StackPanel Orientation="Horizontal">
+                                <views:IconGlyph Data="{StaticResource IconPlus}" Size="15" VerticalAlignment="Center"/>
+                                <TextBlock Text="添加设备" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton x:Name="NavSettings" Style="{StaticResource NavPaneItem}"
+                                     Tag="settings" GroupName="nav" Checked="OnNavChecked">
+                            <StackPanel Orientation="Horizontal">
+                                <views:IconGlyph Data="{StaticResource IconSettings}" Size="15" VerticalAlignment="Center"/>
+                                <TextBlock Text="设置" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </RadioButton>
+                    </StackPanel>
+                </Border>
+
+                <!-- .content：各屏自带 14 边距；宽窗口下内容封顶 880 居中，保持阅读密度 -->
+                <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                    <Grid MaxWidth="880">
+                        <ContentControl x:Name="ContentHost"/>
+                    </Grid>
+                </ScrollViewer>
+            </Grid>
 
             <!-- Toast（.toast：底部居中，300ms 淡入，1.8s 自动消失） -->
-            <Border x:Name="Toast" Grid.Row="1" Grid.ColumnSpan="2"
+            <Border x:Name="Toast" Grid.Row="1"
                     HorizontalAlignment="Center" VerticalAlignment="Bottom"
                     Margin="0,0,0,20" Opacity="0" IsHitTestVisible="False"
                     Background="{DynamicResource BrushToastBg}"
@@ -61,11 +135,11 @@
                 <TextBlock x:Name="ToastText" FontWeight="SemiBold" FontSize="{StaticResource Font12}"
                            Foreground="{DynamicResource BrushToastFg}"/>
             </Border>
-        </Grid>
-        <!-- ui.css .panel 的 inset 顶部 1px 内高光（edge-hi） -->
-        <Border Height="1" Margin="1,1,1,0" VerticalAlignment="Top"
-                CornerRadius="10,10,0,0" Background="{DynamicResource BrushEdgeHi}"
-                IsHitTestVisible="False"/>
+
+            <!-- ui.css .panel 的 inset 顶部 1px 内高光（edge-hi） -->
+            <Border Height="1" Margin="1,1,1,0" VerticalAlignment="Top"
+                    CornerRadius="10,10,0,0" Background="{DynamicResource BrushEdgeHi}"
+                    IsHitTestVisible="False"/>
         </Grid>
     </Border>
 </Window>
