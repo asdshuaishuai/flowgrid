@@ -40,6 +40,7 @@
 #include <QEnterEvent>
 #include <QEvent>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFocusEvent>
 #include <QLoggingCategory>
 #include <QMimeData>
@@ -162,6 +163,24 @@ QIcon appIcon()
         i = QIcon(QStringLiteral(":/icons/flowgrid.svg"));
     }
     return i;
+}
+
+// 快照落盘统一走这里。
+// QPixmap::save() 失败时**不抛异常也不打日志**，返回 false 而已。原先每处都是
+// `grab().save(path); qCInfo(...)`，保存失败照样打「snapshot ->」，看着像成功，
+// 实际一张图都没落——快照这种「结果全靠肉眼看」的验收，静默失败最要命。
+static bool saveSnapshot(QWidget *w, const QString &path)
+{
+    if (w == nullptr) {
+        qCWarning(lcApp) << "快照控件为空：" << path;
+        return false;
+    }
+    if (!w->grab().save(path)) {
+        qCWarning(lcApp) << "快照保存失败：" << path;
+        return false;
+    }
+    qCInfo(lcApp) << "snapshot ->" << path << w->width() << "x" << w->height();
+    return true;
 }
 
 } // namespace
@@ -360,6 +379,14 @@ int main(int argc, char *argv[])
     // 轮询后的画面，理由见下面那张 shot）。
     if (parser.isSet(snapshotOpt)) {
         const QString base = parser.value(snapshotOpt);
+        // --snapshot 给的是**文件前缀**（最终落成 <前缀>-<屏名>.png），父目录
+        // 得先建出来。之前不建：目录不存在时 QPixmap::save 静默失败——一张图
+        // 都没落盘，日志却照样打「snapshot ->」，看着像成功。截图这种「结果全
+        // 靠肉眼看」的验收，静默失败最要命。
+        const QString outDir = QFileInfo(base).absolutePath();
+        if (!QDir().mkpath(outDir)) {
+            qCWarning(lcApp) << "快照输出目录建不出来：" << outDir;
+        }
         QTimer::singleShot(600, &app, [&app, base, syncTrayCounts] {
             // 走真实的 pop-up 定位（showPanel 内部会算 anchorPoint），而不是手调
             // 几何：截图与实际唤出同一条路径，否则「截图好看、实际错位」这类问题
@@ -373,9 +400,7 @@ int main(int argc, char *argv[])
                 w->ensurePolished();
                 const QString path =
                     suffix.isEmpty() ? base : QStringLiteral("%1-%2.png").arg(base, suffix);
-                w->grab().save(path);
-                qCInfo(lcApp) << "snapshot ->" << path
-                              << w->width() << "x" << w->height();
+                saveSnapshot(w, path);
 
                 // 真实唤出会被 placePopup 按「屏幕可用高度 - 48」夹断（对应设计稿
                 // tokens.css 的 --panel-max-h: calc(100vh - 48px)），所以上面这张
@@ -388,9 +413,7 @@ int main(int argc, char *argv[])
                     w->ensurePolished();
                     const QString full =
                         QStringLiteral("%1-%2-full.png").arg(base, suffix);
-                    w->grab().save(full);
-                    qCInfo(lcApp) << "snapshot ->" << full
-                                  << w->width() << "x" << w->height();
+                    saveSnapshot(w, full);
                     w->resize(w->width(), clamped);   // 复位，免得污染下一张
                 }
                 w->hide();
@@ -419,8 +442,7 @@ int main(int argc, char *argv[])
                 w->ensurePolished();
                 const QString hoverPath =
                     QStringLiteral("%1-connections-hover.png").arg(base);
-                w->grab().save(hoverPath);
-                qCInfo(lcApp) << "snapshot ->" << hoverPath << w->width() << "x" << w->height();
+                saveSnapshot(w, hoverPath);
                 for (fg::DeviceCard *card : w->findChildren<fg::DeviceCard *>()) {
                     QEvent leave(QEvent::Leave);
                     QCoreApplication::sendEvent(card, &leave);
@@ -442,9 +464,7 @@ int main(int argc, char *argv[])
                 sheet->setAttribute(Qt::WA_DontShowOnScreen, true);
                 sheet->ensurePolished();
                 const QString sheetPath = QStringLiteral("%1-icons.png").arg(base);
-                sheet->grab().save(sheetPath);
-                qCInfo(lcApp) << "snapshot ->" << sheetPath
-                              << sheet->width() << "x" << sheet->height();
+                saveSnapshot(sheet, sheetPath);
                 sheet->deleteLater();
             }
 
@@ -453,9 +473,7 @@ int main(int argc, char *argv[])
                 sheet->setAttribute(Qt::WA_DontShowOnScreen, true);
                 sheet->ensurePolished();
                 const QString sheetPath = QStringLiteral("%1-focus.png").arg(base);
-                sheet->grab().save(sheetPath);
-                qCInfo(lcApp) << "snapshot ->" << sheetPath
-                              << sheet->width() << "x" << sheet->height();
+                saveSnapshot(sheet, sheetPath);
                 sheet->deleteLater();
             }
 
@@ -470,9 +488,7 @@ int main(int argc, char *argv[])
                     t->ensurePolished();
                     const QString toastPath =
                         QStringLiteral("%1-toast.png").arg(base);
-                    t->grab().save(toastPath);
-                    qCInfo(lcApp) << "snapshot ->" << toastPath
-                                  << t->width() << "x" << t->height();
+                    saveSnapshot(t, toastPath);
                 }
                 // 文件传输屏再拍一张：它的会话轮询每 500ms 就按 Go 侧报的数字改写
                 // 已播种的条目（进度、终态、大小）。只拍唤出瞬间那一张的话，
@@ -484,9 +500,7 @@ int main(int argc, char *argv[])
                         showPanel(w);
                         w->ensurePolished();
                         const QString p = QStringLiteral("%1-files-polled.png").arg(base);
-                        w->grab().save(p);
-                        qCInfo(lcApp) << "snapshot ->" << p
-                                      << w->width() << "x" << w->height();
+                        saveSnapshot(w, p);
                     }
                     app.quit();
                 });

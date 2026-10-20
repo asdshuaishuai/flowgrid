@@ -168,6 +168,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File windows/smoke.ps1
                                               # IPC 端到端冒烟（需先起 windows/fgcore.exe）
 cd mac && make test                           # swift test：域逻辑 + FFI/会话 + 真实 TCP 链路集成
 cd mac && make build                          # 构建 app（preBuildScript 自动按需编 c-archive）
+./deepin/dev.sh --check                       # deepin 客户端：界面自检 + 明暗快照 + 协议层只读校验
+./deepin/dev.sh                               # deepin 客户端：编译（Debug）+ 跑起来（不装系统、不需要 root）
 ```
 
 ### 当前检出环境

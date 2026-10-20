@@ -46,14 +46,16 @@ QColor alpha(const QColor &c, qreal a)
 
 // 设计稿 tokens.css 第 2 节的明暗中性色。四平台逐像素一致，因此这里只是
 // **兜底**：正常情况下这些值由 DPalette 提供（这样能跟随 dde 活动色与字体）。
-// 只有当 DPalette 的明暗与宿主判定的明暗对不上时才启用——那说明 DTK 的平台
-// 主题插件没跟上宿主（无头后端、缺平台主题插件、或 --theme 强制切换）。
-// 直接沿用 DPalette 的浅色值配深色的状态色，会得到「深色文字画在白底上」。
+// 只有当 DPalette 的明暗跟宿主判定对不上时才启用——那说明 DTK 的平台主题
+// 插件没跟上宿主（无头后端、缺平台主题插件、或 --theme 强制切换）。
+//
+// 不兜底的后果不是「看不清」而是「串色」：DPalette 此时整份退化成内置浅色
+// 默认值，面是白的、主色变成 Qt 的洋红，在深色桌面上就是一块刺眼的白板。
+// 所以兜底时连 accent 一起接管（见下面 accent 那一段）。
 void applyNeutralFallback(Palette *p)
 {
     if (p->isDark) {
         p->surface      = QColor(0x1e, 0x21, 0x27);
-        p->surface2     = QColor(0x25, 0x29, 0x32);
         p->surface3     = QColor(0x2d, 0x32, 0x3c);
         p->surfaceHi    = alpha(QColor(255, 255, 255), 0.055);
         p->surfacePress = alpha(QColor(255, 255, 255), 0.095);
@@ -68,7 +70,6 @@ void applyNeutralFallback(Palette *p)
         p->accent       = QColor(0, 148, 255);   // tokens.css: deepin 暗色主色
     } else {
         p->surface      = QColor(0xff, 0xff, 0xff);
-        p->surface2     = QColor(0xf6, 0xf7, 0xf9);   // --gray-50
         p->surface3     = QColor(0xee, 0xf0, 0xf3);   // --gray-100
         p->surfaceHi    = alpha(QColor(16, 24, 40), 0.038);
         p->surfacePress = alpha(QColor(16, 24, 40), 0.075);
@@ -141,16 +142,33 @@ void Theme::refresh()
     Palette p;
     p.isDark = HostTheme::instance().isDark();
 
-    // DPalette 的明暗与宿主判定是否一致？不一致说明 DTK 平台主题插件没跟上
-    // 宿主（无头后端、插件缺失、或 --theme 强制切换），此时它的中性色不可信。
+    // DPalette 自己的明暗判定（问 DTK，不问宿主）。
     const bool dtkIsDark = helper->themeType() == DGuiApplicationHelper::DarkType;
-    const bool dtkFollowsHost = (dtkIsDark == p.isDark) && !HostTheme::instance().isForced();
 
     // ── 面 ──────────────────────────────────────────────────────────────
-    // DPalette 的 ItemBackground 是 DTK 为「卡片/列表项」准备的角色，
-    // 比 QPalette::Base 更贴近设计稿的卡片底。
+    // QPalette::Window 是 DPalette 里唯一保证不透明的一档，面、页、卡都从它派生。
     p.surface = dtk.color(QPalette::Active, QPalette::Window);
-    p.surface2 = dtk.color(QPalette::Active, QPalette::AlternateBase);
+
+    // DPalette 在「DTK 的平台主题插件没加载」时会**静默退化成内置浅色默认值**，
+    // 而 helper->themeType() 仍然照着宿主报 Dark——两边对不上，面和字会一起串色。
+    //
+    // 实测（探针打印 DPalette 各角色）：
+    //   真实显示 DISPLAY=:0（插件已加载，bloom.dark）：
+    //     Window #ff252525 / TextTitle #d8ffffff / Highlight #ff024cca（deepin 活动色）
+    //   offscreen（插件缺席）：
+    //     Window #fff8f8f8 / TextTitle #d8000000 / Highlight #ff0081ff（Qt 默认洋红）
+    //
+    // 注意退化时**主色也跟着变**——所以兜底必须连 accent 一起接管，
+    // 否则面板会变成洋红配深蓝。
+    //
+    // 判据只有一个：底色明暗跟宿主对不对得上。对不上就别信 DPalette 的这一半，
+    // 整组中性色换成设计稿取值（下面 applyNeutralFallback 那条路）。
+    const bool surfaceLooksDark = p.surface.lightnessF() < 0.5;
+    const bool dtkSelfInconsistent = (surfaceLooksDark != p.isDark);
+
+    const bool dtkFollowsHost = (dtkIsDark == p.isDark) && !HostTheme::instance().isForced()
+                                && !dtkSelfInconsistent;
+
     p.surface3 = dtk.color(QPalette::Active, QPalette::Mid);
     p.surfaceHi = p.isDark ? alpha(p.surface.lighter(115), 0.055)
                            : alpha(QColor(16, 24, 40), 0.038);

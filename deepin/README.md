@@ -77,6 +77,38 @@ QT_QPA_PLATFORM=offscreen ./deepin/build/flowgrid-deepin --snapshot /tmp/fgshot/
 - **offscreen 平台不会自动激活窗口**：得手动 `QApplication::setActiveWindow()` +
   `setFocus()`，否则没有焦点部件，Qt 根本不会去查快捷键表。
 
+## 开发模式（dev.sh）
+
+日常开发用这个脚本，不用先 `install.sh` 装一遍：
+
+```bash
+./deepin/dev.sh                    # 配置 + 编译（Debug）+ 直接跑起来（Ctrl+C 停）
+./deepin/dev.sh --skip-build       # 跳过编译，直接跑已有产物
+./deepin/dev.sh --release          # 用 Release 编译（默认 Debug）
+./deepin/dev.sh --check            # 体检：界面自检 + 明暗快照 + 协议层只读校验
+./deepin/dev.sh --snapshot [目录]  # 只出无头快照（默认 /tmp/fgdev）
+./deepin/dev.sh --theme light|dark # 快照主题（默认明暗各出一套）
+```
+
+它和 `install.sh` 的分工：`install.sh` 装到系统位置（`/usr/local` + `/usr/share`），
+需要 sudo，给最终用户用；`dev.sh` 只在开发机上跑，**不装任何东西、不碰系统路径、
+不需要 root**。开发过程中每改一次就装一次，既慢又容易把「系统里那份旧的」和
+「刚编的这份」搞混——`dev.sh` 用独立的 `deepin/build-dev/` 目录，两个互不干扰。
+
+脚本自带环境变量（`CC` / `CXX` / `FLOWGRID_DTK_SYSROOT` / `LD_LIBRARY_PATH` /
+`QT_PLUGIN_PATH`），上面「构建」那节手动 export 的那些不用再管。
+
+两点值得留意：
+
+- **快照必须显式带 `--theme`。** 不带的话应用会问宿主的 Appearance1，宿主是浅色时
+  那张「深色快照」画出来就是浅色，看着像快照坏了。
+- **快照落盘要数 PNG 数量。** 少落就是没成功，不能像以前那样「命令返回 0 就算过」。
+
+比对快照时注意有三处**本来就会抖**：`s-connections*.png`（延迟读数跨过质量阈值，
+状态色整个翻面，最大像素差可达 200+）、`s-latency.png`（同上）、`s-tray.png`
+（托盘徽标计数）。同一二进制连跑两次，这三张也会出现同量级差异——判断回归时先
+拿这个当基线，别把它们算成改动引入的。其余各屏是逐像素稳定的。
+
 ## 安装
 
 ```bash
@@ -103,6 +135,8 @@ QT_QPA_PLATFORM=offscreen ./deepin/build/flowgrid-deepin --snapshot /tmp/fgshot/
 ## 目录
 
 ```
+dev.sh         开发模式：编译 / 跑 / 自检 / 快照。不装系统、不需要 root
+install.sh     系统级安装（sudo）：/usr/local + /usr/share + /etc/xdg/autostart
 src/core/    协议绑定 + 主题 + 配置（无任何 UI 依赖）
   designtokens.h  tokens.css 第 0/4 节逐条移植（几何 / 动效 / 间距 / 字号 / 圆角 / 阴影）
   theme.*         设计令牌 → DPalette 语义角色。状态色（ok/warn/danger/idle）不进 DPalette，
@@ -194,12 +228,34 @@ Ctrl+K 键位映射、Ctrl+, 设置、Ctrl+Q 退出）。这些提示先前只�
 
 ## 需要在真实桌面验证的三件事
 
-1. **深色主题**：offscreen 下 `Appearance1` 不可达，代码回退到
-   `DGuiApplicationHelper::themeType()`（light）。深色路径在位但从未在真实 DDE
-   会话跑过。
+1. **深色主题**：深色路径已在真实显示（`DISPLAY=:0`，`bloom.dark`）下渲染验证过，
+   面板底色取到 DTK 的 `#252525`、主色取到 deepin 活动色 `#024cca`，与 offscreen
+   下的兜底取值不同——**这是对的**：真实桌面走 DPalette，offscreen 走设计稿兜底，
+   两者的差异恰好说明 DPalette 路径确实生效了。仍需人眼在真实 DDE 会话里过一遍：
+   面板浮在深色桌面上时，跟系统其它窗口的观感是否协调。
 2. **托盘唤出**：offscreen 下 `QSystemTrayIcon::isSystemTrayAvailable()` 为 false。
    需在真实桌面点击托盘图标确认 300px 浮层能弹出。
 3. **键盘链路在真实桌面上的观感**：Esc 关闭、Tab 焦点环、托盘快捷键都已在无头
    环境用真实事件路径验过（`flowgrid-uitest` + `s-focus.png`），但真实 DDE 会话下
    还要看一遍：浮板内 Tab 能走遍控件、Esc 能收起浮板、焦点环在真桌面底色上够清楚、
    Ctrl+K 这些快捷键按下去确实换板。
+
+## 主题取值：DPalette 不可信时怎么兜底
+
+`DPalette` 在「DTK 的平台主题插件没加载」时会**静默退化成内置浅色默认值**，而
+`DGuiApplicationHelper::themeType()` 仍然照着宿主报 Dark。两边对不上，面和字就
+一起串色——而且主色也跟着变（深色下 `Highlight` 会变成 Qt 默认的洋红 `#0081ff`，
+不再是 deepin 的活动色）。
+
+实测两处环境（探针打印 DPalette 各角色）：
+
+| 角色 | 真实显示 `DISPLAY=:0`（bloom.dark） | offscreen（插件缺席） |
+|---|---|---|
+| `Window` | `#ff252525` | `#fff8f8f8` |
+| `TextTitle` | `#d8ffffff` | `#d8000000` |
+| `Highlight` | `#ff024cca`（deepin 活动色） | `#ff0081ff`（Qt 洋红） |
+
+判据只有一个：**底色明暗跟宿主判定对不对得上**。对不上就整组中性色改用设计稿
+tokens 取值（`applyNeutralFallback`），主色一并接管，避免面板在深色桌面上变成
+一块刺眼的白板。这条兜底只影响 DPalette 自相矛盾的环境；真实桌面上 DPalette
+自洽，走的还是 DPalette 路径。

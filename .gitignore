@@ -28,6 +28,7 @@ Thumbs.db
 build/
 kde/build/
 deepin/build/
+deepin/build-dev/
 kde/rust/target/
 deepin/native/target/
 protocol/cgo/*.a

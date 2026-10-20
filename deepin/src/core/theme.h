@@ -31,16 +31,15 @@ struct StatusColor {
 // 一屏用到的全部语义色。改这里等于改全应用配色，故集中一处。
 struct Palette {
     // 中性面（DTK 原始档位，明暗下轻重关系相反，别直接拿来当层级用）
-    QColor surface;        // QPalette::Window
-    QColor surface2;       // QPalette::AlternateBase
-    QColor surface3;       // QPalette::Mid
+    QColor surface;        // QPalette::Window（唯一保证不透明的一档）
+    QColor surface3;       // QPalette::Mid（不透明；用作 chip / 徽标底）
     QColor surfaceHi;      // hover
     QColor surfacePress;   // pressed
     QColor edgeHi;         // 浮板顶部 1px 内高光
 
     // 层级三角色：与主题无关，「卡浮在页之上」在明暗下都成立。
-    // 取值见 theme.cpp 末尾的推导——直接用 surface/surface2 会在深色下
-    // 把卡片画得比页面还暗，层次整个翻过来。
+    // 取值见 theme.cpp 末尾的推导——直接从 surface 派生，别引别的中性档，
+    // 否则深色下会把卡片画得比页面还暗，层次整个翻过来。
     QColor page;           // 浮板内容区的底
     QColor card;           // 卡片 / 列表的底
     QColor well;           // 卡内凹槽
