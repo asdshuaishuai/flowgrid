@@ -226,6 +226,110 @@ private:
     unsigned long long id_ = 0;
 };
 
+// ── 智能连接（LAN 私有链，§3.1） ──────────────────────────────────────
+
+// 持久身份密钥对（ECDSA P-256，签名用；与 §4.3 临时 ECDH 密钥分离）。
+class Identity {
+public:
+    Identity();                                    // 生成新密钥对
+    explicit Identity(const QByteArray &privKey);  // 从导出的私钥恢复
+    ~Identity();
+
+    Identity(const Identity &) = delete;
+    Identity &operator=(const Identity &) = delete;
+    Identity(Identity &&o) noexcept;
+    Identity &operator=(Identity &&o) noexcept;
+
+    bool isValid() const { return id_ != 0; }
+
+    QByteArray exportPrivateKey() const;  // SEC1 EC 私钥（客户端安全存储）
+    QByteArray publicKey() const;         // 65 字节 SEC1 公钥
+
+private:
+    friend class Announcer;
+    friend class TrustChain;
+    void release();
+    unsigned long long id_ = 0;
+};
+
+// 签名通告器（纯逻辑：Announce 产生字节，客户端经 UDP 多播发送）。
+class Announcer {
+public:
+    Announcer(const Identity &identity, std::uint8_t platform, std::uint8_t caps,
+              std::uint16_t port, const QString &name);
+    ~Announcer();
+
+    Announcer(const Announcer &) = delete;
+    Announcer &operator=(const Announcer &) = delete;
+    Announcer(Announcer &&o) noexcept;
+    Announcer &operator=(Announcer &&o) noexcept;
+
+    bool isValid() const { return id_ != 0; }
+
+    QByteArray announce() const;  // 签名通告字节
+
+private:
+    void release();
+    unsigned long long id_ = 0;
+};
+
+// 识别到的对端。
+struct LanIDPeer {
+    QString name;
+    std::uint8_t platform = 0;
+    std::uint8_t caps = 0;
+    QByteArray address;    // 原始 IP 字节（4 = IPv4）
+    std::uint16_t port = 0;
+    QByteArray publicKey;  // 65 字节
+    QString fingerprint;   // 32 hex
+};
+
+// 监听器（纯逻辑：Feed 喂字节，peer/peersCount 取结果）。
+class Listener {
+public:
+    Listener();
+    ~Listener();
+
+    Listener(const Listener &) = delete;
+    Listener &operator=(const Listener &) = delete;
+    Listener(Listener &&o) noexcept;
+    Listener &operator=(Listener &&o) noexcept;
+
+    bool isValid() const { return id_ != 0; }
+
+    void feed(const QByteArray &data, const QByteArray &fromIP);
+    int peersCount() const;
+    bool peer(int index, LanIDPeer *out) const;
+    int prune(int maxAgeMs);
+
+private:
+    void release();
+    unsigned long long id_ = 0;
+};
+
+// 私有链信任（局域网私有区块链）。
+class TrustChain {
+public:
+    explicit TrustChain(const Identity &identity);
+    ~TrustChain();
+
+    TrustChain(const TrustChain &) = delete;
+    TrustChain &operator=(const TrustChain &) = delete;
+    TrustChain(TrustChain &&o) noexcept;
+    TrustChain &operator=(TrustChain &&o) noexcept;
+
+    bool isValid() const { return id_ != 0; }
+
+    int append(const QByteArray &peerID, std::uint8_t decision);  // 0=trust, 1=reject
+    bool isTrusted(const QByteArray &peerID) const;
+    bool verify() const;
+    int count() const;
+
+private:
+    void release();
+    unsigned long long id_ = 0;
+};
+
 // ── 错误码文本：诊断导出用 ────────────────────────────────────────────
 QString errorString(int code);
 

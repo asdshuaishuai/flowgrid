@@ -22,6 +22,7 @@ import (
 	"github.com/flowgrid/windows/internal/core"
 	"github.com/flowgrid/windows/internal/hub"
 	"github.com/flowgrid/windows/internal/link"
+	"github.com/flowgrid/windows/internal/mdnslink"
 )
 
 const defaultPipe = `\\.\pipe\flowgrid-core`
@@ -81,6 +82,13 @@ func main() {
 		slog.Warn("mdns advertiser unavailable", "err", advErr)
 	}
 
+	// mDNS socket：驱动 browser（查询/应答聚合）与 advertiser（应答）
+	mdnsLink := mdnslink.NewLink(c.Browser(), adv)
+	if err := mdnsLink.Start(); err != nil {
+		slog.Warn("mdns socket unavailable", "err", err)
+		c.SetMdnsErr(err)
+	}
+
 	// 输入/剪贴板/文件中枢：需要交互桌面（钩子/剪贴板窗），失败则降级为
 	// 纯连接节点（对端帧就地消化，键鼠/剪贴板/文件不可用）。
 	hub := hub.New(engine,
@@ -111,9 +119,7 @@ func main() {
 	hub.Stop()
 	engine.Stop()
 	c.Stop()
-	if adv != nil {
-		adv.Stop()
-	}
+	mdnsLink.Stop()
 }
 
 func defaultAppData() string {

@@ -47,6 +47,15 @@ public final class DirectLinkManager: PeerConnectionControlling {
     private var advertisedServiceName: String?
     public private(set) var discoveredPeers: [DiscoveredPeer] = []
     private var discoveredEndpoints: [String: NWEndpoint] = [:]
+    private var mdnsPeers: [DiscoveredPeer] = []
+
+    // 智能连接（LAN 私有链，§3.1）
+    private var identity: GoLanID.Identity?
+    private var announcer: GoLanID.Announcer?
+    private var lanListener: GoLanID.Listener?
+    private var trustChain: GoLanID.TrustChain?
+    private var lanIDLink: LanIDLink?
+    private var lanPeers: [GoLanID.Peer] = []
 
     public init() {}
 
@@ -99,6 +108,7 @@ public final class DirectLinkManager: PeerConnectionControlling {
             listener.start(queue: .main)
             self.listener = listener
             startBrowsing()
+            startIntelligentLink()
             updateStatus(.listening(port: port))
         } catch {
             updateStatus(.failed(reason: "无法监听 \(port)：\(error.localizedDescription)"))
@@ -218,9 +228,11 @@ public final class DirectLinkManager: PeerConnectionControlling {
     public func stopBrowsing() {
         browser?.cancel()
         browser = nil
+        stopIntelligentLink()
         if !discoveredPeers.isEmpty {
             discoveredPeers = []
             discoveredEndpoints = [:]
+            mdnsPeers = []
             onEvent?(.discovered([]))
         }
     }
@@ -242,9 +254,9 @@ public final class DirectLinkManager: PeerConnectionControlling {
         }
         peers.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         print("[FlowGrid] mDNS 发现 \(peers.count) 台：\(peers.map(\.name).joined(separator: ", "))")
-        discoveredPeers = peers
+        mdnsPeers = peers
         discoveredEndpoints = endpoints
-        onEvent?(.discovered(peers))
+        refreshDiscoveredPeers()
     }
 
     // MARK: - 会话装配
@@ -347,6 +359,84 @@ public final class DirectLinkManager: PeerConnectionControlling {
     public func setCaptureEnabled(_ enabled: Bool) -> Bool {
         guard let session, session.isRunning else { return false }
         return session.setCaptureEnabled(enabled)
+    }
+
+    // MARK: - 智能连接（LAN 私有链，§3.1）
+
+    private func startIntelligentLink() {
+        guard let identity = loadOrCreateIdentity() else { return }
+        self.identity = identity
+        guard let announcer = try? GoLanID.Announcer(
+            identity: identity,
+            platform: .macOS,
+            capabilities: [.directLink, .clipboard, .fileTransfer],
+            port: listenPort,
+            name: localName
+        ) else { return }
+        guard let lanListener = try? GoLanID.Listener() else { return }
+        guard let trustChain = try? GoLanID.TrustChain(identity: identity) else { return }
+        self.announcer = announcer
+        self.lanListener = lanListener
+        self.trustChain = trustChain
+
+        let link = LanIDLink(announcer: announcer, listener: lanListener)
+        link.onPeersChanged = { [weak self] peers in
+            Task { @MainActor in
+                guard let self else { return }
+                self.lanPeers = peers
+                self.refreshDiscoveredPeers()
+            }
+        }
+        self.lanIDLink = link
+        link.start()
+        print("[FlowGrid] 智能连接已启动（LAN 私有链发现）")
+    }
+
+    private func stopIntelligentLink() {
+        lanIDLink?.stop()
+        lanIDLink = nil
+        announcer = nil
+        lanListener = nil
+        trustChain = nil
+        identity = nil
+        lanPeers = []
+    }
+
+    private func refreshDiscoveredPeers() {
+        var peers = mdnsPeers
+        for peer in lanPeers {
+            let trusted = trustChain?.isTrusted(peerID: peer.publicKey) ?? false
+            peers.append(DiscoveredPeer(
+                id: peer.fingerprint,
+                name: peer.name,
+                platform: peer.platform,
+                port: peer.port,
+                source: .lan,
+                fingerprint: peer.fingerprint,
+                trusted: trusted
+            ))
+        }
+        discoveredPeers = peers
+        onEvent?(.discovered(peers))
+    }
+
+    private func loadOrCreateIdentity() -> GoLanID.Identity? {
+        let url = Self.identityFileURL()
+        if let data = try? Data(contentsOf: url), let identity = try? GoLanID.Identity(importing: data) {
+            return identity
+        }
+        guard let identity = try? GoLanID.Identity() else { return nil }
+        if let exported = try? identity.exportPrivateKey() {
+            try? exported.write(to: url)
+        }
+        return identity
+    }
+
+    private static func identityFileURL() -> URL {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/FlowGrid", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("identity.key")
     }
 
     deinit {

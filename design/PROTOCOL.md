@@ -43,19 +43,19 @@
 
 ## 1. 协议概述
 
-FlowGrid 使用双协议架构，两种协议共享相同的 HID 帧格式和键码体系：
+FlowGrid 使用两模型架构，两种模型共享相同的 HID 帧格式和键码体系：
 
-| | NearLink (主推) | DirectLink (备用) |
+| | 直连 (DirectLink) | 智能连接 (IntelligentLink) |
 |---|---|---|
-| **场景** | 无线键鼠共享 | 有线/局域网键鼠共享 |
-| **发现** | BLE 5.0 广播 | mDNS (Bonjour/Avahi) |
-| **传输** | WiFi Direct + UDP | 以太网直连/TCP + UDP |
-| **加密** | DTLS 1.3 (AES-256-GCM) | DTLS 1.3 (可选，物理安全时) |
-| **典型延迟** | < 3ms | < 0.5ms |
-| **重连** | < 200ms (0-RTT) | 0s (子网记忆) |
-| **路由依赖** | 无 (P2P) | 无 (直连/局域网) |
+| **场景** | 有线/局域网键鼠共享 | 局域网去中心识别（无 BLE、mDNS 不可用时兜底） |
+| **发现** | mDNS (Bonjour/Avahi) | UDP 多播通告 + 私有链识别 |
+| **传输** | TCP | UDP（发现）+ TCP（数据）协同 |
+| **加密** | TLS 1.3（可选）+ 帧 HMAC（§8.3） | 帧 HMAC（§8.3，复用直连会话） |
+| **典型延迟** | < 0.5ms | 同直连（数据通道相同） |
+| **重连** | 0s（子网记忆） | 同直连 |
+| **路由依赖** | 无（直连/局域网） | 无（局域网） |
 
-**设计哲学：** 受 AirDrop 启发——BLE 做发现和握手，高速通道做数据。选择 UDP+DTLS 而非 TCP 是因为 8 字节 HID 帧会触发 Nagle 算法的 40-120ms 延迟累积。
+**设计哲学：** 受 AirDrop 启发——去中心服务做发现和识别，高速通道做数据。智能连接以局域网私有链（UDP 多播通告 + 密码学身份 + 链式信任，§3.1）实现去中心识别，不依赖 BLE 等射频硬件；数据经 TCP 传输（§7.2）。BLE 发现与 UDP+DTLS 传输（原 NearLink）为后续迭代预留。
 
 ---
 
@@ -93,35 +93,52 @@ v1.0 文档描述的线格式从未有对外发布的实现（客户端实现已
 
 ## 3. 设备发现协议
 
-### 3.1 NearLink — BLE 发现
+### 3.1 智能连接 — LAN 私有链发现
 
-#### 3.1.1 BLE Service 定义
+#### 3.1.1 多播通告
 
-```
-Service UUID:  00001850-0000-1000-8000-00805F9B34FB (0x1850)
-
-Characteristics:
-┌──────────────────────────────────────────┬─────────────┬──────────────────────┐
-│ UUID                                     │ 属性         │ 说明                  │
-├──────────────────────────────────────────┼─────────────┼──────────────────────┤
-│ 00001851-...-00805F9B34FB (0x1851)       │ Write       │ TX: 对端写入 HID 帧   │
-│ 00001852-...-00805F9B34FB (0x1852)       │ Notify      │ RX: 通知 HID 帧给对端  │
-│ 00001853-...-00805F9B34FB (0x1853)       │ Read/Write  │ WiFi Direct 参数交换   │
-│ 00001854-...-00805F9B34FB (0x1854)       │ Read        │ 设备信息 (名称/平台)   │
-└──────────────────────────────────────────┴─────────────┴──────────────────────┘
-```
-
-#### 3.1.2 BLE 广播数据
-
-BLE 广播包 (Advertising Data) 包含：
+设备在局域网多播组周期广播签名通告：
 
 ```
-Byte 0-1:     Service UUID (0x1850, 16-bit shortened)
-Byte 2:       Protocol Version (0x01)
-Byte 3:       Device Platform (见下表)
-Byte 4:       Capability Flags (见下表)
-Byte 5-6:     WiFi Direct Channel (UInt16 BE)
+多播组:      239.255.42.99
+端口:        24801 (与直连一致)
+TTL:         1 (不出局域网)
+通告周期:    2s
+
+通告记录:
+  Byte 0:      Version (UInt8, 0x01)
+  Byte 1:      Platform (UInt8, 见 §3.1.4)
+  Byte 2:      Caps (UInt8, 见 §3.1.4)
+  Byte 3-4:    Port (UInt16 BE, 本机直连 TCP 监听端口)
+  Byte 5:      NameLen (UInt8)
+  Byte 6..6+N: Name (UTF-8, N ≤ 64)
+  随后 65 字节: IdentityPubKey (SEC1 非压缩点, 编码同 §4.3)
+  随后 64 字节: Signature (ECDSA-P256-SHA256, 覆盖除签名外全部字段)
 ```
+
+监听方收通告后用通告内 IdentityPubKey 验签，通过即识别为候选对端（记录 name/platform/caps/端点/指纹/lastSeen）；10s 未更新自动淘汰；验签失败静默丢弃（网络噪声）。
+
+#### 3.1.2 身份与验签
+
+每设备持有持久身份密钥对（P-256）。指纹 = hex(SHA-256(IdentityPubKey)[0:16])（32 个十六进制字符），用于人工核对与信任持久化。
+
+#### 3.1.3 私有链信任（局域网私有区块链）
+
+每设备维护哈希链式签名信任日志，只追加：
+
+```
+信任记录:
+  PeerID:     对端身份公钥 (65 字节)
+  Fingerprint: 对端指纹 (16 字节, hex(SHA-256(PeerID)[0:16]))
+  Decision:   0x00 = trust, 0x01 = reject
+  Timestamp:  Unix 秒 (UInt64 BE)
+  PrevHash:   前一条记录的 SHA-256 (32 字节, 首条为全零)
+  Signature:  ECDSA-P256-SHA256(IdentityPrivKey, 除签名外全部字段) (64 字节)
+```
+
+性质：签名防伪、PrevHash 链式防篡改、只追加（撤销 = 追加 reject 记录而非改写）、去中心（每设备本地链，无需共识）。首接触：展示指纹待人工确认后追加 trust 记录；后续：验签 + 指纹命中链上最新 trust → 自动信任；不命中 → 提示确认，不自动连接。
+
+#### 3.1.4 平台与能力字段
 
 **Device Platform 字段:**
 
@@ -136,7 +153,7 @@ Byte 5-6:     WiFi Direct Channel (UInt16 BE)
 **Capability Flags:**
 
 ```
-Bit 0 (0x01):  支持 NearLink
+Bit 0 (0x01):  支持 IntelligentLink
 Bit 1 (0x02):  支持 DirectLink
 Bit 2 (0x04):  支持 WiFi Direct
 Bit 3 (0x08):  支持 DTLS 1.3
@@ -145,59 +162,7 @@ Bit 5 (0x20):  支持 文件传输
 Bit 6-7:       保留 (置零)
 ```
 
-#### 3.1.3 WiFi Direct 参数交换
-
-通过 Characteristic 0x1853 交换 WiFi Direct 连接参数：
-
-```
-请求 (Host → Target, 20 bytes):
-┌──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┐
-│ Byte 0   │ Byte 1-2 │ Byte 3-6 │ Byte 7-10│ Byte 11  │ Byte 12  │ Byte 13  │ Byte 14  │ Byte 15-18│ Byte 19  │
-│ Version  │ Port     │ IP Addr  │ Subnet   │ Channel  │ Band     │ Security │ Reserved │ Reserved │ Reserved │
-│ (0x01)   │ (UInt16) │ (IPv4)   │ Mask     │ (UInt8)  │ (UInt8)  │ (UInt8)  │ (0x00)   │ (0x00)   │ (0x00)   │
-└──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
-
-Band:  0x01 = 2.4GHz, 0x02 = 5GHz
-Security: 0x01 = WPA2, 0x02 = WPA3
-
-v1.0 曾在 Byte 15-18 携带 SHA-256(PSK) 前 4 字节用于"验证"，已移除：
-在无保护的广播信道上传输 PSK 哈希前缀，允许攻击者对 PSK 做离线字典攻击。
-PSK 所有权在 DTLS/TLS 配对握手中证明，发现信道不携带任何 PSK 衍生物。
-```
-
-```
-响应 (Target → Host, 8 bytes):
-┌──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┐
-│ Byte 0   │ Byte 1   │ Byte 2-3 │ Byte 4-5 │ Byte 6   │ Byte 7   │
-│ Version  │ Status   │ Port     │ Channel  │ Band     │ Reserved │
-│ (0x01)   │ (见下表)  │ (UInt16) │ (UInt16) │ (UInt8)  │ (0x00)   │
-└──────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
-
-Status: 0x00 = 接受, 0x01 = 拒绝(频道忙), 0x02 = 拒绝(不兼容), 0xFF = 错误
-```
-
-#### 3.1.4 WiFi 信道避让
-
-```
-避免使用的 WiFi 信道 (Apple AWDL 占用):
-  2.4GHz: Channel 6
-  5GHz:   Channel 44, 149
-
-推荐使用:
-  2.4GHz: Channel 1, 11
-  5GHz:   Channel 36, 40, 48, 153, 157, 161
-
-原因: Apple AWDL 在 Channel 6/44/149 上产生 3-90ms 周期性抖动
-```
-
-#### 3.1.5 RSSI 信号强度分级
-
-```
-Excellent:  RSSI > -50 dBm   → 4/4 格
-Good:       RSSI > -65 dBm   → 3/4 格
-Fair:       RSSI > -80 dBm   → 2/4 格
-Weak:       RSSI ≤ -80 dBm   → 1/4 格 (不建议连接)
-```
+> **BLE 发现（预留）**：原 NearLink 的 BLE 服务定义（0x1850）、广播数据、WiFi Direct 参数交换、信道避让与 RSSI 分级为后续迭代预留（BLE 射频路径），本文档暂不展开；协议库对应编解码（BLE 广播 / WiFi Direct 参数）已实现保留。
 
 ### 3.2 DirectLink — mDNS 发现
 
@@ -616,7 +581,9 @@ HID 帧内一律使用标准 USB HID Usage ID，修饰键统一用 §6.2 位掩�
 
 ## 7. 数据传输协议
 
-### 7.1 NearLink — UDP + DTLS
+### 7.1 IntelligentLink — UDP + DTLS（预留）
+
+> **预留说明**：本节 UDP+DTLS 传输为后续 BLE 射频路径预留。当前智能连接（§3.1 LAN 私有链发现）的数据通道走 TCP（§7.2），UDP 仅用于多播发现通告。
 
 ```
 传输层:
@@ -686,7 +653,7 @@ HID 帧内一律使用标准 USB HID Usage ID，修饰键统一用 §6.2 位掩�
 
 v1.0 曾定义"在标准 HID 帧前添加 4 字节分片头 (Frag Seq/Idx/Tot)"的机制。
 该机制与 §5.1 的 UInt8 载荷上限矛盾：合法帧最大 267 字节，在任何现实 MTU
-（NearLink 安全值 1400）下都不会超限，该机制从未有合法触发路径；而真正需要
+（IntelligentLink 安全值 1400）下都不会超限，该机制从未有合法触发路径；而真正需要
 分段的 64KB 剪贴板，正确做法是对 CLIPBOARD 载荷本身分段（见 §5.3）。
 
 v1.1 起不再使用本机制。若未来版本提升载荷上限导致单帧可能超过 MTU，须重新
@@ -750,7 +717,7 @@ Receiver: OFFER(收) → 提示用户 (30s 未应答作废)
 - TransferID 不匹配的帧一律丢弃（普通网络噪声，静默）；重复 CHUNK 按 ChunkIdx 去重，静默忽略。
 - 数据在接收端校验通过前不得落盘到目标位置（先内存/临时文件）。
 - HASH 不符不是传输层错误：以 FILE_ACK 0x04 上报，由用户决定重试。
-- 流控由传输层承担（DTLS/TLS 可靠有序）；NearLink UDP 上建议 Pump 节奏
+- 流控由传输层承担（DTLS/TLS 可靠有序）；IntelligentLink UDP 上建议 Pump 节奏
   ≤ 5000 帧/秒, 避免突发挤占 HID 帧。
 - **丢段恢复**：发送方 Pump 在一轮发完后自动从头重发，默认额外重发 2 轮
   （可配置，实现侧 SetResendPasses）；接收方按 ChunkIdx 去重，重发幂等。
@@ -823,7 +790,7 @@ Client (Host)                           Server (Target)
   5. HMAC 连续验证失败 ≥ 3 次 → 立即断开连接 (防暴破)
 
 何时启用:
-  - NearLink (WiFi): 必须启用
+  - IntelligentLink (WiFi): 必须启用
   - DirectLink (TCP): 建议启用
   - DirectLink (Raw Ethernet, 物理隔离): 可选
 ```
@@ -906,7 +873,7 @@ reconnecting ──(超过最大次数)──→ idle
    ├─ 有 PSK → 0-RTT 恢复 (在 ClientHello 中携带 early_data)
    └─ 无 PSK → 完整 DTLS 握手
 
-2. NearLink 重连:
+2. IntelligentLink 重连:
    → 尝试 WiFi Direct 重新连接 (不重新扫描 BLE)
    → 如果 WiFi Direct 失败 → 重新 BLE 扫描 + 握手
 
@@ -939,7 +906,7 @@ reconnecting ──(超过最大次数)──→ idle
   - 不沿用旧连接的序列号空间
 
 防重放说明:
-  本机制用于丢包检测与重放丢弃, 不替代传输层安全。NearLink 的 DTLS 1.3
+  本机制用于丢包检测与重放丢弃, 不替代传输层安全。IntelligentLink 的 DTLS 1.3
   自带记录层重放窗口; 未启用 DTLS 的链路 (Raw Ethernet) 上, 本机制 + 帧
   HMAC 是唯一的重放防线, 二者都必须启用。
 ```
@@ -1142,7 +1109,7 @@ Context 值:
   Windows Target     ✅ NL/DL      ✅ NL/DL        ✅ NL/DL
   Linux Target       ✅ NL/DL      ✅ NL/DL        ✅ NL/DL
 
-  NL = NearLink (BLE + WiFi Direct + UDP/DTLS)
+  NL = IntelligentLink (BLE + WiFi Direct + UDP/DTLS)
   DL = DirectLink (mDNS + TCP/TLS 或 Raw Ethernet)
 
   任意两个平台的任意组合均支持双向通信。
@@ -1154,7 +1121,7 @@ Context 值:
 
 | 端口 | 协议 | 用途 |
 |------|------|------|
-| 24801/UDP | NearLink | HID 数据传输 + DTLS |
+| 24801/UDP | IntelligentLink | HID 数据传输 + DTLS |
 | 24801/TCP | DirectLink | HID 数据传输 + TLS |
 | - | BLE | 发现 + 参数交换 (无固定端口) |
 | - | mDNS | 设备发现 (_flowgrid._tcp) |

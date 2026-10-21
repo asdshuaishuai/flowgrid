@@ -186,6 +186,27 @@ extern int fg_file_receiver_take_offer(GoUintptr handle, uint16_t* outID, uint8_
 extern int fg_file_receiver_accept(GoUintptr handle, uint16_t id);
 extern int fg_file_receiver_reject(GoUintptr handle, uint16_t id, uint8_t status);
 extern int fg_file_receiver_take_complete(GoUintptr handle, uint8_t** outName, size_t* outNameLen, uint8_t** outData, size_t* outDataLen, int* outErr);
+extern GoUintptr fg_lanid_identity_generate(void);
+extern uint8_t* fg_lanid_identity_export(GoUintptr id, size_t* outLen);
+extern GoUintptr fg_lanid_identity_import(uint8_t* data, size_t length);
+extern uint8_t* fg_lanid_identity_public_key(GoUintptr id, size_t* outLen);
+extern void fg_lanid_identity_free(GoUintptr id);
+extern GoUintptr fg_lanid_announcer_new(GoUintptr identID, uint8_t platform, uint8_t caps, uint16_t port, char* name);
+extern uint8_t* fg_lanid_announcer_announce(GoUintptr id, size_t* outLen);
+extern void fg_lanid_announcer_free(GoUintptr id);
+extern GoUintptr fg_lanid_listener_new(void);
+extern int fg_lanid_listener_feed(GoUintptr id, uint8_t* data, size_t length, uint8_t* fromIP, size_t fromIPLen);
+extern int fg_lanid_listener_peers_count(GoUintptr id);
+extern int fg_lanid_listener_peer(GoUintptr id, int index, uint8_t* outBuf, size_t outBufLen);
+extern int fg_lanid_listener_prune(GoUintptr id, int64_t maxAgeMs);
+extern void fg_lanid_listener_free(GoUintptr id);
+extern GoUintptr fg_lanid_trust_new(GoUintptr identID);
+extern int fg_lanid_trust_append(GoUintptr id, uint8_t* peerID, size_t peerIDLen, uint8_t decision);
+extern int fg_lanid_trust_is_trusted(GoUintptr id, uint8_t* peerID, size_t peerIDLen);
+extern int fg_lanid_trust_verify(GoUintptr id);
+extern int fg_lanid_trust_count(GoUintptr id);
+extern void fg_lanid_trust_free(GoUintptr id);
+extern int fg_link_plan(uint8_t preferred, int mdnsPeers, int lanPeers, int hasManual);
 
 #ifdef __cplusplus
 }

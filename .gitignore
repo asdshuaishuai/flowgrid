@@ -32,6 +32,7 @@ deepin/build-dev/
 kde/rust/target/
 deepin/native/target/
 protocol/cgo/*.a
+protocol/cgo/cgo
 libflowgrid_*.a
 libflowgrid_*.h
 

@@ -61,19 +61,27 @@ func New() *Core {
 // 照常降级服务，原因记入 Status 由 UI 如实展示。
 func (c *Core) Start() {
 	b := protocol.NewMdnsBrowser()
-	if err := b.Start(); err != nil {
-		c.mu.Lock()
-		c.mdnsErr = err
-		c.mu.Unlock()
-	} else {
-		c.mu.Lock()
-		c.browser = b
-		c.feed = mdnsFeed{b}
-		c.mu.Unlock()
-	}
+	c.mu.Lock()
+	c.browser = b
+	c.feed = mdnsFeed{b}
+	c.mu.Unlock()
 
 	c.wg.Add(1)
 	go c.run()
+}
+
+// Browser returns the mDNS browser for the socket manager to drive.
+func (c *Core) Browser() *protocol.MdnsBrowser {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.browser
+}
+
+// SetMdnsErr records an mDNS socket error for Status reporting.
+func (c *Core) SetMdnsErr(err error) {
+	c.mu.Lock()
+	c.mdnsErr = err
+	c.mu.Unlock()
 }
 
 func (c *Core) run() {

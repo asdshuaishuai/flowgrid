@@ -25,8 +25,12 @@ package main
 import "C"
 
 import (
+	"crypto/ecdsa"
+	"encoding/binary"
 	"errors"
+	"net"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/flowgrid/protocol"
@@ -103,6 +107,10 @@ var (
 	sequenceTrackers     registry[*protocol.SequenceTracker]
 	fragmentReassemblers registry[*protocol.FragmentReassembler]
 	keymapTables         registry[*protocol.KeyMapTable]
+	lanIDIdentities      registry[*ecdsa.PrivateKey]
+	lanIDAnnouncers      registry[*protocol.LanIDAnnouncer]
+	lanIDListeners       registry[*protocol.LanIDListener]
+	trustChains          registry[*protocol.TrustChain]
 )
 
 // --- Frame ---
@@ -1432,6 +1440,277 @@ func fg_file_receiver_take_complete(handle uintptr, outName **C.uint8_t, outName
 	*outDataLen = C.size_t(len(data))
 	*outData = cBuffer(data)
 	return 1
+}
+
+// --- LanID 身份密钥（ECDSA P-256，持久） ---
+
+//export fg_lanid_identity_generate
+func fg_lanid_identity_generate() uintptr {
+	priv, err := protocol.GenerateIdentityKeyPair()
+	if err != nil {
+		return 0
+	}
+	return lanIDIdentities.put(priv)
+}
+
+//export fg_lanid_identity_export
+func fg_lanid_identity_export(id uintptr, outLen *C.size_t) *C.uint8_t {
+	priv, ok := lanIDIdentities.get(id)
+	if !ok {
+		*outLen = 0
+		return nil
+	}
+	data, err := protocol.ExportIdentityPrivateKey(priv)
+	if err != nil {
+		*outLen = 0
+		return nil
+	}
+	*outLen = C.size_t(len(data))
+	return cBuffer(data)
+}
+
+//export fg_lanid_identity_import
+func fg_lanid_identity_import(data *C.uint8_t, length C.size_t) uintptr {
+	if data == nil || length == 0 {
+		return 0
+	}
+	src := make([]byte, int(length))
+	copy(src, unsafe.Slice((*byte)(unsafe.Pointer(data)), int(length)))
+	priv, err := protocol.ImportIdentityPrivateKey(src)
+	if err != nil {
+		return 0
+	}
+	return lanIDIdentities.put(priv)
+}
+
+//export fg_lanid_identity_public_key
+func fg_lanid_identity_public_key(id uintptr, outLen *C.size_t) *C.uint8_t {
+	priv, ok := lanIDIdentities.get(id)
+	if !ok {
+		*outLen = 0
+		return nil
+	}
+	pub := protocol.IdentityPublicKeyBytes(priv)
+	*outLen = C.size_t(len(pub))
+	return cBuffer(pub)
+}
+
+//export fg_lanid_identity_free
+func fg_lanid_identity_free(id uintptr) {
+	lanIDIdentities.remove(id)
+}
+
+// --- LanID 通告器（纯逻辑：Announce 产生字节，客户端发送） ---
+
+//export fg_lanid_announcer_new
+func fg_lanid_announcer_new(identID uintptr, platform C.uint8_t, caps C.uint8_t, port C.uint16_t, name *C.char) uintptr {
+	priv, ok := lanIDIdentities.get(identID)
+	if !ok {
+		return 0
+	}
+	ann, err := protocol.NewLanIDAnnouncer(priv, protocol.Platform(platform), protocol.CapabilityFlags(caps), uint16(port), goString(name))
+	if err != nil {
+		return 0
+	}
+	return lanIDAnnouncers.put(ann)
+}
+
+//export fg_lanid_announcer_announce
+func fg_lanid_announcer_announce(id uintptr, outLen *C.size_t) *C.uint8_t {
+	ann, ok := lanIDAnnouncers.get(id)
+	if !ok {
+		*outLen = 0
+		return nil
+	}
+	wire, err := ann.Announce()
+	if err != nil {
+		*outLen = 0
+		return nil
+	}
+	*outLen = C.size_t(len(wire))
+	return cBuffer(wire)
+}
+
+//export fg_lanid_announcer_free
+func fg_lanid_announcer_free(id uintptr) {
+	lanIDAnnouncers.remove(id)
+}
+
+// --- LanID 监听器（纯逻辑：Feed 喂字节，Poll/Peers 取结果） ---
+
+//export fg_lanid_listener_new
+func fg_lanid_listener_new() uintptr {
+	return lanIDListeners.put(protocol.NewLanIDListener())
+}
+
+//export fg_lanid_listener_feed
+func fg_lanid_listener_feed(id uintptr, data *C.uint8_t, length C.size_t, fromIP *C.uint8_t, fromIPLen C.size_t) C.int {
+	l, ok := lanIDListeners.get(id)
+	if !ok || data == nil || length == 0 {
+		return -1
+	}
+	src := make([]byte, int(length))
+	copy(src, unsafe.Slice((*byte)(unsafe.Pointer(data)), int(length)))
+	var ip net.IP
+	if fromIP != nil && fromIPLen > 0 {
+		ip = make(net.IP, int(fromIPLen))
+		copy(ip, unsafe.Slice((*byte)(unsafe.Pointer(fromIP)), int(fromIPLen)))
+	}
+	l.Feed(src, ip)
+	return 0
+}
+
+//export fg_lanid_listener_peers_count
+func fg_lanid_listener_peers_count(id uintptr) C.int {
+	l, ok := lanIDListeners.get(id)
+	if !ok {
+		return -1
+	}
+	return C.int(len(l.Peers()))
+}
+
+//export fg_lanid_listener_peer
+func fg_lanid_listener_peer(id uintptr, index C.int, outBuf *C.uint8_t, outBufLen C.size_t) C.int {
+	l, ok := lanIDListeners.get(id)
+	if !ok {
+		return -1
+	}
+	peers := l.Peers()
+	i := int(index)
+	if i < 0 || i >= len(peers) {
+		return -1
+	}
+	flat := serializeLanIDPeer(peers[i])
+	if outBuf == nil || C.size_t(len(flat)) > outBufLen {
+		return C.int(len(flat)) // 缓冲区不足：返回所需长度
+	}
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(outBuf)), len(flat)), flat)
+	return C.int(len(flat))
+}
+
+//export fg_lanid_listener_prune
+func fg_lanid_listener_prune(id uintptr, maxAgeMs C.int64_t) C.int {
+	l, ok := lanIDListeners.get(id)
+	if !ok {
+		return -1
+	}
+	return C.int(l.Prune(time.Duration(maxAgeMs) * time.Millisecond))
+}
+
+//export fg_lanid_listener_free
+func fg_lanid_listener_free(id uintptr) {
+	lanIDListeners.remove(id)
+}
+
+// serializeLanIDPeer 序列化对端为扁平字节（客户端顺序解析）：
+// NameLen(1) + Name + Platform(1) + Caps(1) + Port(2 BE) + AddrLen(1) + Addr + PubKey(65) + Fingerprint(32 hex)
+func serializeLanIDPeer(p protocol.LanIDPeer) []byte {
+	nameBytes := []byte(p.Name)
+	var addr []byte
+	if p.Addr != nil {
+		addr = []byte(p.Addr.To16())
+	}
+	fpBytes := []byte(p.Fingerprint)
+	buf := make([]byte, 0, 1+len(nameBytes)+2+2+1+len(addr)+protocol.PublicKeySize+len(fpBytes))
+	buf = append(buf, byte(len(nameBytes)))
+	buf = append(buf, nameBytes...)
+	buf = append(buf, byte(p.Platform), byte(p.Caps))
+	var port [2]byte
+	binary.BigEndian.PutUint16(port[:], p.Port)
+	buf = append(buf, port[:]...)
+	buf = append(buf, byte(len(addr)))
+	buf = append(buf, addr...)
+	buf = append(buf, p.PubKey...)
+	buf = append(buf, fpBytes...)
+	return buf
+}
+
+// --- LanID 私有链信任 ---
+
+//export fg_lanid_trust_new
+func fg_lanid_trust_new(identID uintptr) uintptr {
+	priv, ok := lanIDIdentities.get(identID)
+	if !ok {
+		return 0
+	}
+	return trustChains.put(protocol.NewTrustChain(priv))
+}
+
+//export fg_lanid_trust_append
+func fg_lanid_trust_append(id uintptr, peerID *C.uint8_t, peerIDLen C.size_t, decision C.uint8_t) C.int {
+	c, ok := trustChains.get(id)
+	if !ok || peerID == nil || peerIDLen == 0 {
+		return -1
+	}
+	src := make([]byte, int(peerIDLen))
+	copy(src, unsafe.Slice((*byte)(unsafe.Pointer(peerID)), int(peerIDLen)))
+	if err := c.Append(src, uint8(decision)); err != nil {
+		return -1
+	}
+	return 0
+}
+
+//export fg_lanid_trust_is_trusted
+func fg_lanid_trust_is_trusted(id uintptr, peerID *C.uint8_t, peerIDLen C.size_t) C.int {
+	c, ok := trustChains.get(id)
+	if !ok || peerID == nil || peerIDLen == 0 {
+		return -1
+	}
+	src := make([]byte, int(peerIDLen))
+	copy(src, unsafe.Slice((*byte)(unsafe.Pointer(peerID)), int(peerIDLen)))
+	if c.IsTrusted(src) {
+		return 1
+	}
+	return 0
+}
+
+//export fg_lanid_trust_verify
+func fg_lanid_trust_verify(id uintptr) C.int {
+	c, ok := trustChains.get(id)
+	if !ok {
+		return -1
+	}
+	if err := c.Verify(); err != nil {
+		return -1
+	}
+	return 0
+}
+
+//export fg_lanid_trust_count
+func fg_lanid_trust_count(id uintptr) C.int {
+	c, ok := trustChains.get(id)
+	if !ok {
+		return -1
+	}
+	return C.int(len(c.Records()))
+}
+
+//export fg_lanid_trust_free
+func fg_lanid_trust_free(id uintptr) {
+	trustChains.remove(id)
+}
+
+// --- 链路选择 ---
+
+//export fg_link_plan
+func fg_link_plan(preferred C.uint8_t, mdnsPeers C.int, lanPeers C.int, hasManual C.int) C.int {
+	plan := protocol.PlanLinks(protocol.PreferredLink(preferred), int(mdnsPeers), int(lanPeers), hasManual != 0)
+	if plan.Exhausted {
+		return -1
+	}
+	// 打包顺序：0=[intelligent,direct] 1=[direct,intelligent] 2=[intelligent] 3=[direct]
+	switch {
+	case len(plan.Order) == 2 && plan.Order[0] == protocol.LinkIntelligent:
+		return 0
+	case len(plan.Order) == 2 && plan.Order[0] == protocol.LinkDirect:
+		return 1
+	case len(plan.Order) == 1 && plan.Order[0] == protocol.LinkIntelligent:
+		return 2
+	case len(plan.Order) == 1 && plan.Order[0] == protocol.LinkDirect:
+		return 3
+	default:
+		return -1
+	}
 }
 
 // --- Main (required for c-archive) ---

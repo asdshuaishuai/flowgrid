@@ -8,4 +8,5 @@ public enum GoBridgeError: Error, Equatable, Sendable {
     case handleInvalid
     case keymapLoadFailed(String)
     case stringTooLong(max: Int)
+    case operationFailed
 }

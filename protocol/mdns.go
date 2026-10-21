@@ -11,7 +11,6 @@ package protocol
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -35,10 +34,10 @@ const (
 )
 
 const (
-	mdnsGroup     = "224.0.0.251"
-	mdnsPort      = 5353
+	MdnsGroup     = "224.0.0.251"
+	MdnsPort      = 5353
 	mdnsService   = MdnsServiceType + ".local."
-	mdnsMaxPacket = 9000
+	MdnsMaxPacket = 9000
 )
 
 var errMalformedDNS = errors.New("protocol: malformed mDNS message")
@@ -315,94 +314,24 @@ func (d DiscoveredPeer) Key() string {
 
 // ── 浏览与通告 ──────────────────────────────────────────────────────────
 
-// MdnsBrowser 监听 _flowgrid._tcp.local.，把发现结果放进一张表。
+// MdnsBrowser 聚合 mDNS 应答里的对端（纯逻辑：客户端持有 UDP socket，喂字节进来）。
 //
-// 语义和会话层一致：Go 侧缓存、C 侧轮询。回调不跨 C ABI，也省掉一条
-// 「回调里又回调 GUI 线程」的链路。
+// 语义和会话层一致：Go 侧缓存、C 侧轮询。客户端负责：
+//   · 绑定 5353 组播、加入 MdnsGroup
+//   · 周期发送 BuildQueryPacket() 产生的查询
+//   · 收到的应答喂给 Feed()
 type MdnsBrowser struct {
 	mu      sync.Mutex
 	peers   map[string]DiscoveredPeer
 	pending []DiscoveredPeer
-
-	conn     *net.UDPConn
-	done     chan struct{}
-	wg       sync.WaitGroup
-	closed   bool
-	resolved bool
 }
 
 func NewMdnsBrowser() *MdnsBrowser {
-	return &MdnsBrowser{peers: map[string]DiscoveredPeer{}, done: make(chan struct{})}
+	return &MdnsBrowser{peers: map[string]DiscoveredPeer{}}
 }
 
-// Start 绑定 5353 组播端口并发出 PTR 查询。每 2s 重查一次，覆盖丢包。
-func (b *MdnsBrowser) Start() error {
-	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		return errors.New("protocol: mdns browser closed")
-	}
-	if b.conn != nil {
-		b.mu.Unlock()
-		return nil
-	}
-	b.mu.Unlock()
-
-	addr := &net.UDPAddr{IP: net.ParseIP(mdnsGroup), Port: mdnsPort}
-	conn, err := net.ListenMulticastUDP("udp4", nil, addr)
-	if err != nil {
-		return fmt.Errorf("protocol: listen mdns %s: %w", addr, err)
-	}
-	conn.SetReadBuffer(1 << 20)
-
-	b.mu.Lock()
-	b.conn = conn
-	b.mu.Unlock()
-
-	// readLoop 与 queryLoop 各自 defer 一次 wg.Done，Add 就得配到 2。少加一个
-	// 的话计数会从 0 掉到 -1：后收尾的那个循环直接在 Done 里 panic
-	// （sync: negative WaitGroup counter），Stop 里的 Wait 也跟着炸。
-	b.wg.Add(2)
-	go b.readLoop(conn)
-
-	// 启动即查一次，之后按 interval 轮询。
-	go b.queryLoop()
-
-	return nil
-}
-
-func (b *MdnsBrowser) queryLoop() {
-	defer b.wg.Done()
-	t := time.NewTicker(2 * time.Second)
-	defer t.Stop()
-	b.sendQuery()
-	for {
-		select {
-		case <-b.done:
-			return
-		case <-t.C:
-			b.sendQuery()
-		}
-	}
-}
-
-func (b *MdnsBrowser) sendQuery() {
-	b.mu.Lock()
-	conn := b.conn
-	b.mu.Unlock()
-	if conn == nil {
-		return
-	}
-	msg := buildQueryPacket()
-	dst := &net.UDPAddr{IP: net.ParseIP(mdnsGroup), Port: mdnsPort}
-	if _, err := conn.WriteToUDP(msg, dst); err != nil {
-		// 组播在部分网络接口上不可写（容器 / 隔离网段），不算致命：
-		// 浏览器仍能被动收到别人的应答。
-		return
-	}
-}
-
-func buildQueryPacket() []byte {
+// BuildQueryPacket 产生一条 PTR 查询包（客户端经 UDP 多播发送）。
+func BuildQueryPacket() []byte {
 	out := make([]byte, 0, 32)
 	out = binary.BigEndian.AppendUint16(out, 0) // id
 	out = binary.BigEndian.AppendUint16(out, dnsFlagQu)
@@ -416,31 +345,9 @@ func buildQueryPacket() []byte {
 	return out
 }
 
-func (b *MdnsBrowser) readLoop(conn *net.UDPConn) {
-	defer b.wg.Done()
-	buf := make([]byte, mdnsMaxPacket)
-	for {
-		select {
-		case <-b.done:
-			return
-		default:
-		}
-		n, from, err := conn.ReadFromUDP(buf)
-		if err != nil {
-			select {
-			case <-b.done:
-				return
-			default:
-			}
-			// 读错误（临时性）不致命，下一轮继续。
-			continue
-		}
-		b.handlePacket(buf[:n], from)
-	}
-}
-
-func (b *MdnsBrowser) handlePacket(buf []byte, from *net.UDPAddr) {
-	msg, err := parseDNSMessage(buf)
+// Feed 喂入一条收到的 mDNS 应答与源 IP；解析成功则聚合，失败静默丢弃。
+func (b *MdnsBrowser) Feed(data []byte, from net.IP) {
+	msg, err := parseDNSMessage(data)
 	if err != nil {
 		return
 	}
@@ -478,9 +385,7 @@ func (b *MdnsBrowser) handlePacket(buf []byte, from *net.UDPAddr) {
 			continue
 		}
 		instance := rec.ptrTarget
-		// 实例名是 "<设备名>._flowgrid._tcp.local."，服务名只是它的后缀——
-		// 早先这里写成了「必须完全相等」，结果所有真实通告都被判成别人的服务
-		// 而丢弃，发现列表永远是空的。
+		// 实例名是 "<设备名>._flowgrid._tcp.local."，服务名只是它的后缀。
 		if !strings.EqualFold(trimDot(instance), "."+trimDot(mdnsService)) &&
 			!strings.HasSuffix(strings.ToLower(trimDot(instance)),
 				"."+strings.ToLower(trimDot(mdnsService))) {
@@ -494,7 +399,7 @@ func (b *MdnsBrowser) handlePacket(buf []byte, from *net.UDPAddr) {
 		if ip == nil {
 			// mDNS 常见 SRV 先于 A 到达；这时退回发送方地址。
 			if from != nil {
-				ip = from.IP
+				ip = from
 			} else {
 				continue
 			}
@@ -549,7 +454,7 @@ func (b *MdnsBrowser) Peers() []DiscoveredPeer {
 	return out
 }
 
-// Prune 丢掉超过 ttl 时间没再出现的设备，返回被淘汰的数量。
+// Prune 丢掉超过 maxAge 时间没再出现的设备，返回被淘汰的数量。
 func (b *MdnsBrowser) Prune(maxAge time.Duration) int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -563,36 +468,13 @@ func (b *MdnsBrowser) Prune(maxAge time.Duration) int {
 	return n
 }
 
-func (b *MdnsBrowser) Stop() {
-	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		return
-	}
-	b.closed = true
-	conn := b.conn
-	b.conn = nil
-	b.mu.Unlock()
-
-	close(b.done)
-	if conn != nil {
-		conn.Close()
-	}
-	b.wg.Wait()
-}
-
-// ── 通告本机 ────────────────────────────────────────────────────────────
-
-// MdnsAdvertiser 回应查询，让局域网里的对端能发现本机。
+// MdnsAdvertisor 组装本机的 PTR / SRV / TXT / A 记录（纯逻辑：客户端持有 UDP socket）。
+// 客户端负责：绑定 5353 组播、收到查询调 HandleQuery 应答、周期调 Announce 发送通告。
 type MdnsAdvertisor struct {
-	conn    *net.UDPConn
 	records []dnsRecord
-	done    chan struct{}
-	wg      sync.WaitGroup
-	once    sync.Once
 }
 
-// NewMdnsAdvertisor 组装本机的 PTR / SRV / TXT / A 记录并开始应答。
+// NewMdnsAdvertisor 组装本机的 mDNS 记录（不绑定 socket）。
 func NewMdnsAdvertisor(instance, hostName string, ip net.IP, port uint16, txt MdnsTXTRecord) (*MdnsAdvertisor, error) {
 	if err := txt.Validate(); err != nil {
 		return nil, err
@@ -609,59 +491,31 @@ func NewMdnsAdvertisor(instance, hostName string, ip net.IP, port uint16, txt Md
 			{name: hostName, rtype: dnsTypeA, class: dnsClassIN | dnsClassCacheFlsh,
 				ttl: ttl, addr: ip},
 		},
-		done: make(chan struct{}),
 	}
-
-	addr := &net.UDPAddr{IP: net.ParseIP(mdnsGroup), Port: mdnsPort}
-	conn, err := net.ListenMulticastUDP("udp4", nil, addr)
-	if err != nil {
-		return nil, fmt.Errorf("protocol: listen mdns %s: %w", addr, err)
-	}
-	a.conn = conn
-	a.wg.Add(1)
-	go a.readLoop()
 	return &a, nil
 }
 
-func (a *MdnsAdvertisor) readLoop() {
-	defer a.wg.Done()
-	buf := make([]byte, mdnsMaxPacket)
-	for {
-		select {
-		case <-a.done:
-			return
-		default:
-		}
-		n, from, err := a.conn.ReadFromUDP(buf)
-		if err != nil {
-			select {
-			case <-a.done:
-				return
-			default:
-			}
-			continue
-		}
-		msg, err := parseDNSMessage(buf[:n])
-		if err != nil || msg.header.flags&dnsFlagResponse != 0 {
-			continue
-		}
-		// 只应答问我们这个服务类型的查询。
-		asked := false
-		for _, q := range msg.questions {
-			if q.qtype == dnsTypePTR &&
-				strings.EqualFold(strings.TrimSuffix(q.name, "."), strings.TrimSuffix(mdnsService, ".")) {
-				asked = true
-				break
-			}
-		}
-		if !asked {
-			continue
-		}
-		a.send(from)
+// HandleQuery 处理一条收到的 mDNS 查询；若是问本服务类型的 PTR 查询，返回应答字节，否则返回 nil。
+func (a *MdnsAdvertisor) HandleQuery(data []byte) []byte {
+	msg, err := parseDNSMessage(data)
+	if err != nil || msg.header.flags&dnsFlagResponse != 0 {
+		return nil
 	}
+	for _, q := range msg.questions {
+		if q.qtype == dnsTypePTR &&
+			strings.EqualFold(strings.TrimSuffix(q.name, "."), strings.TrimSuffix(mdnsService, ".")) {
+			return a.buildResponsePacket()
+		}
+	}
+	return nil
 }
 
-func (a *MdnsAdvertisor) send(to *net.UDPAddr) {
+// Announce 产生一条主动通告字节（客户端经 UDP 多播周期发送）。
+func (a *MdnsAdvertisor) Announce() []byte {
+	return a.buildResponsePacket()
+}
+
+func (a *MdnsAdvertisor) buildResponsePacket() []byte {
 	pkt := make([]byte, 0, 512)
 	pkt = binary.BigEndian.AppendUint16(pkt, 0)                      // id
 	pkt = binary.BigEndian.AppendUint16(pkt, dnsFlagResponse)        // flags
@@ -672,15 +526,5 @@ func (a *MdnsAdvertisor) send(to *net.UDPAddr) {
 	for _, rec := range a.records {
 		pkt = append(pkt, rec.marshal()...)
 	}
-	_, _ = a.conn.WriteToUDP(pkt, to)
-}
-
-func (a *MdnsAdvertisor) Stop() {
-	a.once.Do(func() {
-		close(a.done)
-		if a.conn != nil {
-			a.conn.Close()
-		}
-		a.wg.Wait()
-	})
+	return pkt
 }

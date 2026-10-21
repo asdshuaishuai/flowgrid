@@ -479,4 +479,308 @@ QString errorString(int code)
     return text;
 }
 
+// ── Identity ──────────────────────────────────────────────────────────
+Identity::Identity()
+{
+    id_ = fg_lanid_identity_generate();
+}
+
+Identity::Identity(const QByteArray &privateKey)
+{
+    if (!privateKey.isEmpty()) {
+        id_ = fg_lanid_identity_import(
+            const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(privateKey.constData())),
+            static_cast<size_t>(privateKey.size()));
+    }
+}
+
+Identity::~Identity()
+{
+    release();
+}
+
+Identity::Identity(Identity &&o) noexcept : id_(std::exchange(o.id_, 0))
+{
+}
+
+Identity &Identity::operator=(Identity &&o) noexcept
+{
+    if (this != &o) {
+        release();
+        id_ = std::exchange(o.id_, 0);
+    }
+    return *this;
+}
+
+void Identity::release()
+{
+    if (id_ != 0) {
+        fg_lanid_identity_free(id_);
+        id_ = 0;
+    }
+}
+
+QByteArray Identity::exportPrivateKey() const
+{
+    if (id_ == 0) {
+        return {};
+    }
+    size_t len = 0;
+    uint8_t *buf = fg_lanid_identity_export(id_, &len);
+    if (buf == nullptr) {
+        return {};
+    }
+    GoBuffer g(buf, len);
+    return g.toByteArray();
+}
+
+QByteArray Identity::publicKey() const
+{
+    if (id_ == 0) {
+        return {};
+    }
+    size_t len = 0;
+    uint8_t *buf = fg_lanid_identity_public_key(id_, &len);
+    if (buf == nullptr) {
+        return {};
+    }
+    GoBuffer g(buf, len);
+    return g.toByteArray();
+}
+
+// ── Announcer ─────────────────────────────────────────────────────────
+Announcer::Announcer(const Identity &identity, uint8_t platform, uint8_t caps,
+                     uint16_t port, const QString &name)
+{
+    if (!identity.isValid()) {
+        return;
+    }
+    const QByteArray nameBytes = name.toUtf8();
+    id_ = fg_lanid_announcer_new(
+        identity.id_, platform, caps, port,
+        const_cast<char *>(nameBytes.constData()));
+}
+
+Announcer::~Announcer()
+{
+    release();
+}
+
+Announcer::Announcer(Announcer &&o) noexcept : id_(std::exchange(o.id_, 0))
+{
+}
+
+Announcer &Announcer::operator=(Announcer &&o) noexcept
+{
+    if (this != &o) {
+        release();
+        id_ = std::exchange(o.id_, 0);
+    }
+    return *this;
+}
+
+void Announcer::release()
+{
+    if (id_ != 0) {
+        fg_lanid_announcer_free(id_);
+        id_ = 0;
+    }
+}
+
+QByteArray Announcer::announce() const
+{
+    if (id_ == 0) {
+        return {};
+    }
+    size_t len = 0;
+    uint8_t *buf = fg_lanid_announcer_announce(id_, &len);
+    if (buf == nullptr) {
+        return {};
+    }
+    GoBuffer g(buf, len);
+    return g.toByteArray();
+}
+
+// ── Listener ──────────────────────────────────────────────────────────
+Listener::Listener()
+{
+    id_ = fg_lanid_listener_new();
+}
+
+Listener::~Listener()
+{
+    release();
+}
+
+Listener::Listener(Listener &&o) noexcept : id_(std::exchange(o.id_, 0))
+{
+}
+
+Listener &Listener::operator=(Listener &&o) noexcept
+{
+    if (this != &o) {
+        release();
+        id_ = std::exchange(o.id_, 0);
+    }
+    return *this;
+}
+
+void Listener::release()
+{
+    if (id_ != 0) {
+        fg_lanid_listener_free(id_);
+        id_ = 0;
+    }
+}
+
+void Listener::feed(const QByteArray &data, const QByteArray &fromIP)
+{
+    if (id_ == 0 || data.isEmpty()) {
+        return;
+    }
+    fg_lanid_listener_feed(
+        id_,
+        const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(data.constData())),
+        static_cast<size_t>(data.size()),
+        const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(fromIP.constData())),
+        static_cast<size_t>(fromIP.size()));
+}
+
+int Listener::peersCount() const
+{
+    if (id_ == 0) {
+        return 0;
+    }
+    return fg_lanid_listener_peers_count(id_);
+}
+
+int Listener::prune(int maxAgeMs)
+{
+    if (id_ == 0) {
+        return 0;
+    }
+    return fg_lanid_listener_prune(id_, static_cast<int64_t>(maxAgeMs));
+}
+
+bool Listener::peer(int index, LanIDPeer *out) const
+{
+    if (id_ == 0 || out == nullptr) {
+        return false;
+    }
+    uint8_t buf[512];
+    const int written = fg_lanid_listener_peer(id_, index, buf, sizeof(buf));
+    if (written <= 0 || static_cast<size_t>(written) > sizeof(buf)) {
+        return false;
+    }
+
+    const uint8_t *p = buf;
+    const uint8_t *end = buf + written;
+
+    // NameLen(1) + Name
+    if (p >= end) return false;
+    const int nameLen = *p++;
+    if (p + nameLen > end) return false;
+    out->name = QString::fromUtf8(reinterpret_cast<const char *>(p), nameLen);
+    p += nameLen;
+
+    // Platform(1) + Caps(1) + Port(2 BE)
+    if (p + 4 > end) return false;
+    out->platform = *p++;
+    out->caps = *p++;
+    out->port = static_cast<uint16_t>((static_cast<uint16_t>(p[0]) << 8) | p[1]);
+    p += 2;
+
+    // AddrLen(1) + Addr
+    if (p >= end) return false;
+    const int addrLen = *p++;
+    if (p + addrLen > end) return false;
+    out->address = QByteArray(reinterpret_cast<const char *>(p), addrLen);
+    p += addrLen;
+
+    // PubKey(65)
+    if (p + 65 > end) return false;
+    out->publicKey = QByteArray(reinterpret_cast<const char *>(p), 65);
+    p += 65;
+
+    // Fingerprint(32 hex)
+    if (p + 32 > end) return false;
+    out->fingerprint = QString::fromUtf8(reinterpret_cast<const char *>(p), 32);
+
+    return true;
+}
+
+// ── TrustChain ────────────────────────────────────────────────────────
+TrustChain::TrustChain(const Identity &identity)
+{
+    if (identity.isValid()) {
+        id_ = fg_lanid_trust_new(identity.id_);
+    }
+}
+
+TrustChain::~TrustChain()
+{
+    release();
+}
+
+TrustChain::TrustChain(TrustChain &&o) noexcept : id_(std::exchange(o.id_, 0))
+{
+}
+
+TrustChain &TrustChain::operator=(TrustChain &&o) noexcept
+{
+    if (this != &o) {
+        release();
+        id_ = std::exchange(o.id_, 0);
+    }
+    return *this;
+}
+
+void TrustChain::release()
+{
+    if (id_ != 0) {
+        fg_lanid_trust_free(id_);
+        id_ = 0;
+    }
+}
+
+int TrustChain::append(const QByteArray &peerID, uint8_t decision)
+{
+    if (id_ == 0 || peerID.isEmpty()) {
+        return -1;
+    }
+    return fg_lanid_trust_append(
+        id_,
+        const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(peerID.constData())),
+        static_cast<size_t>(peerID.size()),
+        decision);
+}
+
+bool TrustChain::isTrusted(const QByteArray &peerID) const
+{
+    if (id_ == 0 || peerID.isEmpty()) {
+        return false;
+    }
+    const int rc = fg_lanid_trust_is_trusted(
+        id_,
+        const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(peerID.constData())),
+        static_cast<size_t>(peerID.size()));
+    return rc == 1;
+}
+
+bool TrustChain::verify() const
+{
+    if (id_ == 0) {
+        return false;
+    }
+    return fg_lanid_trust_verify(id_) == 0;
+}
+
+int TrustChain::count() const
+{
+    if (id_ == 0) {
+        return 0;
+    }
+    return fg_lanid_trust_count(id_);
+}
+
 } // namespace fg::proto
