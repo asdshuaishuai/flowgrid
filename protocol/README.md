@@ -13,11 +13,16 @@ Go 实现的 FlowGrid 跨平台协议核心库。实现了 PROTOCOL.md 规范中
 | `identify.go` | IDENTIFY / IDENTIFY_RESPONSE 身份交换 | §4.2 |
 | `crypto.go` | ECDH P-256 密钥交换、HKDF 会话密钥派生、公钥指纹 | §4.3 |
 | `discovery.go` | BLE 广播数据、mDNS TXT 记录、RSSI 分级 | §3 |
-| `wifidirect.go` | WiFi Direct 参数交换（20字节请求/8字节响应） | §3.1.3 |
+| `mdns.go` | mDNS 报文编解码、Browser / Advertisor 纯逻辑 | §3.2 |
+| `lanid.go` | LAN 私有链身份、签名通告、信任链 | §3.1 |
+| `link.go` | 直连 / 智能连接的双模链路选择 | §1 |
+| `wifidirect.go` | WiFi Direct 参数交换（20字节请求/8字节响应，预留） | §3.1.3 |
 | `apipa.go` | 以太网直连 APIPA /30 子网生成、重建与校验 | §3.2.2 |
 | `sequence.go` | UInt16 序列号追踪、间隙检测、回绕处理 | §10.3 |
 | `framing.go` | TCP Length-Prefix 封装、Raw Ethernet 帧、CRC32 | §7.2, 附录B |
-| `fragment.go` | 帧分片发送和重组（5秒超时） | §7.3 |
+| `session.go` | FrameStream：会话层帧发送接缝（序列号/时间戳） | §5.1, §7 |
+| `clipboard.go` | ClipboardSession：剪贴板分段、重组、去重与超时 | §5.3 |
+| `filetransfer.go` | FileSender / FileReceiver：文件传输状态机与 SHA-256 校验 | §7.4 |
 | `heartbeat.go` | 心跳保活（2秒间隔）、延迟测量与连续高延迟告警计数 | §9 |
 | `reconnect.go` | 重连状态机（指数退避 ±20% 抖动） | §10 |
 | `errors.go` | 错误码常量、ProtocolError 类型、错误码名称表 | §12 |
@@ -95,5 +100,6 @@ if ok {
 ## 跨语言调用
 
 通过 CGo 导出 C ABI（`go build -buildmode=c-archive`），Rust/C++/Swift/C# 可通过 FFI 调用。
-KDE 客户端（Rust）即通过 `cgo/` 桥消费本库；句柄类对象（延迟监控、心跳、重连、序列号、
-分片重组、键位表）由桥内的并发安全 registry 管理，多线程调用安全。
+macOS 与 deepin 客户端经 `cgo/` 桥消费本库，Windows 客户端直接引用 Go 包；句柄类对象
+（延迟监控、心跳、重连、序列号、剪贴板/文件会话、键位表）由桥内的并发安全 registry
+管理，多线程调用安全。

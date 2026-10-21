@@ -6,12 +6,11 @@ package main
 // into cgo.h, the only FFI surface a Rust/C client sees -- Go doc comments do
 // not travel with it, so anything a C caller must know has to live here.
 //
-// fg_wifidirect_request_encode's pskHash parameter is IGNORED. It is kept only
-// so the existing C ABI does not change. Protocol v1.1 removed the PSK hash
-// from the Wi-Fi Direct discovery payload (PROTOCOL.md 3.1.3): broadcasting it
-// let an attacker run an offline dictionary attack on the PSK. Do not compute
-// one, do not send one -- bytes 15-18 of the discovery payload are zero. PSK
-// ownership is proved in the DTLS/TLS pairing handshake instead.
+// Protocol v1.1 removed the PSK hash from the Wi-Fi Direct discovery payload
+// (PROTOCOL.md 3.1.3): broadcasting it let an attacker run an offline
+// dictionary attack on the PSK. fg_wifidirect_request_encode therefore takes no
+// PSK parameter and always zeroes bytes 15-18. PSK ownership is proved in the
+// DTLS/TLS pairing handshake instead.
 //
 // fg_frame_validate returns 0 when the frame may go on the wire, otherwise a
 // PROTOCOL.md 12 error code: 0x11 unknownFrameType (drop the frame) or 0x12
@@ -114,16 +113,15 @@ func cBuffer(src []byte) *C.uint8_t {
 }
 
 var (
-	latencyMonitors      registry[*protocol.LatencyMonitor]
-	heartbeatTrackers    registry[*protocol.HeartbeatTracker]
-	reconnectStates      registry[*protocol.ReconnectState]
-	sequenceTrackers     registry[*protocol.SequenceTracker]
-	fragmentReassemblers registry[*protocol.FragmentReassembler]
-	keymapTables         registry[*protocol.KeyMapTable]
-	lanIDIdentities      registry[*ecdsa.PrivateKey]
-	lanIDAnnouncers      registry[*protocol.LanIDAnnouncer]
-	lanIDListeners       registry[*protocol.LanIDListener]
-	trustChains          registry[*protocol.TrustChain]
+	latencyMonitors   registry[*protocol.LatencyMonitor]
+	heartbeatTrackers registry[*protocol.HeartbeatTracker]
+	reconnectStates   registry[*protocol.ReconnectState]
+	sequenceTrackers  registry[*protocol.SequenceTracker]
+	keymapTables      registry[*protocol.KeyMapTable]
+	lanIDIdentities   registry[*ecdsa.PrivateKey]
+	lanIDAnnouncers   registry[*protocol.LanIDAnnouncer]
+	lanIDListeners    registry[*protocol.LanIDListener]
+	trustChains       registry[*protocol.TrustChain]
 )
 
 // --- Frame ---
@@ -637,13 +635,11 @@ func fg_classify_rssi(rssi C.int) C.int {
 
 // --- WiFi Direct ---
 
-// pskHash is ignored: v1.1 removed the PSK hash from the wire format (§3.1.3 —
-// broadcasting it enabled offline PSK guessing). The parameter is kept so the
-// C ABI in cgo.h stays stable until clients are rebuilt.
+// v1.1 removed the PSK hash from the wire format (§3.1.3 — broadcasting it
+// enabled offline PSK guessing), so this encoder takes no PSK parameter.
 //
 //export fg_wifidirect_request_encode
-func fg_wifidirect_request_encode(version C.uint8_t, port C.uint16_t, ipAddr *C.uint8_t, subnet *C.uint8_t, channel C.uint8_t, band C.uint8_t, security C.uint8_t, pskHash *C.uint8_t, outLen *C.size_t) *C.uint8_t {
-	_ = pskHash
+func fg_wifidirect_request_encode(version C.uint8_t, port C.uint16_t, ipAddr *C.uint8_t, subnet *C.uint8_t, channel C.uint8_t, band C.uint8_t, security C.uint8_t, outLen *C.size_t) *C.uint8_t {
 	r := &protocol.WiFiDirectRequest{
 		Version:  uint8(version),
 		Port:     uint16(port),
@@ -870,53 +866,6 @@ func fg_sequence_reset(id uintptr, seqInit C.uint32_t) {
 //export fg_sequence_tracker_free
 func fg_sequence_tracker_free(id uintptr) {
 	sequenceTrackers.remove(id)
-}
-
-// --- Fragment ---
-
-//export fg_fragment_reassembler_new
-func fg_fragment_reassembler_new() uintptr {
-	return fragmentReassemblers.put(protocol.NewFragmentReassembler())
-}
-
-//export fg_fragment_feed
-func fg_fragment_feed(id uintptr, data *C.uint8_t, dataLen C.size_t, outLen *C.size_t, outData **C.uint8_t) C.int {
-	r, ok := fragmentReassemblers.get(id)
-	if !ok {
-		return -1
-	}
-	if data == nil || dataLen == 0 {
-		return -1
-	}
-	src := unsafe.Slice((*byte)(unsafe.Pointer(data)), int(dataLen))
-	assembled, err := r.Feed(src)
-	if err != nil {
-		return -1
-	}
-	if assembled == nil {
-		*outLen = 0
-		*outData = nil
-		return 0 // more fragments needed
-	}
-	buf := cBuffer(assembled)
-	if buf == nil {
-		return -1
-	}
-	*outLen = C.size_t(len(assembled))
-	*outData = buf
-	return 1 // assembled
-}
-
-//export fg_fragment_cleanup
-func fg_fragment_cleanup(id uintptr) {
-	if r, ok := fragmentReassemblers.get(id); ok {
-		r.Cleanup()
-	}
-}
-
-//export fg_fragment_reassembler_free
-func fg_fragment_reassembler_free(id uintptr) {
-	fragmentReassemblers.remove(id)
 }
 
 // --- Errors ---

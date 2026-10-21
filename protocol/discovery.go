@@ -71,9 +71,9 @@ type MdnsTXTRecord struct {
 	Version    string // "1"
 	Platform   string // "macos" / "windows" / "linux"
 	Name       string // device name
-	Caps       string // comma-separated: "nearlink,directlink,dtls,clipboard"
-	Port       string // UDP data port, e.g. "24801"
-	Encryption string // "dtls13" / "none"
+	Caps       string // comma-separated: "intelligentlink,directlink,dtls,clipboard"
+	Port       string // data port, e.g. "24801"
+	Encryption string // "dtls13" / "tls13" / "none"
 	HWAddr     string // MAC address "a1:b2:c3:d4:e5:f6"
 }
 

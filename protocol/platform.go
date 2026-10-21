@@ -44,14 +44,11 @@ type CapabilityFlags uint8
 const (
 	// CapIntelligentLink（bit 0）：支持智能连接（LAN 私有链发现，§3.1）。
 	CapIntelligentLink CapabilityFlags = 0x01
-	// CapNearLink 是 v1.1 之前的旧名，指向同一位；新代码请用
-	// CapIntelligentLink。保留别名只为不打断既有调用点与线格式。
-	CapNearLink     CapabilityFlags = CapIntelligentLink
-	CapDirectLink   CapabilityFlags = 0x02
-	CapWiFiDirect   CapabilityFlags = 0x04
-	CapDTLS13       CapabilityFlags = 0x08
-	CapClipboard    CapabilityFlags = 0x10
-	CapFileTransfer CapabilityFlags = 0x20
+	CapDirectLink      CapabilityFlags = 0x02
+	CapWiFiDirect      CapabilityFlags = 0x04
+	CapDTLS13          CapabilityFlags = 0x08
+	CapClipboard       CapabilityFlags = 0x10
+	CapFileTransfer    CapabilityFlags = 0x20
 
 	// CapDefinedMask is the set of bits this version assigns. §2.2 requires
 	// reserved fields to be zero on the wire and §3.1.2 reserves bit 6-7, so

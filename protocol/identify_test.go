@@ -9,7 +9,7 @@ func TestIdentifyRoundTrip(t *testing.T) {
 		Version:  1,
 		Platform: PlatformMacOS,
 		Role:     RoleHost,
-		Caps:     CapNearLink | CapDTLS13 | CapClipboard,
+		Caps:     CapIntelligentLink | CapDTLS13 | CapClipboard,
 		SeqInit:  12345,
 		Name:     "MacBook Pro",
 	}
@@ -42,7 +42,7 @@ func TestIdentifyResponseRoundTrip(t *testing.T) {
 	orig := &IdentifyResponsePayload{
 		Status:   IdentifyAccepted,
 		Platform: PlatformWindows,
-		Caps:     CapNearLink | CapDirectLink,
+		Caps:     CapIntelligentLink | CapDirectLink,
 		Name:     "Windows Desktop",
 	}
 	data := orig.Marshal()
@@ -71,7 +71,7 @@ func TestIdentifyCapsReservedBitsCleared(t *testing.T) {
 		Version:  1,
 		Platform: PlatformMacOS,
 		Role:     RoleHost,
-		Caps:     CapNearLink | reserved,
+		Caps:     CapIntelligentLink | reserved,
 		SeqInit:  1,
 		Name:     "x",
 	}
