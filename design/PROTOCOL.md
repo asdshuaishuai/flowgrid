@@ -179,9 +179,9 @@ TXT Records:
   │ version        │ "1"                                      │
   │ platform       │ "macos" / "windows" / "linux"            │
   │ name           │ "MacBook Pro" (设备名称)                  │
-  │ caps           │ "nearlink,directlink,dtls,clipboard"     │
-  │ port           │ "24801" (UDP 数据端口)                    │
-  │ encryption     │ "dtls13" / "none"                        │
+  │ caps           │ "intelligentlink,directlink,dtls,clipboard" │
+  │ port           │ "24801" (数据端口，TCP/UDP 视模式而定)     │
+  │ encryption     │ "dtls13" / "tls13" / "none"              │
   │ hwaddr         │ "a1:b2:c3:d4:e5:f6" (MAC 地址)          │
   └────────────────┴──────────────────────────────────────────┘
 ```
@@ -607,7 +607,7 @@ HID 帧内一律使用标准 USB HID Usage ID，修饰键统一用 §6.2 位掩�
 
 帧封装:
   每个UDP包 = 1个HID帧 (不合并, 避免延迟)
-  若单帧 > MTU, 使用分片 (见 7.3)
+  合法帧最大 267 字节, 小于 1400 MTU, 无需分片 (§7.3 已废除)
 ```
 
 **为什么选择 UDP 而非 TCP：**
@@ -671,9 +671,8 @@ v1.0 曾定义"在标准 HID 帧前添加 4 字节分片头 (Frag Seq/Idx/Tot)"�
 v1.1 起不再使用本机制。若未来版本提升载荷上限导致单帧可能超过 MTU，须重新
 设计分片并将其纳入本节，且帧头必须携带可辨识标志。
 
-实现层说明：`protocol/fragment.go` 保留了一套已加固的帧分片实现（FragTot
-一致性校验、并发组配额），仅作为未来帧格式扩展的储备，当前任何路径都不使用；
-对应 cgo 导出一并保留以稳定 C ABI。
+实现层说明：v1.1 已删除 `protocol/fragment.go` 及对应 cgo 导出。未来若真的需要
+帧级分片，必须按上一段重新设计，不能复活旧的 4 字节分片头。
 
 ---
 
@@ -814,11 +813,12 @@ Client (Host)                           Server (Target)
 ### 9.1 心跳机制
 
 ```
-发送方:    每 2 秒发送 HEARTBEAT (0x08) 帧
-接收方:    收到后立即回复 HEARTBEAT (0x08)
+双方角色:  各自每 2 秒发送 HEARTBEAT (0x08) 帧
+接收方:    收到心跳只刷新存活计时，不回复 (避免双向角色 1:1 回显放大)
 
 超时判定:
-  - 3 次心跳未回复 (6 秒) → 连接丢失
+  - 连续 3 个心跳周期未收到对端心跳 (6 秒) → 连接丢失
+  - 唯一例外：单向 Host→Target 连接可由 Host 单独发送，Target 只收不回
   - 触发重连流程 (见 §10)
 
 状态更新:
@@ -881,13 +881,14 @@ reconnecting ──(超过最大次数)──→ idle
 ### 10.2 重连流程
 
 ```
-1. 检查 PSK 缓存
+1. 若连接使用 DTLS（§7.1，预留路径）:
    ├─ 有 PSK → 0-RTT 恢复 (在 ClientHello 中携带 early_data)
    └─ 无 PSK → 完整 DTLS 握手
+   当前 v1.1 的 IntelligentLink / DirectLink 数据通道均为 TCP/TLS，不走此分支。
 
 2. IntelligentLink 重连:
-   → 尝试 WiFi Direct 重新连接 (不重新扫描 BLE)
-   → 如果 WiFi Direct 失败 → 重新 BLE 扫描 + 握手
+   → 重新发送/接收 LAN 多播通告，确认对端仍在 (§3.1)
+   → 按通告端点重建 TCP 连接；BLE / WiFi Direct 为预留路径，不参与 v1.1 重连
 
 3. DirectLink 重连:
    → 使用缓存的 APIPA 子网 (0 秒重连)

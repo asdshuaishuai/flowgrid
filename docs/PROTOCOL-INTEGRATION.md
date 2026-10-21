@@ -20,7 +20,7 @@
 ├─────────────────────────────────────────────┤
 │ 帧层（协议库已实现）                          │
 │  HIDFrame 编解码 / 8 字节 HMAC / 序列号防重放 │
-│  TCP 长度前缀 / Raw Ethernet / 分片(储备)     │
+│  TCP 长度前缀 / Raw Ethernet                  │
 └─────────────────────────────────────────────┘
 ```
 
@@ -144,9 +144,9 @@ Receiver: OFFER →(用户 Accept)→ 缓存 CHUNK → SHA-256 校验 → ACK co
 | 迟到副本（完成后到达） | 按重放丢弃 | 静默丢弃（不产生 ghost 缓冲） | 静默丢弃 |
 | 对端停滞 | 心跳 6s 判死 → 你的重连流程 | 5s 无进展丢弃整份 | 10s 无进展失败；stale 接收态自动过期 |
 | 坏帧/篡改 | HMAC 校验失败丢弃（连续 3 次应断链） | 同左（传输层之下） | 同左 |
-| 巨包攻击 | 解码全路径长度校验，分配有界（分片 32 组上限） | 同左 | 同左 |
+| 巨包攻击 | 解码全路径长度校验，分配有界（单帧 ≤267 字节） | 同左 | 同左 |
 
-**你需要做的**：NearLink（UDP）上发送剪贴板用 ≥2 轮；心跳超时后走你自己的
+**你需要做的**：在可能丢包的传输上发送剪贴板用 ≥2 轮；心跳超时后走你自己的
 重连；其余库兜底。
 
 ---
@@ -187,11 +187,10 @@ Receiver: OFFER →(用户 Accept)→ 缓存 CHUNK → SHA-256 校验 → ACK co
 - **句柄从 1 开始**，0 永远表示失败/空
 - 所有返回缓冲用 `fg_free_buffer` 释放，**且只释放一次**
 - 字符串入参可为 NULL（按空串处理）；`out*` 出参必须传有效指针
-- `fg_wifidirect_request_encode` 的 `pskHash` 入参**被忽略**，只为不改动已有 C ABI
-  才留着：协议 v1.1 已从 Wi-Fi Direct 发现载荷里删掉 PSK 哈希（§3.1.3，广播它
-  等于给 PSK 的离线字典攻击递刀）。不要算、不要传，载荷字节 15-18 置零；
-  PSK 所有权改在 DTLS/TLS 配对握手里证明。同样的说明写在 bridge.go 的 cgo
-  C 前导块里，会随生成过程进到 `cgo.h`
+- `fg_wifidirect_request_encode` **不再接收 PSK 参数**：协议 v1.1 已从 Wi-Fi
+  Direct 发现载荷里删掉 PSK 哈希（§3.1.3，广播它等于给 PSK 的离线字典攻击递刀）。
+  载荷字节 15-18 始终置零；PSK 所有权改在 DTLS/TLS 配对握手里证明。同样的说明
+  写在 bridge.go 的 cgo C 前导块里，会随生成过程进到 `cgo.h`
 - `fg_latency_record_pong` 返回 -1 表示该 PONG 被拒（未来时间戳/不匹配），丢弃即可
 - `fg_frame_validate` 返回 0 表示帧可以上线路，否则是 §12 错误码（`0x11` 帧类型
   不认识 → 整条丢；`0x12` 载荷长度与 PayloadLen 不符 → 发送侧编错了）。它不接
@@ -227,6 +226,8 @@ Receiver: OFFER →(用户 Accept)→ 缓存 CHUNK → SHA-256 校验 → ACK co
     直接不发送；协议层不提供该字段。
 - **改任何 cgo 导出后必须在 Linux 上重新生成 `protocol/cgo/cgo.h`**（AGENTS.md）：
   `cd protocol/cgo && CGO_ENABLED=1 CC=/usr/bin/gcc CXX=/usr/bin/g++ go build -buildmode=c-archive -o libflowgrid_protocol.a . && cp libflowgrid_protocol.h cgo.h`
+  macOS 的 `mac/FlowGridCore/Sources/CFlowGrid/include/flowgrid.h` 是同一生成头的副本，
+  必须一并同步；`mac/scripts/build-go.sh` 构建时会自动复制。
 
 ---
 

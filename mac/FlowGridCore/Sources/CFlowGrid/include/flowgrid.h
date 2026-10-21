@@ -27,12 +27,11 @@ extern const char *_GoStringPtr(_GoString_ s);
 // into cgo.h, the only FFI surface a Rust/C client sees -- Go doc comments do
 // not travel with it, so anything a C caller must know has to live here.
 //
-// fg_wifidirect_request_encode's pskHash parameter is IGNORED. It is kept only
-// so the existing C ABI does not change. Protocol v1.1 removed the PSK hash
-// from the Wi-Fi Direct discovery payload (PROTOCOL.md 3.1.3): broadcasting it
-// let an attacker run an offline dictionary attack on the PSK. Do not compute
-// one, do not send one -- bytes 15-18 of the discovery payload are zero. PSK
-// ownership is proved in the DTLS/TLS pairing handshake instead.
+// Protocol v1.1 removed the PSK hash from the Wi-Fi Direct discovery payload
+// (PROTOCOL.md 3.1.3): broadcasting it let an attacker run an offline
+// dictionary attack on the PSK. fg_wifidirect_request_encode therefore takes no
+// PSK parameter and always zeroes bytes 15-18. PSK ownership is proved in the
+// DTLS/TLS pairing handshake instead.
 //
 // fg_frame_validate returns 0 when the frame may go on the wire, otherwise a
 // PROTOCOL.md 12 error code: 0x11 unknownFrameType (drop the frame) or 0x12
@@ -40,6 +39,19 @@ extern const char *_GoStringPtr(_GoString_ s);
 // It never returns a negative value: it takes no handle, so there is no
 // "invalid handle" case to report. Error codes can be turned into text with
 // fg_error_string.
+//
+// Session pollers are bounded FIFO queues, not single slots. Clipboard pending
+// holds 200 entries (oldest dropped first); fg_clipboard_pending_count and
+// fg_clipboard_dropped expose backlog and lost entries. The clipboard history
+// is a separate non-destructive view of the latest 50 entries: index 0 is the
+// oldest, entries carry a monotonic seq and Unix-ms receive time, and
+// fg_clipboard_take_pending does not remove them.
+//
+// FileReceiver offer/complete events are queued (4 entries each, completions
+// also capped at 64 MiB); fg_file_receiver_dropped reports overflow. The
+// completion queue owns the file data until fg_file_receiver_take_complete.
+// fg_file_receiver_poll is non-destructive: state 0 idle / 1 active / 2 done /
+// 3 failed, plus received/total bytes and an error code.
 #include <stdlib.h>
 #include <stdint.h>
 
@@ -136,7 +148,11 @@ extern void fg_free_buffer(void* buf);
 extern uint8_t* fg_ble_advertising_encode(uint8_t protocolVer, uint8_t platform, uint8_t caps, uint16_t wifiChan, size_t* outLen);
 extern int fg_ble_advertising_decode(uint8_t* data, size_t len, uint8_t* outVer, uint8_t* outPlatform, uint8_t* outCaps, uint16_t* outChan);
 extern int fg_classify_rssi(int rssi);
-extern uint8_t* fg_wifidirect_request_encode(uint8_t version, uint16_t port, uint8_t* ipAddr, uint8_t* subnet, uint8_t channel, uint8_t band, uint8_t security, uint8_t* pskHash, size_t* outLen);
+
+// v1.1 removed the PSK hash from the wire format (§3.1.3 — broadcasting it
+// enabled offline PSK guessing), so this encoder takes no PSK parameter.
+//
+extern uint8_t* fg_wifidirect_request_encode(uint8_t version, uint16_t port, uint8_t* ipAddr, uint8_t* subnet, uint8_t channel, uint8_t band, uint8_t security, size_t* outLen);
 extern uint8_t* fg_wifidirect_response_encode(uint8_t version, uint8_t status, uint16_t port, uint16_t channel, uint8_t band, size_t* outLen);
 extern GoUintptr fg_latency_monitor_new(int maxSamples);
 extern void fg_latency_record_ping(GoUintptr id, uint64_t sendTimeUs);
@@ -159,33 +175,95 @@ extern uint16_t fg_sequence_next(GoUintptr id);
 extern int fg_sequence_check(GoUintptr id, uint16_t received);
 extern void fg_sequence_reset(GoUintptr id, uint32_t seqInit);
 extern void fg_sequence_tracker_free(GoUintptr id);
-extern GoUintptr fg_fragment_reassembler_new(void);
-extern int fg_fragment_feed(GoUintptr id, uint8_t* data, size_t dataLen, size_t* outLen, uint8_t** outData);
-extern void fg_fragment_cleanup(GoUintptr id);
-extern void fg_fragment_reassembler_free(GoUintptr id);
 extern char* fg_error_string(uint8_t code);
 extern uint8_t* fg_identify_payload_encode(uint8_t version, uint8_t platform, uint8_t role, uint8_t caps, uint32_t seqInit, char* name, size_t* outLen);
 extern uint8_t* fg_identify_response_encode(uint8_t status, uint8_t platform, uint8_t caps, char* name, size_t* outLen);
+
+// fg_session_set_sink(userdata≠0) 声明传输就绪：此后 emitFrame 才会入队。
+// 未声明时 emitFrame 返回 ErrNotConnected，于是 SendClipboard/Pump 直接报错，
+// 而不是把帧悄悄丢掉又报成功。userdata=0 撤下并清空队列。
+//
 extern void fg_session_set_sink(GoUintptr userdata);
+
+// 取一帧待发：有则返回 1，payload 交调用方用 fg_free_buffer 释放；队列空返回 0。
+//
 extern int fg_session_poll_out(uint8_t* outType, uint8_t** outPayload, size_t* outLen);
 extern GoUintptr fg_clipboard_session_new(void);
 extern void fg_clipboard_session_free(GoUintptr handle);
+
+// passes<1 视作 1；返回 0 表示成功，否则是 protocol 错误码。
+//
 extern int fg_clipboard_send(GoUintptr handle, char* mime, uint8_t* data, size_t dataLen, int passes);
 extern int fg_clipboard_handle_frame(GoUintptr handle, uint8_t* payload, size_t n);
+
+// 返回 1 表示取到一份重组完成的剪贴板，MIME 与数据交给调用方用 fg_free_buffer 释放。
+//
 extern int fg_clipboard_take_pending(GoUintptr handle, uint8_t** outMime, size_t* outMimeLen, uint8_t** outData, size_t* outDataLen);
+extern int fg_clipboard_pending_count(GoUintptr handle);
+
+// fg_clipboard_dropped 返回 pending 队列因满而被挤掉的累计条数。非 0 表示
+// 客户端轮询太慢、确实丢过数据；历史视图不受影响。
+//
+extern int fg_clipboard_dropped(GoUintptr handle);
+
+// fg_clipboard_history_count 返回历史条数；0 表示句柄无效或历史为空。
+//
+extern int fg_clipboard_history_count(GoUintptr handle);
+
+// 按「0 = 最旧」读一条历史，返回 1 表示取到；MIME 与数据都需用
+// fg_free_buffer 释放。读取是非破坏性的：同一索引可以反复读，也不影响
+// fg_clipboard_take_pending。outSeq 单调递增，客户端可据此去重；
+// outReceivedAtMs 是重组完成时的 Unix 毫秒时间戳。
+//
+extern int fg_clipboard_history_get(GoUintptr handle, int index, uint8_t** outMime, size_t* outMimeLen, uint8_t** outData, size_t* outDataLen, uint64_t* outSeq, int64_t* outReceivedAtMs);
+
+// 清空只读历史，pending 队列保持不动；seq 继续递增，避免旧 UI 快照把新条目
+// 误认成已经见过的序号。
+//
+extern void fg_clipboard_history_clear(GoUintptr handle);
 extern GoUintptr fg_file_sender_new(void);
 extern void fg_file_sender_free(GoUintptr handle);
 extern int fg_file_sender_offer(GoUintptr handle, char* name, uint8_t* data, size_t dataLen, uint16_t* outID);
+
+// 返回实际发出的分块数；outPumped=0 且返回码非 0 表示出错。
+//
 extern int fg_file_sender_pump(GoUintptr handle, int maxChunks, int* outPumped);
 extern int fg_file_sender_handle_frame(GoUintptr handle, uint8_t frameType, uint8_t* payload, size_t n);
+
+// state: 0 空闲 / 1 传输中 / 2 完成 / 3 失败。读取本身会清掉 2、3 两个终态，
+// 让 UI 只弹一次「完成 / 失败」。
+//
 extern int fg_file_sender_poll(GoUintptr handle, int* outState, int* outSent, int* outTotal, int* outErr);
 extern GoUintptr fg_file_receiver_new(void);
 extern void fg_file_receiver_free(GoUintptr handle);
+
+// outHandled=1 表示该帧属于文件传输协议，分发器可以据此决定不再往下传。
+//
 extern int fg_file_receiver_handle_frame(GoUintptr handle, uint8_t frameType, uint8_t* payload, size_t n, int* outHandled);
+
+// 返回 1 表示有一个待用户确认的 offer；name 需用 fg_free_buffer 释放。
+//
 extern int fg_file_receiver_take_offer(GoUintptr handle, uint16_t* outID, uint8_t** outName, size_t* outNameLen, uint64_t* outSize);
 extern int fg_file_receiver_accept(GoUintptr handle, uint16_t id);
 extern int fg_file_receiver_reject(GoUintptr handle, uint16_t id, uint8_t status);
+
+// 返回 1 表示有一次终态结果；name 与 data 需用 fg_free_buffer 释放。
+// outErr 非 0 表示校验失败或传输失败，data 为空。
+//
 extern int fg_file_receiver_take_complete(GoUintptr handle, uint8_t** outName, size_t* outNameLen, uint8_t** outData, size_t* outDataLen, int* outErr);
+
+// fg_file_receiver_poll 读数入站传输进度，非破坏性，可每帧调用。
+// state: 0 空闲 / 1 传输中 / 2 完成 / 3 失败。终态由
+// fg_file_receiver_take_complete 消费；轮询本身不会清掉待取的文件数据。
+// 返回 -1 表示句柄无效，0 表示成功。
+//
+extern int fg_file_receiver_poll(GoUintptr handle, int* outState, int* outReceived, int* outTotal, int* outErr);
+
+// fg_file_receiver_dropped 返回 offer / 完成事件因队列上限被挤掉的累计条数。
+// 任一非 0 都说明客户端轮询太慢、确实丢过事件（完成事件丢失会连带丢掉文件
+// 数据），应提高轮询频率或先 drain 再处理 UI。
+//
+extern int fg_file_receiver_dropped(GoUintptr handle, int* outOffers, int* outCompletes);
 extern GoUintptr fg_lanid_identity_generate(void);
 extern uint8_t* fg_lanid_identity_export(GoUintptr id, size_t* outLen);
 extern GoUintptr fg_lanid_identity_import(uint8_t* data, size_t length);

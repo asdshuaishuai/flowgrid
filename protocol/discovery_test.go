@@ -8,7 +8,7 @@ func TestBLEAdvertisingRoundTrip(t *testing.T) {
 	orig := &BLEAdvertisingData{
 		ProtocolVersion: 1,
 		DevicePlatform:  PlatformMacOS,
-		CapabilityFlags: CapNearLink | CapWiFiDirect | CapDTLS13,
+		CapabilityFlags: CapIntelligentLink | CapWiFiDirect | CapDTLS13,
 		WiFiDirectChan:  36,
 	}
 	data := orig.MarshalBLEAdvertising()
@@ -81,7 +81,7 @@ func TestMdnsTXTRoundTrip(t *testing.T) {
 		Version:    "1",
 		Platform:   "macos",
 		Name:       "MacBook Pro",
-		Caps:       "nearlink,directlink,dtls,clipboard",
+		Caps:       "intelligentlink,directlink,dtls,clipboard",
 		Port:       "24801",
 		Encryption: "dtls13",
 		HWAddr:     "a1:b2:c3:d4:e5:f6",

@@ -27,12 +27,11 @@ extern const char *_GoStringPtr(_GoString_ s);
 // into cgo.h, the only FFI surface a Rust/C client sees -- Go doc comments do
 // not travel with it, so anything a C caller must know has to live here.
 //
-// fg_wifidirect_request_encode's pskHash parameter is IGNORED. It is kept only
-// so the existing C ABI does not change. Protocol v1.1 removed the PSK hash
-// from the Wi-Fi Direct discovery payload (PROTOCOL.md 3.1.3): broadcasting it
-// let an attacker run an offline dictionary attack on the PSK. Do not compute
-// one, do not send one -- bytes 15-18 of the discovery payload are zero. PSK
-// ownership is proved in the DTLS/TLS pairing handshake instead.
+// Protocol v1.1 removed the PSK hash from the Wi-Fi Direct discovery payload
+// (PROTOCOL.md 3.1.3): broadcasting it let an attacker run an offline
+// dictionary attack on the PSK. fg_wifidirect_request_encode therefore takes no
+// PSK parameter and always zeroes bytes 15-18. PSK ownership is proved in the
+// DTLS/TLS pairing handshake instead.
 //
 // fg_frame_validate returns 0 when the frame may go on the wire, otherwise a
 // PROTOCOL.md 12 error code: 0x11 unknownFrameType (drop the frame) or 0x12
@@ -150,11 +149,10 @@ extern uint8_t* fg_ble_advertising_encode(uint8_t protocolVer, uint8_t platform,
 extern int fg_ble_advertising_decode(uint8_t* data, size_t len, uint8_t* outVer, uint8_t* outPlatform, uint8_t* outCaps, uint16_t* outChan);
 extern int fg_classify_rssi(int rssi);
 
-// pskHash is ignored: v1.1 removed the PSK hash from the wire format (§3.1.3 —
-// broadcasting it enabled offline PSK guessing). The parameter is kept so the
-// C ABI in cgo.h stays stable until clients are rebuilt.
+// v1.1 removed the PSK hash from the wire format (§3.1.3 — broadcasting it
+// enabled offline PSK guessing), so this encoder takes no PSK parameter.
 //
-extern uint8_t* fg_wifidirect_request_encode(uint8_t version, uint16_t port, uint8_t* ipAddr, uint8_t* subnet, uint8_t channel, uint8_t band, uint8_t security, uint8_t* pskHash, size_t* outLen);
+extern uint8_t* fg_wifidirect_request_encode(uint8_t version, uint16_t port, uint8_t* ipAddr, uint8_t* subnet, uint8_t channel, uint8_t band, uint8_t security, size_t* outLen);
 extern uint8_t* fg_wifidirect_response_encode(uint8_t version, uint8_t status, uint16_t port, uint16_t channel, uint8_t band, size_t* outLen);
 extern GoUintptr fg_latency_monitor_new(int maxSamples);
 extern void fg_latency_record_ping(GoUintptr id, uint64_t sendTimeUs);
@@ -177,10 +175,6 @@ extern uint16_t fg_sequence_next(GoUintptr id);
 extern int fg_sequence_check(GoUintptr id, uint16_t received);
 extern void fg_sequence_reset(GoUintptr id, uint32_t seqInit);
 extern void fg_sequence_tracker_free(GoUintptr id);
-extern GoUintptr fg_fragment_reassembler_new(void);
-extern int fg_fragment_feed(GoUintptr id, uint8_t* data, size_t dataLen, size_t* outLen, uint8_t** outData);
-extern void fg_fragment_cleanup(GoUintptr id);
-extern void fg_fragment_reassembler_free(GoUintptr id);
 extern char* fg_error_string(uint8_t code);
 extern uint8_t* fg_identify_payload_encode(uint8_t version, uint8_t platform, uint8_t role, uint8_t caps, uint32_t seqInit, char* name, size_t* outLen);
 extern uint8_t* fg_identify_response_encode(uint8_t status, uint8_t platform, uint8_t caps, char* name, size_t* outLen);
