@@ -23,17 +23,17 @@ func AppContext(bundleID string) KeyMapContext {
 
 // KeyMapRule represents a single key mapping rule (§11.1).
 type KeyMapRule struct {
-	FromOS    Platform     `yaml:"fromOS"`
-	ToOS      Platform     `yaml:"toOS"`
-	FromKey   uint16       `yaml:"fromKey"`   // HID Usage ID
-	ToKey     uint16       `yaml:"toKey"`     // HID Usage ID
-	Modifiers uint8        `yaml:"modifiers"` // modifier bitmask
+	FromOS    Platform      `yaml:"fromOS"`
+	ToOS      Platform      `yaml:"toOS"`
+	FromKey   uint16        `yaml:"fromKey"`   // HID Usage ID
+	ToKey     uint16        `yaml:"toKey"`     // HID Usage ID
+	Modifiers uint8         `yaml:"modifiers"` // modifier bitmask
 	Context   KeyMapContext `yaml:"context"`
 }
 
 // KeyMapFile is the top-level YAML structure for keymap files (§11.1).
 type KeyMapFile struct {
-	Version string      `yaml:"version"`
+	Version string       `yaml:"version"`
 	Rules   []KeyMapRule `yaml:"rules"`
 }
 
@@ -133,6 +133,56 @@ func NewKeyMapTable(kmf *KeyMapFile) *KeyMapTable {
 	}
 	copy(t.rules, kmf.Rules)
 	return t
+}
+
+// modifierKeyBits pairs each protocol modifier bit with its HID Usage ID.
+var modifierKeyBits = [...]struct {
+	bit uint8
+	hid uint16
+}{
+	{ModLeftCtrl, HIDKeyLCtrl},
+	{ModLeftShift, HIDKeyLShift},
+	{ModLeftAlt, HIDKeyLAlt},
+	{ModLeftMeta, HIDKeyLMeta},
+	{ModRightCtrl, HIDKeyRCtrl},
+	{ModRightShift, HIDKeyRShift},
+	{ModRightAlt, HIDKeyRAlt},
+	{ModRightMeta, HIDKeyRMeta},
+}
+
+// RemapModifierMask converts a source modifier bitmask for the destination
+// platform, honoring explicit keymap rules for modifier keys first and falling
+// back to RemapModifierKey for keys without a rule.
+//
+// RemapModifiers only knows the platform default (Ctrl <-> Meta). A user keymap
+// can say e.g. Windows Win -> macOS Alt; using the default conversion for the
+// mask would then produce Ctrl while the KEY_DOWN frames carry Alt. This method
+// keeps the mask and the frames consistent. context is the same app/game
+// context passed to Lookup.
+func (t *KeyMapTable) RemapModifierMask(from, to Platform, mods uint8, context KeyMapContext) uint8 {
+	if from == to {
+		return mods
+	}
+	var out uint8
+	for _, m := range modifierKeyBits {
+		if mods&m.bit == 0 {
+			continue
+		}
+		hid := m.hid
+		if t != nil {
+			if nk, _, ok := t.Lookup(from, to, m.hid, mods, context); ok {
+				hid = nk
+			} else {
+				hid = RemapModifierKey(m.hid, from, to)
+			}
+		} else {
+			hid = RemapModifierKey(m.hid, from, to)
+		}
+		if bit := ModifierFromSingleKey(hid); bit != 0 {
+			out |= bit
+		}
+	}
+	return out
 }
 
 // Lookup finds a matching rule for the given parameters.

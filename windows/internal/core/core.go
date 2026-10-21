@@ -179,12 +179,8 @@ func (c *Core) sweep() {
 func (c *Core) Stop() {
 	close(c.stop)
 	c.wg.Wait()
-	c.mu.Lock()
-	b := c.browser
-	c.mu.Unlock()
-	if b != nil {
-		b.Stop()
-	}
+	// mDNS socket 由 mdnslink 持有并负责关闭；浏览器本身是纯逻辑，
+	// 这里不再（也不该）替它停 socket。
 }
 
 // Status 是 status.get 的载荷，字段命名即 windows-ipc 契约。
@@ -204,9 +200,9 @@ func (c *Core) Status() Status {
 		UptimeSec: int64(time.Since(c.started).Seconds()),
 		Version:   Version,
 	}
-	if c.feed != nil {
-		s.MDNS = true
-	}
+	// MDNS 表示「socket 真的在跑」：feed 存在但 socket 起失败时是 false，
+	// 具体原因走 MDNSErr。别把「有浏览器对象」当成「发现可用」。
+	s.MDNS = c.feed != nil && c.mdnsErr == nil
 	if c.mdnsErr != nil {
 		s.MDNSErr = c.mdnsErr.Error()
 	}

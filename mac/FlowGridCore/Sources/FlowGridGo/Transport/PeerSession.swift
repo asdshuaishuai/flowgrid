@@ -95,10 +95,9 @@ final class PeerSession {
         ticker?.cancel()
         ticker = nil
         stopCapture()
-        if let capture {
-            capture.stop()
-            self.capture = nil
-        }
+        // 对端可能停在「按住 Ctrl/鼠标左键」的状态上断线；注入的是 CGEvent，
+        // 系统不会自己清状态，必须显式松开，否则本机一直卡着修饰键。
+        injector.reset()
         GoSession.setSink(false)
         connection.cancel()
         config.onClose(reason, retryable)
@@ -448,7 +447,9 @@ final class PeerSession {
                 return false
             }
             let tap = InputCaptureTap()
-            let started = tap.start { [weak self] type, payload in
+            let started = tap.start(
+                targetPlatform: { [weak self] in self?.peer?.platform ?? .macOS }
+            ) { [weak self] type, payload in
                 guard let self, self.running else { return }
                 self.sendFrame(type, payload)
                 self.drainOutbox()

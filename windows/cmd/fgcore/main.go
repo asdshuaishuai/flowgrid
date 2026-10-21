@@ -69,7 +69,7 @@ func main() {
 		Port:       *port,
 		AutoAccept: *autoAccept,
 		Platform:   protocol.PlatformWindows,
-		Caps:       protocol.CapDirectLink | protocol.CapClipboard | protocol.CapFileTransfer,
+		Caps:       protocol.CapIntelligentLink | protocol.CapDirectLink | protocol.CapClipboard | protocol.CapFileTransfer,
 	}, identity, trust, resolveVia(c))
 	if err := engine.Listen(); err != nil {
 		slog.Error("link listen failed", "err", err)
@@ -116,8 +116,10 @@ func main() {
 
 	slog.Info("fgcore shutting down")
 	srv.Stop()
-	hub.Stop()
+	// 先停 Engine（关闭所有会话、不再有入站 HID 帧），再停 Hub 释放注入状态：
+	// 反过来会在 ReleaseAll 之后仍可能收到一帧 KEY_DOWN，键就卡在按下状态。
 	engine.Stop()
+	hub.Stop()
 	c.Stop()
 	mdnsLink.Stop()
 }
@@ -150,7 +152,7 @@ func startAdvertiser(name string, port int) (*protocol.MdnsAdvertisor, error) {
 		Version:    "1",
 		Platform:   "windows",
 		Name:       name,
-		Caps:       "directlink,clipboard",
+		Caps:       "intelligentlink,directlink,clipboard,filetransfer",
 		Port:       strconv.Itoa(port),
 		Encryption: "tls13",
 	}

@@ -131,6 +131,106 @@ GoBuffer latencyPongPayload(std::uint64_t timestampUs)
     return GoBuffer(fg_payload_latency_pong(timestampUs, &outLen), outLen);
 }
 
+// ── HID 载荷（§5.3）────────────────────────────────────────────────────
+GoBuffer keyDownPayload(std::uint16_t keyCode, std::uint8_t modifiers)
+{
+    std::size_t outLen = 0;
+    return GoBuffer(fg_payload_keydown(keyCode, modifiers, &outLen), outLen);
+}
+
+GoBuffer keyUpPayload(std::uint16_t keyCode)
+{
+    std::size_t outLen = 0;
+    return GoBuffer(fg_payload_keyup(keyCode, &outLen), outLen);
+}
+
+GoBuffer mouseMovePayload(std::int16_t deltaX, std::int16_t deltaY)
+{
+    std::size_t outLen = 0;
+    return GoBuffer(fg_payload_mousemove(deltaX, deltaY, &outLen), outLen);
+}
+
+GoBuffer mouseButtonPayload(std::uint8_t buttonId, bool down)
+{
+    std::size_t outLen = 0;
+    return GoBuffer(fg_payload_mousebtn(buttonId, down ? 1 : 0, &outLen), outLen);
+}
+
+GoBuffer scrollPayload(std::int16_t deltaY, std::int16_t deltaX)
+{
+    std::size_t outLen = 0;
+    return GoBuffer(fg_payload_scroll(deltaY, deltaX, &outLen), outLen);
+}
+
+namespace {
+
+std::uint8_t *payloadBytes(const QByteArray &payload)
+{
+    return reinterpret_cast<std::uint8_t *>(const_cast<char *>(payload.constData()));
+}
+
+} // namespace
+
+bool parseKeyDown(const QByteArray &payload, KeyDownPayload *out)
+{
+    if (out == nullptr || payload.isEmpty()) {
+        return false;
+    }
+    return fg_payload_unmarshal_keydown(
+               payloadBytes(payload), static_cast<std::size_t>(payload.size()),
+               &out->keyCode, &out->modifiers)
+        == 0;
+}
+
+bool parseKeyUp(const QByteArray &payload, KeyUpPayload *out)
+{
+    if (out == nullptr || payload.isEmpty()) {
+        return false;
+    }
+    return fg_payload_unmarshal_keyup(
+               payloadBytes(payload), static_cast<std::size_t>(payload.size()),
+               &out->keyCode)
+        == 0;
+}
+
+bool parseMouseMove(const QByteArray &payload, MouseMovePayload *out)
+{
+    if (out == nullptr || payload.isEmpty()) {
+        return false;
+    }
+    return fg_payload_unmarshal_mousemove(
+               payloadBytes(payload), static_cast<std::size_t>(payload.size()),
+               &out->deltaX, &out->deltaY)
+        == 0;
+}
+
+bool parseMouseButton(const QByteArray &payload, MouseButtonPayload *out)
+{
+    if (out == nullptr || payload.isEmpty()) {
+        return false;
+    }
+    std::uint8_t state = 0;
+    if (fg_payload_unmarshal_mousebtn(
+            payloadBytes(payload), static_cast<std::size_t>(payload.size()),
+            &out->buttonId, &state)
+        != 0) {
+        return false;
+    }
+    out->down = state == 1;
+    return true;
+}
+
+bool parseScroll(const QByteArray &payload, ScrollPayload *out)
+{
+    if (out == nullptr || payload.isEmpty()) {
+        return false;
+    }
+    return fg_payload_unmarshal_scroll(
+               payloadBytes(payload), static_cast<std::size_t>(payload.size()),
+               &out->deltaY, &out->deltaX)
+        == 0;
+}
+
 // ── LatencyMonitor ────────────────────────────────────────────────────
 LatencyMonitor::LatencyMonitor(int maxSamples) : maxSamples_(maxSamples)
 {

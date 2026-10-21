@@ -139,6 +139,8 @@ set(FLOWGRID_SOURCES
     src/core/linkprobe.h          src/core/linkprobe.cpp
     src/core/protocolapi.h        src/core/protocolapi.cpp
     src/core/devicemanager.h      src/core/devicemanager.cpp
+    src/core/input/input_keymap.h
+    src/core/input/input_engine.h src/core/input/input_engine.cpp
 
     src/ui/svgsubset.h            src/ui/svgsubset.cpp
     src/ui/icons.h                src/ui/icons.cpp
@@ -243,6 +245,14 @@ endif()
 
 enable_testing()
 add_test(NAME uitest COMMAND flowgrid-uitest)
+
+# 键鼠映射表单测：纯头文件，不依赖 Qt/DTK，也不需要 /dev/uinput。
+# 这样任何 Linux（含 CI/容器）都能验 HID↔evdev 表，不必等真机权限。
+add_executable(flowgrid-inputtest tests/input_keymap_test.cpp)
+target_include_directories(flowgrid-inputtest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/input)
+target_compile_options(flowgrid-inputtest PRIVATE -Wall -Wextra)
+add_test(NAME inputkeymap COMMAND flowgrid-inputtest)
 
 install(TARGETS flowgrid-deepin RUNTIME DESTINATION bin)
 install(FILES resources/flowgrid-deepin.desktop

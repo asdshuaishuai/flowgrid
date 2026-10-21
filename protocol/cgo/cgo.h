@@ -136,6 +136,11 @@ extern void fg_free_buffer(void* buf);
 extern uint8_t* fg_ble_advertising_encode(uint8_t protocolVer, uint8_t platform, uint8_t caps, uint16_t wifiChan, size_t* outLen);
 extern int fg_ble_advertising_decode(uint8_t* data, size_t len, uint8_t* outVer, uint8_t* outPlatform, uint8_t* outCaps, uint16_t* outChan);
 extern int fg_classify_rssi(int rssi);
+
+// pskHash is ignored: v1.1 removed the PSK hash from the wire format (§3.1.3 —
+// broadcasting it enabled offline PSK guessing). The parameter is kept so the
+// C ABI in cgo.h stays stable until clients are rebuilt.
+//
 extern uint8_t* fg_wifidirect_request_encode(uint8_t version, uint16_t port, uint8_t* ipAddr, uint8_t* subnet, uint8_t channel, uint8_t band, uint8_t security, uint8_t* pskHash, size_t* outLen);
 extern uint8_t* fg_wifidirect_response_encode(uint8_t version, uint8_t status, uint16_t port, uint16_t channel, uint8_t band, size_t* outLen);
 extern GoUintptr fg_latency_monitor_new(int maxSamples);
@@ -166,26 +171,78 @@ extern void fg_fragment_reassembler_free(GoUintptr id);
 extern char* fg_error_string(uint8_t code);
 extern uint8_t* fg_identify_payload_encode(uint8_t version, uint8_t platform, uint8_t role, uint8_t caps, uint32_t seqInit, char* name, size_t* outLen);
 extern uint8_t* fg_identify_response_encode(uint8_t status, uint8_t platform, uint8_t caps, char* name, size_t* outLen);
+
+// fg_session_set_sink(userdata≠0) 声明传输就绪：此后 emitFrame 才会入队。
+// 未声明时 emitFrame 返回 ErrNotConnected，于是 SendClipboard/Pump 直接报错，
+// 而不是把帧悄悄丢掉又报成功。userdata=0 撤下并清空队列。
+//
 extern void fg_session_set_sink(GoUintptr userdata);
+
+// 取一帧待发：有则返回 1，payload 交调用方用 fg_free_buffer 释放；队列空返回 0。
+//
 extern int fg_session_poll_out(uint8_t* outType, uint8_t** outPayload, size_t* outLen);
 extern GoUintptr fg_clipboard_session_new(void);
 extern void fg_clipboard_session_free(GoUintptr handle);
+
+// passes<1 视作 1；返回 0 表示成功，否则是 protocol 错误码。
+//
 extern int fg_clipboard_send(GoUintptr handle, char* mime, uint8_t* data, size_t dataLen, int passes);
 extern int fg_clipboard_handle_frame(GoUintptr handle, uint8_t* payload, size_t n);
+
+// 返回 1 表示取到一份重组完成的剪贴板，MIME 与数据交给调用方用 fg_free_buffer 释放。
+//
 extern int fg_clipboard_take_pending(GoUintptr handle, uint8_t** outMime, size_t* outMimeLen, uint8_t** outData, size_t* outDataLen);
 extern GoUintptr fg_file_sender_new(void);
 extern void fg_file_sender_free(GoUintptr handle);
 extern int fg_file_sender_offer(GoUintptr handle, char* name, uint8_t* data, size_t dataLen, uint16_t* outID);
+
+// 返回实际发出的分块数；outPumped=0 且返回码非 0 表示出错。
+//
 extern int fg_file_sender_pump(GoUintptr handle, int maxChunks, int* outPumped);
 extern int fg_file_sender_handle_frame(GoUintptr handle, uint8_t frameType, uint8_t* payload, size_t n);
+
+// state: 0 空闲 / 1 传输中 / 2 完成 / 3 失败。读取本身会清掉 2、3 两个终态，
+// 让 UI 只弹一次「完成 / 失败」。
+//
 extern int fg_file_sender_poll(GoUintptr handle, int* outState, int* outSent, int* outTotal, int* outErr);
 extern GoUintptr fg_file_receiver_new(void);
 extern void fg_file_receiver_free(GoUintptr handle);
+
+// outHandled=1 表示该帧属于文件传输协议，分发器可以据此决定不再往下传。
+//
 extern int fg_file_receiver_handle_frame(GoUintptr handle, uint8_t frameType, uint8_t* payload, size_t n, int* outHandled);
+
+// 返回 1 表示有一个待用户确认的 offer；name 需用 fg_free_buffer 释放。
+//
 extern int fg_file_receiver_take_offer(GoUintptr handle, uint16_t* outID, uint8_t** outName, size_t* outNameLen, uint64_t* outSize);
 extern int fg_file_receiver_accept(GoUintptr handle, uint16_t id);
 extern int fg_file_receiver_reject(GoUintptr handle, uint16_t id, uint8_t status);
+
+// 返回 1 表示有一次终态结果；name 与 data 需用 fg_free_buffer 释放。
+// outErr 非 0 表示校验失败或传输失败，data 为空。
+//
 extern int fg_file_receiver_take_complete(GoUintptr handle, uint8_t** outName, size_t* outNameLen, uint8_t** outData, size_t* outDataLen, int* outErr);
+extern GoUintptr fg_lanid_identity_generate(void);
+extern uint8_t* fg_lanid_identity_export(GoUintptr id, size_t* outLen);
+extern GoUintptr fg_lanid_identity_import(uint8_t* data, size_t length);
+extern uint8_t* fg_lanid_identity_public_key(GoUintptr id, size_t* outLen);
+extern void fg_lanid_identity_free(GoUintptr id);
+extern GoUintptr fg_lanid_announcer_new(GoUintptr identID, uint8_t platform, uint8_t caps, uint16_t port, char* name);
+extern uint8_t* fg_lanid_announcer_announce(GoUintptr id, size_t* outLen);
+extern void fg_lanid_announcer_free(GoUintptr id);
+extern GoUintptr fg_lanid_listener_new(void);
+extern int fg_lanid_listener_feed(GoUintptr id, uint8_t* data, size_t length, uint8_t* fromIP, size_t fromIPLen);
+extern int fg_lanid_listener_peers_count(GoUintptr id);
+extern int fg_lanid_listener_peer(GoUintptr id, int index, uint8_t* outBuf, size_t outBufLen);
+extern int fg_lanid_listener_prune(GoUintptr id, int64_t maxAgeMs);
+extern void fg_lanid_listener_free(GoUintptr id);
+extern GoUintptr fg_lanid_trust_new(GoUintptr identID);
+extern int fg_lanid_trust_append(GoUintptr id, uint8_t* peerID, size_t peerIDLen, uint8_t decision);
+extern int fg_lanid_trust_is_trusted(GoUintptr id, uint8_t* peerID, size_t peerIDLen);
+extern int fg_lanid_trust_verify(GoUintptr id);
+extern int fg_lanid_trust_count(GoUintptr id);
+extern void fg_lanid_trust_free(GoUintptr id);
+extern int fg_link_plan(uint8_t preferred, int mdnsPeers, int lanPeers, int hasManual);
 
 #ifdef __cplusplus
 }

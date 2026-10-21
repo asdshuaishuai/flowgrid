@@ -4,6 +4,13 @@ import CoreGraphics
 import FlowGridCore
 import Foundation
 
+/// 注入事件打的标记（CGEvent.eventSourceUserData）。捕获 tap 看到这个值就
+/// 直接放行——否则注入到本机的事件会再次被自己的 tap 抓走并转发回对端，
+/// 双向/同机联调时会形成无限回环。取 "FLOW" 的 ASCII。
+enum InputMarker {
+    static let injected: Int64 = 0x464C_4F57
+}
+
 /// 从 CGEvent 提炼的可跨隔离样本（全部 Sendable 标量）。
 struct CapturedEvent: Sendable {
     enum Kind: Sendable {
@@ -30,12 +37,17 @@ final class InputCaptureTap {
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var send: ((UInt8, Data) -> Void)?
+    private var targetPlatform: (() -> FGPlatform)?
 
     static var isTrusted: Bool {
         AXIsProcessTrusted()
     }
 
-    func start(send: @escaping (UInt8, Data) -> Void) -> Bool {
+    /// targetPlatform 在每次按键时读取（握手完成后才会知道对端平台）。
+    /// 跨平台时 Ctrl↔Cmd 的默认换算在这里做；用户自定义 keymap 规则由
+    /// 会话层另行覆盖。
+    func start(targetPlatform: @escaping () -> FGPlatform,
+               send: @escaping (UInt8, Data) -> Void) -> Bool {
         guard tap == nil else { return true }
         guard AXIsProcessTrusted() else { return false }
 
@@ -69,6 +81,7 @@ final class InputCaptureTap {
 
         self.tap = tap
         self.send = send
+        self.targetPlatform = targetPlatform
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
@@ -87,6 +100,7 @@ final class InputCaptureTap {
         tap = nil
         runLoopSource = nil
         send = nil
+        targetPlatform = nil
     }
 
     /// tap 被系统临时禁用（超时/用户输入）后重新启用。
@@ -99,13 +113,18 @@ final class InputCaptureTap {
     /// 处理样本；返回 true 表示吞掉（不传给本机）。
     fileprivate func handle(_ sample: CapturedEvent) -> Bool {
         let flags = CGEventFlags(rawValue: sample.flagsRaw)
+        let target = targetPlatform?() ?? .macOS
         switch sample.kind {
         case .keyDown, .keyUp:
             let virtualKey = CGKeyCode(sample.virtualKey)
-            guard let usage = KeyCodeTable.hidUsage(forVirtualKey: virtualKey) else {
+            guard let rawUsage = KeyCodeTable.hidUsage(forVirtualKey: virtualKey) else {
                 return true // 未知键吞掉，避免本机与对端行为分叉
             }
-            let modifiers = KeyCodeTable.modifierMask(from: flags)
+            // 修饰键本身也是 KEY_DOWN/UP 事件：位掩码换了平台，键位也得换
+            // （mac 的 Cmd ↔ Windows 的 Ctrl/Win 语义，见 §6.3）。
+            let usage = KeyCodeTable.remapModifierKey(rawUsage, from: .macOS, to: target)
+            let modifiers = GoProtocol.remapModifiers(
+                KeyCodeTable.modifierMask(from: flags), from: .macOS, to: target)
             if case .keyDown = sample.kind {
                 if let payload = try? GoPayloads.keyDown(keyCode: usage, modifiers: modifiers) {
                     send?(FGFrameType.keyDown, payload)
@@ -119,12 +138,27 @@ final class InputCaptureTap {
 
         case .flagsChanged:
             let virtualKey = CGKeyCode(sample.virtualKey)
-            guard let usage = KeyCodeTable.hidUsage(forVirtualKey: virtualKey) else {
+            guard let rawUsage = KeyCodeTable.hidUsage(forVirtualKey: virtualKey) else {
                 return false
             }
-            let modifiers = KeyCodeTable.modifierMask(from: flags)
+            let usage = KeyCodeTable.remapModifierKey(rawUsage, from: .macOS, to: target)
+            let modifiers = GoProtocol.remapModifiers(
+                KeyCodeTable.modifierMask(from: flags), from: .macOS, to: target)
+            // Caps Lock 是 toggle：每次 flagsChanged 都是一次「按下」，不按
+            // 物理键的 down/up 成对发送，目标端会一直停在按下状态。
+            if rawUsage == 0x39 {
+                if let down = try? GoPayloads.keyDown(keyCode: usage, modifiers: modifiers) {
+                    send?(FGFrameType.keyDown, down)
+                }
+                if let up = try? GoPayloads.keyUp(keyCode: usage) {
+                    send?(FGFrameType.keyUp, up)
+                }
+                return true
+            }
+            // 按下/松开必须用未换位的 rawUsage 判断：Ctrl 换成 Cmd 后，
+            // flags 里出现的是 maskControl 而不是 maskCommand。
             let pressed: Bool
-            switch usage {
+            switch rawUsage {
             case 0xE0, 0xE4: pressed = flags.contains(.maskControl)
             case 0xE1, 0xE5: pressed = flags.contains(.maskShift)
             case 0xE2, 0xE6: pressed = flags.contains(.maskAlternate)
@@ -158,6 +192,7 @@ final class InputCaptureTap {
             return true
 
         case .scroll:
+            guard sample.deltaX != 0 || sample.deltaY != 0 else { return true }
             if let payload = try? GoPayloads.scroll(
                 deltaY: Int16(clamping: sample.deltaY), deltaX: Int16(clamping: sample.deltaX)
             ) {
@@ -165,6 +200,16 @@ final class InputCaptureTap {
             }
             return true
         }
+    }
+}
+
+/// CGEvent 的 mouseEventButtonNumber → 协议按钮号（§6.4）：
+/// 0=左 1=右 2=中 3=后退 4=前进。其他键位按中键处理，至少不丢事件。
+private func mouseButtonID(_ number: Int64) -> UInt8 {
+    switch number {
+    case 3: return 0x04
+    case 4: return 0x05
+    default: return 0x03
     }
 }
 
@@ -177,6 +222,12 @@ private func flowgridInputTapCallback(
 ) -> Unmanaged<CGEvent>? {
     guard let refcon else { return Unmanaged.passUnretained(event) }
     let tap = Unmanaged<InputCaptureTap>.fromOpaque(refcon).takeUnretainedValue()
+
+    // 注入事件带本进程标记：直接放行，既不转发也不吞。否则注入到本机
+    // 的事件会被同一个 tap 再捕获，双向/同机联调时形成回环。
+    if event.getIntegerValueField(.eventSourceUserData) == InputMarker.injected {
+        return Unmanaged.passUnretained(event)
+    }
 
     let kind: CapturedEvent.Kind
     switch type {
@@ -200,9 +251,11 @@ private func flowgridInputTapCallback(
     case .rightMouseUp:
         kind = .mouseButton(button: 0x02, isDown: false)
     case .otherMouseDown:
-        kind = .mouseButton(button: 0x03, isDown: true)
+        kind = .mouseButton(button: mouseButtonID(event.getIntegerValueField(.mouseEventButtonNumber)),
+                            isDown: true)
     case .otherMouseUp:
-        kind = .mouseButton(button: 0x03, isDown: false)
+        kind = .mouseButton(button: mouseButtonID(event.getIntegerValueField(.mouseEventButtonNumber)),
+                            isDown: false)
     case .scrollWheel:
         kind = .scroll
     default:
@@ -216,7 +269,7 @@ private func flowgridInputTapCallback(
         deltaX: event.getIntegerValueField(.mouseEventDeltaX),
         deltaY: event.getIntegerValueField(.mouseEventDeltaY)
     )
-    // scroll 用轴整数（像素/行），mouseMove 用事件增量；两者字段相同位置不同，按 kind 取值已在 handle 内处理
+    // scroll 用轴整数（行/格），mouseMove 用事件增量；两者字段相同位置不同，按 kind 取值已在 handle 内处理
     let scrollSample = CapturedEvent(
         kind: kind,
         virtualKey: sample.virtualKey,

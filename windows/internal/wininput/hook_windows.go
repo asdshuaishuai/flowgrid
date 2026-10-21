@@ -38,7 +38,11 @@ const (
 	wmQuit        = 0x0012
 
 	llkhfExtended = 0x01
+	llkhfInjected = 0x10
 	llkhfUp       = 0x80
+
+	// msLLHOOKSTRUCT.flags
+	llmhfInjected = 0x01
 )
 
 // InputEvent 是一条捕获事件（HID 空间）。
@@ -88,6 +92,10 @@ type Hooks struct {
 	lastX   int32
 	lastY   int32
 	hasLast bool
+
+	// 高精度滚轮不足一格的余数（泵线程独占）。
+	wheelRemY int32
+	wheelRemX int32
 
 	wg sync.WaitGroup
 }
@@ -169,9 +177,20 @@ func (h *Hooks) hookProc(nCode int32, wparam, lparam uintptr) uintptr {
 	swallow := false
 	if isKey {
 		st := (*kbdLLHookStruct)(unsafe.Pointer(lparam))
+		// SendInput 注入的事件会再次进钩子。双向/同机场景下若照常入队，
+		// A 注入的键会被 A 再捕获并转发给 B，B 注入后又发回来，形成回环。
+		// 注入事件既不吞也不处理（不污染本机修饰键状态）。
+		if st.flags&llkhfInjected != 0 {
+			r, _, _ := procCallNextHookEx.Call(0, uintptr(nCode), wparam, lparam)
+			return r
+		}
 		vk := uint16(st.vkCode)
 		down := wparam == wmKeydown || wparam == wmSyskeydown
 		if hid, ok := VKToHID(vk); ok {
+			// 小键盘 Enter 与主 Enter 同为 VK_RETURN，用扩展键标志区分。
+			if vk == vkReturn && st.flags&llkhfExtended != 0 {
+				hid = protocol.HIDKeyKpEnter
+			}
 			if m, isMod := ModifiersFromVK(vk); isMod {
 				if down {
 					h.modMask |= uint32(m)
@@ -188,6 +207,10 @@ func (h *Hooks) hookProc(nCode int32, wparam, lparam uintptr) uintptr {
 		swallow = hosting
 	} else {
 		st := (*mouseLLHookStruct)(unsafe.Pointer(lparam))
+		if st.flags&llmhfInjected != 0 {
+			r, _, _ := procCallNextHookEx.Call(0, uintptr(nCode), wparam, lparam)
+			return r
+		}
 		switch wparam {
 		case wmMouseMove:
 			if hosting {
@@ -220,16 +243,20 @@ func (h *Hooks) hookProc(nCode int32, wparam, lparam uintptr) uintptr {
 			swallow = hosting
 		case wmMouseWheel, wmMouseHWheel:
 			if hosting {
-				delta := int16(st.mouseData >> 16)
+				// Windows 的滚轮 delta 是 120 的倍数；协议单位是「格」，
+				// 必须在这里折算，注入侧再乘回 120。
+				delta := int32(int16(st.mouseData >> 16))
 				ev := InputEvent{Kind: KindWheel}
 				if wparam == wmMouseWheel {
-					ev.DeltaY = delta
+					ev.DeltaY = wheelLines(delta, &h.wheelRemY)
 				} else {
-					ev.DX = -delta
+					ev.DX = wheelLines(-delta, &h.wheelRemX)
 				}
-				select {
-				case h.events <- ev:
-				default:
+				if ev.DeltaY != 0 || ev.DX != 0 {
+					select {
+					case h.events <- ev:
+					default:
+					}
 				}
 			}
 			swallow = hosting

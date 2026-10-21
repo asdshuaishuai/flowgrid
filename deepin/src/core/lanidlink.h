@@ -15,7 +15,7 @@
 #include <QHostAddress>
 
 #include <cstdint>
-#include 
+#include <functional>
 
 namespace fg::proto {
 

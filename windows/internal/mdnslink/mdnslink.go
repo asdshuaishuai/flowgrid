@@ -96,6 +96,10 @@ func (l *Link) sendQuery(conn *net.UDPConn) {
 func (l *Link) recvLoop(conn *net.UDPConn) {
 	defer l.wg.Done()
 	buf := make([]byte, protocol.MdnsMaxPacket)
+	// Windows 上 UDP 套接字会因先前发出的包收到 ICMP 端口不可达而持续返回
+	// WSAECONNRESET。原样 continue 会变成满 CPU 空转；这里退避重试，不退出
+	// （组播可用性可能只是暂时变差）。
+	backoff := 50 * time.Millisecond
 	for {
 		n, from, err := conn.ReadFromUDP(buf)
 		if err != nil {
@@ -103,9 +107,14 @@ func (l *Link) recvLoop(conn *net.UDPConn) {
 			case <-l.done:
 				return
 			default:
-				continue
 			}
+			time.Sleep(backoff)
+			if backoff < time.Second {
+				backoff *= 2
+			}
+			continue
 		}
+		backoff = 50 * time.Millisecond
 		l.handlePacket(conn, buf[:n], from)
 	}
 }

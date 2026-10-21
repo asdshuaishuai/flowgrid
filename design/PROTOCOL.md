@@ -387,7 +387,11 @@ Offset  Size   Field         说明
  2      2      Delta X       水平滚动量 (Int16 BE, 正=向左)
 ```
 
-注: 滚动量单位为像素 (pixel-based scrolling)。
+注: 滚动量单位为「行/格」（1 = 一格），不是像素。Windows `WM_MOUSEWHEEL` 的
+±120 折算为 ±1；macOS 使用 line delta；Linux evdev `REL_WHEEL` 的值本来就是格。
+像素级平滑滚动留给未来的能力位与独立字段，不复用本帧语义（见
+docs/PROTOCOL-ISSUES.md P11）。这是 v1.1 的语义勘误：线格式与字段宽度未变，
+只是把原文的「像素」纠正为各端实际实现的「格/行」。
 
 #### CLIPBOARD (0x07) — 变长 (v1.1)
 

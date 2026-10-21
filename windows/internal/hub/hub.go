@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -93,6 +94,19 @@ type Hub struct {
 
 	in       *wininput.Hooks
 	clipStop func()
+	// linkCancel 取消对 Engine 连接变化的订阅：托管对端掉线时自动回本机，
+	// 并释放仍按在目标机上的键（否则断线时按着 Ctrl 会永久卡住）。
+	linkCancel func()
+	// onlinePeers 是上次通知时的在线集合，用来区分「新增连接」与「掉线」：
+	// 任何一个对端掉线都可能留下按住的键（它也可能正在控制本机），
+	// 所以掉线时无条件收尾；新增连接不需要。
+	onlinePeers map[string]bool
+	// outDown 记录已转发给当前托管对端、尚未收到本机 KEY_UP 的键：
+	// 物理 HID → 实际发出去的 HID（keymap 可能改写）。切换托管时靠它补发
+	// KEY_UP，否则旧对端会一直以为 Ctrl/Alt 还按着。
+	outDown map[uint16]uint16
+	// outButtons 记录已转发给当前托管对端、尚未松开的鼠标按钮（bit0..bit4）。
+	outButtons uint8
 }
 
 func New(eng *link.Engine, downloads, keymapPath string) *Hub {
@@ -112,9 +126,13 @@ func (h *Hub) Start() error {
 	h.eng.SetHandlers(h.onPeerFrame, h.onPeerClipboard, h.onFileOffer,
 		h.onFileProgress, h.MarkSendDone, h.onFileComplete)
 	h.loadKeymap()
+	h.onlinePeers = h.onlineSet()
+	h.linkCancel = h.eng.OnChange(h.onLinksChanged)
 
 	in, err := wininput.StartHooks(h.isHosting)
 	if err != nil {
+		h.linkCancel()
+		h.linkCancel = nil
 		return fmt.Errorf("hub: input hooks: %w", err)
 	}
 	h.in = in
@@ -127,6 +145,11 @@ func (h *Hub) Start() error {
 	clipStop, err := wininput.StartClipboardListener(h.onLocalClipboardChanged)
 	if err != nil {
 		in.Stop()
+		h.in = nil
+		if h.linkCancel != nil {
+			h.linkCancel()
+			h.linkCancel = nil
+		}
 		return fmt.Errorf("hub: clipboard listener: %w", err)
 	}
 	h.clipStop = clipStop
@@ -134,6 +157,10 @@ func (h *Hub) Start() error {
 }
 
 func (h *Hub) Stop() {
+	if h.linkCancel != nil {
+		h.linkCancel()
+		h.linkCancel = nil
+	}
 	if h.clipStop != nil {
 		h.clipStop()
 	}
@@ -141,6 +168,62 @@ func (h *Hub) Stop() {
 		h.in.Stop()
 	}
 	h.wg.Wait()
+	// 显式收尾：进程存活期间 SendInput 的按下状态不会因「设备消失」自动清。
+	wininput.ReleaseAll()
+	h.mu.Lock()
+	h.hosting = ""
+	h.outDown = nil
+	h.outButtons = 0
+	h.mu.Unlock()
+}
+
+// onLinksChanged 在连接状态变化时被调用（回调运行在 Engine 的 notify 线程，
+// 且不持有 Engine 锁）。
+//
+// 两类收尾：
+//   - 当前托管的对端掉线 → 回到本机；
+//   - 任何对端掉线 → 松开本机注入过且仍按着的键。对端也可能正在控制本机，
+//     hosting 为空并不代表没有入站输入；SendInput 没有「连接断开自动 keyUp」。
+func (h *Hub) onLinksChanged() {
+	now := h.onlineSet()
+
+	h.mu.Lock()
+	hosting := h.hosting
+	prev := h.onlinePeers
+	removed := false
+	for name := range prev {
+		if !now[name] {
+			removed = true
+			break
+		}
+	}
+	h.onlinePeers = now
+	cleared := false
+	if hosting != "" && !now[hosting] {
+		h.hosting = ""
+		cleared = true
+		// 托管对端已掉线：outDown/outButtons 无法再补发，清掉避免之后
+		// 误发到新对端；其他对端掉线不影响当前托管的出站状态。
+		h.outDown = nil
+		h.outButtons = 0
+	}
+	h.mu.Unlock()
+
+	if removed || cleared {
+		wininput.ReleaseAll()
+	}
+	if cleared {
+		h.notify()
+	}
+}
+
+func (h *Hub) onlineSet() map[string]bool {
+	names := h.eng.OnlinePeerNames()
+	set := make(map[string]bool, len(names))
+	for _, name := range names {
+		set[name] = true
+	}
+	return set
 }
 
 // ── 入站注入 ────────────────────────────────────────────────────────────
@@ -150,11 +233,11 @@ func (h *Hub) onPeerFrame(peer string, f *protocol.HIDFrame) {
 	switch f.Header.FrameType {
 	case protocol.FrameKeyDown:
 		if p, e := protocol.UnmarshalKeyDown(f.Payload); e == nil {
-			err = wininput.InjectKey(p.KeyCode, true)
+			err = wininput.InjectKey(p.KeyCode, true, p.Modifiers)
 		}
 	case protocol.FrameKeyUp:
 		if p, e := protocol.UnmarshalKeyUp(f.Payload); e == nil {
-			err = wininput.InjectKey(p.KeyCode, false)
+			err = wininput.InjectKey(p.KeyCode, false, 0)
 		}
 	case protocol.FrameMouseMove:
 		if p, e := protocol.UnmarshalMouseMove(f.Payload); e == nil {
@@ -204,21 +287,67 @@ func (h *Hub) SwitchTo(index int) error {
 	if index < 0 || index > 8 {
 		return fmt.Errorf("hub: switch index out of range 0..8: %d", index)
 	}
-	if index == 0 {
-		h.mu.Lock()
-		h.hosting = ""
-		h.mu.Unlock()
-	} else {
+	next := ""
+	if index > 0 {
 		names := h.eng.OnlinePeerNames()
 		if index > len(names) {
 			return fmt.Errorf("hub: no online peer #%d (have %d)", index, len(names))
 		}
-		h.mu.Lock()
-		h.hosting = names[index-1]
-		h.mu.Unlock()
+		next = names[index-1]
+	}
+
+	h.mu.Lock()
+	old := h.hosting
+	changed := old != next
+	h.mu.Unlock()
+	if changed {
+		// 先把旧对端仍按着的键松开：切换后本机的 KEY_UP 会发往新对端，
+		// 旧对端永远等不到，Ctrl/Alt 会卡在按下状态。
+		if old != "" {
+			h.releaseOutbound(old)
+		}
+	}
+
+	h.mu.Lock()
+	h.hosting = next
+	h.mu.Unlock()
+	if changed {
+		wininput.ReleaseAll()
 	}
 	h.notify()
 	return nil
+}
+
+// releaseOutbound 给指定对端补发本机仍按着的键的 KEY_UP。
+// 调用方保证 outDown 里的键确实发给了该对端（当前托管目标）。
+func (h *Hub) releaseOutbound(peer string) {
+	h.mu.Lock()
+	sent := make([]uint16, 0, len(h.outDown))
+	for _, hid := range h.outDown {
+		sent = append(sent, hid)
+	}
+	buttons := h.outButtons
+	h.outDown = nil
+	h.outButtons = 0
+	h.mu.Unlock()
+	if len(sent) == 0 && buttons == 0 {
+		return
+	}
+	for button := uint8(1); button <= 5; button++ {
+		if buttons&(1<<(button-1)) != 0 {
+			_ = h.eng.SendToPeer(peer, protocol.FrameMouseButton,
+				(&protocol.MouseButtonPayload{ButtonID: button, State: 0}).Marshal())
+		}
+	}
+	// 先松普通键再松修饰键：让应用看到完整的「组合键结束」。
+	sort.SliceStable(sent, func(i, j int) bool {
+		return protocol.ModifierFromSingleKey(sent[i]) == 0 &&
+			protocol.ModifierFromSingleKey(sent[j]) != 0
+	})
+	for _, hid := range sent {
+		_ = h.eng.SendToPeer(peer, protocol.FrameKeyUp,
+			(&protocol.KeyUpPayload{KeyCode: hid}).Marshal())
+	}
 }
 
 func (h *Hub) consume(events <-chan wininput.InputEvent) {
@@ -243,15 +372,46 @@ func (h *Hub) consume(events <-chan wininput.InputEvent) {
 
 func (h *Hub) forward(hosting string, ev wininput.InputEvent) {
 	peerPlatform := h.eng.PeerPlatform(hosting)
-	mods := protocol.RemapModifiers(ev.Modifiers, protocol.PlatformWindows, peerPlatform)
-	hid, payload := ev.HID, ev.Modifiers
+	hid := ev.HID
+	var mods uint8
 	if h.keymap != nil {
 		ctx := protocol.AppContext(appName(wininput.ForegroundApp()))
+		// 掩码和键位必须用同一套规则换算：用户可能把 Win 映射成 Alt，
+		// 只按平台默认换掩码会出现「按的是 Alt、掩码说 Ctrl」。
+		mods = h.keymap.RemapModifierMask(protocol.PlatformWindows, peerPlatform, ev.Modifiers, ctx)
 		if nk, nm, ok := h.keymap.Lookup(protocol.PlatformWindows, peerPlatform, ev.HID, mods, ctx); ok {
 			hid, mods = nk, nm
+		} else {
+			// 用户规则没命中时走平台默认换算：修饰键的 HID 也要换，
+			// 否则 mac 目标端收到的是 Control 键而不是 Command（§6.3）。
+			hid = protocol.RemapModifierKey(hid, protocol.PlatformWindows, peerPlatform)
 		}
+	} else {
+		mods = protocol.RemapModifiers(ev.Modifiers, protocol.PlatformWindows, peerPlatform)
+		hid = protocol.RemapModifierKey(hid, protocol.PlatformWindows, peerPlatform)
 	}
-	_ = payload
+
+	if ev.Kind == wininput.KindKey {
+		h.mu.Lock()
+		if h.outDown == nil {
+			h.outDown = make(map[uint16]uint16)
+		}
+		if ev.Down {
+			h.outDown[ev.HID] = hid
+		} else {
+			delete(h.outDown, ev.HID)
+		}
+		h.mu.Unlock()
+	} else if ev.Kind == wininput.KindMouseButton && ev.Button >= 1 && ev.Button <= 5 {
+		h.mu.Lock()
+		bit := uint8(1) << (ev.Button - 1)
+		if ev.Down {
+			h.outButtons |= bit
+		} else {
+			h.outButtons &^= bit
+		}
+		h.mu.Unlock()
+	}
 
 	var err error
 	switch ev.Kind {
@@ -278,6 +438,16 @@ func (h *Hub) forward(hosting string, ev wininput.InputEvent) {
 			(&protocol.ScrollPayload{DeltaY: ev.DeltaY, DeltaX: ev.DX}).Marshal())
 	}
 	if err != nil {
+		if ev.Kind == wininput.KindKey && ev.Down {
+			h.mu.Lock()
+			delete(h.outDown, ev.HID)
+			h.mu.Unlock()
+		}
+		if ev.Kind == wininput.KindMouseButton && ev.Down && ev.Button >= 1 && ev.Button <= 5 {
+			h.mu.Lock()
+			h.outButtons &^= uint8(1) << (ev.Button - 1)
+			h.mu.Unlock()
+		}
 		slog.Debug("hub: forward failed", "peer", hosting, "err", err)
 	}
 }

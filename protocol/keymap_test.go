@@ -65,6 +65,33 @@ func TestRemapModifiersSamePlatform(t *testing.T) {
 	}
 }
 
+func TestRemapModifierKey(t *testing.T) {
+	tests := []struct {
+		name string
+		key  uint16
+		from Platform
+		to   Platform
+		want uint16
+	}{
+		{"mac ctrl -> win meta", HIDKeyLCtrl, PlatformMacOS, PlatformWindows, HIDKeyLMeta},
+		{"mac rctrl -> win rmeta", HIDKeyRCtrl, PlatformMacOS, PlatformWindows, HIDKeyRMeta},
+		{"win meta -> mac ctrl", HIDKeyLMeta, PlatformWindows, PlatformMacOS, HIDKeyLCtrl},
+		{"win rmeta -> mac rctrl", HIDKeyRMeta, PlatformWindows, PlatformMacOS, HIDKeyRCtrl},
+		{"shift untouched", HIDKeyLShift, PlatformWindows, PlatformMacOS, HIDKeyLShift},
+		{"letter untouched", 0x06, PlatformWindows, PlatformMacOS, 0x06},
+		{"win <-> linux untouched", HIDKeyLCtrl, PlatformWindows, PlatformLinux, HIDKeyLCtrl},
+		{"same platform untouched", HIDKeyLCtrl, PlatformMacOS, PlatformMacOS, HIDKeyLCtrl},
+		{"mac <-> ios untouched", HIDKeyLCtrl, PlatformMacOS, PlatformIOS, HIDKeyLCtrl},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RemapModifierKey(tt.key, tt.from, tt.to); got != tt.want {
+				t.Errorf("got 0x%02X, want 0x%02X", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestModifierFromSingleKey(t *testing.T) {
 	tests := []struct {
 		key  uint16

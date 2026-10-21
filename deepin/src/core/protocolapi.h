@@ -92,6 +92,40 @@ bool decodeFrameWithHmac(const QByteArray &wire, const QByteArray &hmacKey, Fram
 GoBuffer latencyPingPayload(std::uint64_t timestampUs);
 GoBuffer latencyPongPayload(std::uint64_t timestampUs);
 
+// ── HID 载荷（§5.3）：键鼠软模拟的帧内容 ──────────────────────────────
+// input HAL 只产出字段（HID/修饰位/位移），帧字节仍由这里经 Go 生成/解析。
+GoBuffer keyDownPayload(std::uint16_t keyCode, std::uint8_t modifiers);
+GoBuffer keyUpPayload(std::uint16_t keyCode);
+GoBuffer mouseMovePayload(std::int16_t deltaX, std::int16_t deltaY);
+GoBuffer mouseButtonPayload(std::uint8_t buttonId, bool down);
+GoBuffer scrollPayload(std::int16_t deltaY, std::int16_t deltaX);
+
+struct KeyDownPayload {
+    std::uint16_t keyCode = 0;
+    std::uint8_t modifiers = 0;
+};
+struct KeyUpPayload {
+    std::uint16_t keyCode = 0;
+};
+struct MouseMovePayload {
+    std::int16_t deltaX = 0;
+    std::int16_t deltaY = 0;
+};
+struct MouseButtonPayload {
+    std::uint8_t buttonId = 0;
+    bool down = false;
+};
+struct ScrollPayload {
+    std::int16_t deltaY = 0;
+    std::int16_t deltaX = 0;
+};
+
+bool parseKeyDown(const QByteArray &payload, KeyDownPayload *out);
+bool parseKeyUp(const QByteArray &payload, KeyUpPayload *out);
+bool parseMouseMove(const QByteArray &payload, MouseMovePayload *out);
+bool parseMouseButton(const QByteArray &payload, MouseButtonPayload *out);
+bool parseScroll(const QByteArray &payload, ScrollPayload *out);
+
 // ── 延迟监控：Go 侧维护采样环形缓冲，这里只做句柄与读数封装 ───────────
 class LatencyMonitor {
 public:

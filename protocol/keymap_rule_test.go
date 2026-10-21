@@ -91,6 +91,58 @@ rules:
 	}
 }
 
+func TestRemapModifierMaskHonorsKeymap(t *testing.T) {
+	yaml := `
+version: "1.0"
+rules:
+  - fromOS: windows
+    toOS: macos
+    fromKey: 0xE0
+    toKey: 0xE3
+    context: global
+  - fromOS: windows
+    toOS: macos
+    fromKey: 0xE3
+    toKey: 0xE2
+    context: global
+  - fromOS: windows
+    toOS: macos
+    fromKey: 0xE2
+    toKey: 0xE0
+    context: global
+`
+	kmf, err := ParseKeyMap([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := NewKeyMapTable(kmf)
+
+	// 规则优先：Win -> Alt，而不是默认换算的 Ctrl。
+	if got := table.RemapModifierMask(PlatformWindows, PlatformMacOS, ModLeftMeta, ContextGlobal); got != ModLeftAlt {
+		t.Errorf("Win mask: got 0x%02X, want 0x%02X", got, ModLeftAlt)
+	}
+	if got := table.RemapModifierMask(PlatformWindows, PlatformMacOS, ModLeftCtrl, ContextGlobal); got != ModLeftMeta {
+		t.Errorf("Ctrl mask: got 0x%02X, want 0x%02X", got, ModLeftMeta)
+	}
+	if got := table.RemapModifierMask(PlatformWindows, PlatformMacOS, ModLeftAlt, ContextGlobal); got != ModLeftCtrl {
+		t.Errorf("Alt mask: got 0x%02X, want 0x%02X", got, ModLeftCtrl)
+	}
+
+	// 没有规则时回退平台默认换算：Ctrl <-> Cmd。
+	empty := NewKeyMapTable(&KeyMapFile{})
+	if got := empty.RemapModifierMask(PlatformWindows, PlatformMacOS, ModLeftCtrl|ModLeftShift, ContextGlobal); got != ModLeftMeta|ModLeftShift {
+		t.Errorf("fallback: got 0x%02X, want 0x%02X", got, ModLeftMeta|ModLeftShift)
+	}
+	// nil table 与同平台直通都不应崩。
+	var nilTable *KeyMapTable
+	if got := nilTable.RemapModifierMask(PlatformMacOS, PlatformWindows, ModLeftMeta, ContextGlobal); got != ModLeftCtrl {
+		t.Errorf("nil table: got 0x%02X, want 0x%02X", got, ModLeftCtrl)
+	}
+	if got := table.RemapModifierMask(PlatformWindows, PlatformWindows, ModLeftAlt, ContextGlobal); got != ModLeftAlt {
+		t.Errorf("same platform: got 0x%02X, want 0x%02X", got, ModLeftAlt)
+	}
+}
+
 func TestParseKeyMapDefaultVersion(t *testing.T) {
 	yaml := `rules: []`
 	kmf, err := ParseKeyMap([]byte(yaml))

@@ -93,4 +93,51 @@ public enum KeyCodeTable {
         if mask & FGModifier.meta != 0 { flags.insert(.maskCommand) }
         return flags
     }
+
+    /// HID 修饰键（0xE0..0xE7）→ 协议位掩码。左右分开：只松开左 Ctrl 时
+    /// 不能把右 Ctrl 的状态一起清掉。
+    public static func modifierBit(forHID usage: UInt16) -> UInt8? {
+        switch usage {
+        case 0xE0: return FGModifier.leftCtrl
+        case 0xE1: return FGModifier.leftShift
+        case 0xE2: return FGModifier.leftAlt
+        case 0xE3: return FGModifier.leftMeta
+        case 0xE4: return FGModifier.rightCtrl
+        case 0xE5: return FGModifier.rightShift
+        case 0xE6: return FGModifier.rightAlt
+        case 0xE7: return FGModifier.rightMeta
+        default: return nil
+        }
+    }
+
+    /// 左右合并的「组」，只用于会话结束时一次性松开某类修饰键。
+    public static func modifierGroup(forHID usage: UInt16) -> UInt8? {
+        switch usage {
+        case 0xE0, 0xE4: return FGModifier.ctrl
+        case 0xE1, 0xE5: return FGModifier.shift
+        case 0xE2, 0xE6: return FGModifier.alt
+        case 0xE3, 0xE7: return FGModifier.meta
+        default: return nil
+        }
+    }
+
+    /// 跨平台默认修饰键换算（协议 §6.3）：macOS/iOS 用 Cmd 做主修饰，
+    /// Windows/Linux 用 Ctrl。位掩码由 Go 的 RemapModifiers 换，但修饰键
+    /// 本身也是普通 KEY_DOWN/UP 事件，HID 不一起换就会在目标端按下错误的
+    /// 物理键（mac 的 Cmd 变成 Windows 的 Win，复制粘贴全废）。
+    /// 用户 keymap 规则命中时应优先于这个默认换算。
+    public static func remapModifierKey(_ usage: UInt16, from: FGPlatform, to: FGPlatform) -> UInt16 {
+        guard usesMetaModifier(from) != usesMetaModifier(to) else { return usage }
+        switch usage {
+        case 0xE0: return 0xE3 // LCtrl ↔ LMeta
+        case 0xE3: return 0xE0
+        case 0xE4: return 0xE7 // RCtrl ↔ RMeta
+        case 0xE7: return 0xE4
+        default: return usage
+        }
+    }
+
+    private static func usesMetaModifier(_ platform: FGPlatform) -> Bool {
+        platform == .macOS || platform == .iOS
+    }
 }

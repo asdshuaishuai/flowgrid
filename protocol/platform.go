@@ -42,7 +42,11 @@ const (
 type CapabilityFlags uint8
 
 const (
-	CapNearLink     CapabilityFlags = 0x01
+	// CapIntelligentLink（bit 0）：支持智能连接（LAN 私有链发现，§3.1）。
+	CapIntelligentLink CapabilityFlags = 0x01
+	// CapNearLink 是 v1.1 之前的旧名，指向同一位；新代码请用
+	// CapIntelligentLink。保留别名只为不打断既有调用点与线格式。
+	CapNearLink     CapabilityFlags = CapIntelligentLink
 	CapDirectLink   CapabilityFlags = 0x02
 	CapWiFiDirect   CapabilityFlags = 0x04
 	CapDTLS13       CapabilityFlags = 0x08
@@ -55,7 +59,7 @@ const (
 	// constant — and derived from the Cap* values above — so that defining a
 	// new capability bit here widens the mask automatically instead of the
 	// old hardcoded 0x3F silently clearing it.
-	CapDefinedMask CapabilityFlags = CapNearLink | CapDirectLink | CapWiFiDirect |
+	CapDefinedMask CapabilityFlags = CapIntelligentLink | CapDirectLink | CapWiFiDirect |
 		CapDTLS13 | CapClipboard | CapFileTransfer
 )
 

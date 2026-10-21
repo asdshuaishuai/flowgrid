@@ -8,6 +8,7 @@
 package protocol
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -19,6 +20,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"sort"
 	"sync"
 	"time"
 )
@@ -30,14 +32,20 @@ const (
 	LanIDAnnouncePeriod = 2 * time.Second
 	LanIDPeerMaxAge     = 10 * time.Second
 	LanIDMaxNameLen     = 64
+	lanIDVersion        = 1
 	lanIDSigSize        = 64 // ECDSA P-256 r||s
 )
 
 var (
-	errLanIDTooShort    = errors.New("protocol: lanid announcement too short")
-	errLanIDNameTooLong = errors.New("protocol: lanid name too long")
-	errLanIDBadPubKey   = errors.New("protocol: lanid invalid public key")
-	errLanIDBadSig      = errors.New("protocol: lanid signature verification failed")
+	errLanIDTooShort      = errors.New("protocol: lanid announcement too short")
+	errLanIDBadLength     = errors.New("protocol: lanid announcement has trailing bytes")
+	errLanIDBadVersion    = errors.New("protocol: unsupported lanid announcement version")
+	errLanIDNameTooLong   = errors.New("protocol: lanid name too long")
+	errLanIDBadPubKey     = errors.New("protocol: lanid invalid public key")
+	errLanIDBadSig        = errors.New("protocol: lanid signature verification failed")
+	errLanIDBadDecision   = errors.New("protocol: trust decision must be 0x00 (trust) or 0x01 (reject)")
+	errLanIDChainBroken   = errors.New("protocol: trust chain fingerprint does not match peer id")
+	errLanIDNotP256       = errors.New("protocol: lanid identity key must be ECDSA P-256")
 )
 
 // ── 身份密钥（ECDSA P-256，持久；与 §4.3 的临时 ECDH 密钥分离） ──────────
@@ -53,8 +61,26 @@ func ExportIdentityPrivateKey(priv *ecdsa.PrivateKey) ([]byte, error) {
 }
 
 // ImportIdentityPrivateKey 反序列化身份私钥。
+//
+// 只接受 P-256：本协议的线格式（65 字节公钥、64 字节 r||s 签名）是 P-256
+// 专属的，导入别的曲线只会得到一个永远验不过的坏身份，故在此拒绝。
 func ImportIdentityPrivateKey(data []byte) (*ecdsa.PrivateKey, error) {
-	return x509.ParseECPrivateKey(data)
+	priv, err := x509.ParseECPrivateKey(data)
+	if err != nil {
+		return nil, err
+	}
+	if !isP256(priv) {
+		return nil, errLanIDNotP256
+	}
+	return priv, nil
+}
+
+// isP256 判断私钥是否为线格式要求的 P-256。非 P-256 的坐标/签名长度都
+// 对不上（65 字节公钥、64 字节 r||s），继续走下去只会在深层 panic 或产出
+// 永远验不过的坏数据，因此在入口就拒绝。
+func isP256(priv *ecdsa.PrivateKey) bool {
+	return priv != nil && priv.Curve != nil &&
+		priv.Curve.Params().Name == elliptic.P256().Params().Name
 }
 
 // IdentityPublicKeyBytes 导出身份公钥（65 字节 SEC1 非压缩点）。
@@ -109,10 +135,13 @@ type LanIDAnnouncement struct {
 }
 
 // marshalUnsigned 编码记录（Version..PubKey，不含签名）。
+//
+// Caps 按 §2.2 掩掉保留位（§3.1.4 的 bit 6-7），保证签名覆盖的就是对端
+// 实际会解析到的字节。
 func (a *LanIDAnnouncement) marshalUnsigned() []byte {
 	nameBytes := []byte(a.Name)
 	buf := make([]byte, 0, 6+len(nameBytes)+PublicKeySize)
-	buf = append(buf, a.Version, byte(a.Platform), byte(a.Caps))
+	buf = append(buf, a.Version, byte(a.Platform), byte(a.Caps&CapDefinedMask))
 	var port [2]byte
 	binary.BigEndian.PutUint16(port[:], a.Port)
 	buf = append(buf, port[:]...)
@@ -124,6 +153,15 @@ func (a *LanIDAnnouncement) marshalUnsigned() []byte {
 
 // Sign 用身份私钥签名，返回完整通告（记录 + 64 字节签名）。
 func (a *LanIDAnnouncement) Sign(priv *ecdsa.PrivateKey) ([]byte, error) {
+	if !isP256(priv) {
+		return nil, errLanIDNotP256
+	}
+	if len(a.Name) > LanIDMaxNameLen {
+		return nil, errLanIDNameTooLong
+	}
+	if len(a.PubKey) != PublicKeySize {
+		return nil, fmt.Errorf("%w: must be %d bytes, got %d", errLanIDBadPubKey, PublicKeySize, len(a.PubKey))
+	}
 	unsigned := a.marshalUnsigned()
 	digest := sha256.Sum256(unsigned)
 	sig, err := signP256(priv, digest[:])
@@ -138,6 +176,9 @@ func UnmarshalLanIDAnnouncement(data []byte) (*LanIDAnnouncement, error) {
 	if len(data) < 6+PublicKeySize+lanIDSigSize {
 		return nil, errLanIDTooShort
 	}
+	if data[0] != lanIDVersion {
+		return nil, fmt.Errorf("%w: got %d", errLanIDBadVersion, data[0])
+	}
 	nameLen := int(data[5])
 	if nameLen > LanIDMaxNameLen {
 		return nil, errLanIDNameTooLong
@@ -145,6 +186,11 @@ func UnmarshalLanIDAnnouncement(data []byte) (*LanIDAnnouncement, error) {
 	unsignedLen := 6 + nameLen + PublicKeySize
 	if len(data) < unsignedLen+lanIDSigSize {
 		return nil, errLanIDTooShort
+	}
+	// 通告是定长记录：多出来的字节既没被签名覆盖，也不属于格式的一部分，
+	// 直接拒收，避免不同实现对「有效载荷边界」理解不一致。
+	if len(data) != unsignedLen+lanIDSigSize {
+		return nil, errLanIDBadLength
 	}
 	pubKey := data[6+nameLen : unsignedLen]
 	sig := data[unsignedLen : unsignedLen+lanIDSigSize]
@@ -160,7 +206,7 @@ func UnmarshalLanIDAnnouncement(data []byte) (*LanIDAnnouncement, error) {
 	return &LanIDAnnouncement{
 		Version:  data[0],
 		Platform: Platform(data[1]),
-		Caps:     CapabilityFlags(data[2]),
+		Caps:     CapabilityFlags(data[2]) & CapDefinedMask,
 		Port:     binary.BigEndian.Uint16(data[3:5]),
 		Name:     string(data[6 : 6+nameLen]),
 		PubKey:   pubKey,
@@ -187,6 +233,16 @@ func (p LanIDPeer) Key() string {
 	return hex.EncodeToString(p.PubKey)
 }
 
+// sameAnnouncement 比较两次通告的可见内容（不含时间戳），用于判断是否值得
+// 通知调用方。周期通告是常态，内容没变就不该进 Poll 队列。
+func (p LanIDPeer) sameAnnouncement(q LanIDPeer) bool {
+	return p.Name == q.Name &&
+		p.Platform == q.Platform &&
+		p.Caps == q.Caps &&
+		p.Port == q.Port &&
+		bytes.Equal(p.Addr, q.Addr)
+}
+
 // LanIDListener 聚合验签通过的通告（纯逻辑：客户端持有 UDP socket，喂字节进来）。
 type LanIDListener struct {
 	mu      sync.Mutex
@@ -200,6 +256,10 @@ func NewLanIDListener() *LanIDListener {
 }
 
 // Feed 喂入一条收到的通告字节与源 IP；验签通过则聚合，失败静默丢弃。
+//
+// data / from 的所有权归调用方：这里会拷贝公钥与地址再入表。UDP 读取循环
+// 几乎都会复用同一个接收缓冲区，若直接存切片，下一包会把已入库对端的公钥
+// 一起改掉（Windows 适配器曾踩中）。
 func (l *LanIDListener) Feed(data []byte, from net.IP) {
 	ann, err := UnmarshalLanIDAnnouncement(data)
 	if err != nil {
@@ -210,19 +270,25 @@ func (l *LanIDListener) Feed(data []byte, from net.IP) {
 		Name:        ann.Name,
 		Platform:    ann.Platform,
 		Caps:        ann.Caps,
-		Addr:        from,
+		Addr:        append(net.IP(nil), from...),
 		Port:        ann.Port,
-		PubKey:      ann.PubKey,
+		PubKey:      append([]byte(nil), ann.PubKey...),
 		Fingerprint: PublicKeyFingerprintFromBytes(ann.PubKey),
 		FirstSeen:   now,
 		LastSeen:    now,
 	}
+	key := peer.Key()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if existing, ok := l.peers[peer.Key()]; ok {
+	if existing, ok := l.peers[key]; ok {
 		peer.FirstSeen = existing.FirstSeen
+		// 周期通告只在内容真正变化时入队；LastSeen 变化不算。
+		if existing.sameAnnouncement(peer) {
+			l.peers[key] = peer
+			return
+		}
 	}
-	l.peers[peer.Key()] = peer
+	l.peers[key] = peer
 	l.pending = append(l.pending, peer)
 }
 
@@ -236,6 +302,9 @@ func (l *LanIDListener) Poll() []LanIDPeer {
 }
 
 // Peers 返回当前已知对端快照。
+//
+// 按公钥字节序排序：C 侧/客户端用「count + 第 index 个」取值，map 迭代顺序
+// 每次不同会让列表跳动、甚至在两次调用之间索引错位。
 func (l *LanIDListener) Peers() []LanIDPeer {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -243,6 +312,9 @@ func (l *LanIDListener) Peers() []LanIDPeer {
 	for _, p := range l.peers {
 		out = append(out, p)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		return string(out[i].PubKey) < string(out[j].PubKey)
+	})
 	return out
 }
 
@@ -256,6 +328,16 @@ func (l *LanIDListener) Prune(maxAge time.Duration) int {
 			delete(l.peers, k)
 			n++
 		}
+	}
+	// 已经淘汰的对端不该再通过 Poll 复活：只保留仍在对端表里的 key。
+	if n > 0 && len(l.pending) > 0 {
+		kept := l.pending[:0]
+		for _, p := range l.pending {
+			if _, ok := l.peers[p.Key()]; ok {
+				kept = append(kept, p)
+			}
+		}
+		l.pending = kept
 	}
 	return n
 }
@@ -271,6 +353,12 @@ type LanIDAnnouncer struct {
 
 // NewLanIDAnnouncer 创建通告器。
 func NewLanIDAnnouncer(ident *ecdsa.PrivateKey, platform Platform, caps CapabilityFlags, port uint16, name string) (*LanIDAnnouncer, error) {
+	if ident == nil {
+		return nil, errors.New("protocol: lanid announcer requires an identity key")
+	}
+	if !isP256(ident) {
+		return nil, errLanIDNotP256
+	}
 	if len(name) > LanIDMaxNameLen {
 		return nil, errLanIDNameTooLong
 	}
@@ -348,8 +436,14 @@ func (c *TrustChain) Append(peerID []byte, decision uint8) error {
 	if c.ident == nil {
 		return errors.New("protocol: trust chain has no identity key")
 	}
+	if !isP256(c.ident) {
+		return errLanIDNotP256
+	}
 	if len(peerID) != PublicKeySize {
 		return fmt.Errorf("%w: peer id must be %d bytes", errLanIDBadPubKey, PublicKeySize)
+	}
+	if decision != 0x00 && decision != 0x01 {
+		return fmt.Errorf("%w: got 0x%02x", errLanIDBadDecision, decision)
 	}
 	rec := TrustRecord{
 		PeerID:    append([]byte(nil), peerID...),
@@ -384,7 +478,12 @@ func (c *TrustChain) IsTrusted(peerID []byte) bool {
 	return false
 }
 
-// Verify 校验整条链：PrevHash 链接 + 每条记录由本机身份密钥签名。任一断裂返回错误。
+// Verify 校验整条链：PrevHash 链接 + 指纹一致性 + 每条记录由本机身份密钥签名。
+// 任一断裂返回错误。
+//
+// 注意：这是本机自签的本地账本，能防外部库被改、防意外损坏；持有本机私钥
+// 的人（即设备主人）仍可整条重写。它不提供跨设备共识，也不该被当成
+// 「不可篡改」的凭证。
 func (c *TrustChain) Verify() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -397,6 +496,13 @@ func (c *TrustChain) Verify() error {
 		if rec.PrevHash != prev {
 			return fmt.Errorf("protocol: trust chain broken at record %d (prevHash mismatch)", i)
 		}
+		if len(rec.PeerID) != PublicKeySize {
+			return fmt.Errorf("protocol: trust chain broken at record %d (bad peer id length)", i)
+		}
+		sum := sha256.Sum256(rec.PeerID)
+		if !bytes.Equal(rec.Fingerprint[:], sum[:FingerprintSize]) {
+			return fmt.Errorf("%w (record %d)", errLanIDChainBroken, i)
+		}
 		digest := sha256.Sum256(rec.marshalUnsigned())
 		if !verifyP256(pub, digest[:], rec.Signature) {
 			return fmt.Errorf("protocol: trust chain broken at record %d (bad signature)", i)
@@ -406,12 +512,16 @@ func (c *TrustChain) Verify() error {
 	return nil
 }
 
-// Records 返回链上记录快照。
+// Records 返回链上记录快照（切片已深拷贝，调用方改动不会污染内部链）。
 func (c *TrustChain) Records() []TrustRecord {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	out := make([]TrustRecord, len(c.records))
 	copy(out, c.records)
+	for i := range out {
+		out[i].PeerID = append([]byte(nil), c.records[i].PeerID...)
+		out[i].Signature = append([]byte(nil), c.records[i].Signature...)
+	}
 	return out
 }
 

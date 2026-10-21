@@ -43,12 +43,12 @@ const (
 	HIDKey0 uint16 = 0x27
 
 	// Special keys
-	HIDKeyEnter      uint16 = 0x28
-	HIDKeyEscape     uint16 = 0x29
-	HIDKeyBackspace  uint16 = 0x2A
-	HIDKeyTab        uint16 = 0x2B
-	HIDKeySpace      uint16 = 0x2C
-	HIDKeyCapsLock   uint16 = 0x39
+	HIDKeyEnter     uint16 = 0x28
+	HIDKeyEscape    uint16 = 0x29
+	HIDKeyBackspace uint16 = 0x2A
+	HIDKeyTab       uint16 = 0x2B
+	HIDKeySpace     uint16 = 0x2C
+	HIDKeyCapsLock  uint16 = 0x39
 
 	// Function keys
 	HIDKeyF1  uint16 = 0x3A
@@ -103,14 +103,14 @@ const (
 
 // Modifier bit masks (§6.2).
 const (
-	ModLeftCtrl  uint8 = 0x01
-	ModLeftShift uint8 = 0x02
-	ModLeftAlt   uint8 = 0x04
-	ModLeftMeta  uint8 = 0x08
-	ModRightCtrl uint8 = 0x10
+	ModLeftCtrl   uint8 = 0x01
+	ModLeftShift  uint8 = 0x02
+	ModLeftAlt    uint8 = 0x04
+	ModLeftMeta   uint8 = 0x08
+	ModRightCtrl  uint8 = 0x10
 	ModRightShift uint8 = 0x20
-	ModRightAlt  uint8 = 0x40
-	ModRightMeta uint8 = 0x80
+	ModRightAlt   uint8 = 0x40
+	ModRightMeta  uint8 = 0x80
 )
 
 // Modifier key Usage IDs from the USB HID Usage Tables (§6.1's code space).
@@ -183,6 +183,33 @@ func RemapModifiers(mods uint8, fromPlatform, toPlatform Platform) uint8 {
 	}
 
 	return result
+}
+
+// RemapModifierKey maps a modifier key's HID Usage ID between Meta-primary
+// platforms (macOS/iOS) and Ctrl-primary platforms (Windows/Linux/Android).
+//
+// RemapModifiers only rewrites the bitmask; modifier keys are also sent as
+// ordinary KEY_DOWN/KEY_UP frames. If the HID is left alone, pressing Cmd on a
+// Mac arrives at Windows as the Windows key (Win+C) instead of Ctrl+C, and
+// Ctrl+C from Windows arrives on a Mac as Control+C instead of Command+C.
+// Callers should prefer an explicit keymap rule when one matches, and use this
+// as the cross-platform fallback.
+func RemapModifierKey(hidKey uint16, fromPlatform, toPlatform Platform) uint16 {
+	if fromPlatform == toPlatform || usesMetaModifier(fromPlatform) == usesMetaModifier(toPlatform) {
+		return hidKey
+	}
+	switch hidKey {
+	case HIDKeyLCtrl:
+		return HIDKeyLMeta
+	case HIDKeyLMeta:
+		return HIDKeyLCtrl
+	case HIDKeyRCtrl:
+		return HIDKeyRMeta
+	case HIDKeyRMeta:
+		return HIDKeyRCtrl
+	default:
+		return hidKey
+	}
 }
 
 // ModifierFromSingleKey returns the modifier mask for a single modifier HID key,

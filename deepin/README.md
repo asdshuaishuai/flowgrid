@@ -308,6 +308,74 @@ Ctrl+K 键位映射、Ctrl+, 设置、Ctrl+Q 退出）。这些提示先前只�
   确认），超出 UI 范围，此处不铺。浮板全收起时提示也不在屏幕上，界面上不会出现
   按不动的键位。
 
+## 键鼠软模拟（input HAL）
+
+`src/core/input/` 是 Linux 端的键鼠捕获/注入层，对应 Windows 的 `wininput`、
+macOS 的 `InputCaptureTap`/`InputInjector`：
+
+| 文件 | 职责 |
+|---|---|
+| `input_keymap.h` | HID Usage ↔ evdev keycode、修饰位、鼠标按钮、滚轮单位。**纯 constexpr，无 Qt/无 IO** |
+| `input_engine.h/.cpp` | uinput 注入 + evdev 捕获（poll 线程、EVIOCGRAB、修饰键状态机） |
+| `../tests/input_keymap_test.cpp` | 映射表双向可逆/唯一性/抽查，任何 Linux 可跑 |
+
+设计要点（与另两端保持同一套语义）：
+
+- **单位**：滚轮 1 = 一格/行。evdev 的 `REL_WHEEL/REL_HWHEEL` 原样收发，
+  不再乘 120（协议 P11；Windows 捕获已按 `delta/120` 归一，注入乘回 120）。
+- **修饰键**：`KEY_DOWN` 载荷的掩码里出现、但目标机还没按下的修饰键，由注入侧
+  补按并记为「合成」；主键松开时释放合成位，避免 Ctrl 卡死。真实修饰键的
+  down/up 单独跟踪，互不误放。
+- **注入事件防回环**：创建虚拟设备时固定名字 `FlowGrid Virtual Input`；捕获
+  枚举 `/dev/input/event*` 时按 `EVIOCGNAME` 跳过它，注入的事件不会被自己再抓走。
+- **侧键**：协议 4/5 → `BTN_SIDE/BTN_EXTRA`；捕获反向映射，不再都当中键。
+- **独占**：`startCapture(..., grab=true)` 对识别出的键盘/鼠标做 `EVIOCGRAB`，
+  事件不再落到本机（控制端语义）。抓不到独占权时退化为旁路监听，错误写进
+  `lastError()`，不会因此启动失败。
+- **自动重复**：evdev `value == 2` 直接丢弃，由目标机自己产生重复；否则一次
+  长按会在链路上放大成两份重复。
+
+### 权限（必读）
+
+捕获读 `/dev/input/event*`，注入写 `/dev/uinput`，默认只有 root 能碰。用
+`resources/99-flowgrid-input.rules` 的 `uaccess` 标签把权限给当前登录用户
+（比加进 `input` 组范围小；后者能看到整机所有输入）：
+
+```bash
+sudo install -m 0644 deepin/resources/99-flowgrid-input.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=input
+sudo modprobe uinput          # 若 /dev/uinput 不存在
+# 重新登录（ACL 在登录时下发），然后：
+getfacl /dev/uinput /dev/input/event* | grep "$USER"
+```
+
+### 映射表单测
+
+不需要 Qt/DTK，也不需要真机权限：
+
+```bash
+g++ -std=c++17 -Wall -Wextra -Werror -Isrc/core/input \
+    tests/input_keymap_test.cpp -o /tmp/input_keymap_test
+/tmp/input_keymap_test
+# 或走 CMake：ctest -R inputkeymap
+```
+
+### 还没接上的那一根线
+
+`InputEngine` 只负责「OS 事件 ↔ HID 字段」，**不碰帧编解码**。当前 deepin 的
+传输层仍未实现（见下节），所以应用里还没有地方调用 `startCapture()`，也没有
+把收到的 `KEY_DOWN/...` 帧喂给 `injectKey()`。接传输时要做的是：
+
+1. 捕获回调拿到 `CapturedEvent` → 用 `protocolapi` 的载荷构造器（`Payloads`/
+   `parse*`，已封装 cgo 导出）+ `encodeFrame` 发出去；
+2. 收到帧 → `decodeFrame` → 按 `FrameType` 调 `injectKey/injectMouseMove/
+   injectMouseButton/injectScroll`；
+3. 连接建立/断开时 `startCapture(true)` / `stopCapture()`，注入侧
+   `startInjection()`。**会话断开但进程继续运行时调 `releaseAll()`**——补发
+   KEY_UP/MOUSEUP 比销毁重建 uinput 设备温和，不会让目标机重新枚举输入设备；
+   只有进程退出/彻底停用注入时才 `stopInjection()`。
+
 ## 当前边界（尚未接通的部分）
 
 这些是**有意留白**，不是遗漏。传输层（L3：DTLS / UDP / mDNS / BLE）完全未实现，

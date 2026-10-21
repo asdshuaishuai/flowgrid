@@ -1,0 +1,20 @@
+# FlowGrid — 键鼠共享 HAL 的设备权限（Linux）。
+#
+# 捕获读 /dev/input/event*，注入写 /dev/uinput。两者默认都只有 root 能碰。
+# 这里用 udev 的 uaccess 标签把访问权给「当前 seat 上的登录用户」——比把用户
+# 加进 input 组范围小：input 组能看到整台机器的所有输入设备，uaccess 只覆盖
+# 活跃会话。
+#
+# 安装（发行版不该由应用自己改 /etc，所以留给用户/打包脚本）：
+#   sudo install -m 0644 deepin/resources/99-flowgrid-input.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger --subsystem-match=input
+#   sudo modprobe uinput      # 若 /dev/uinput 还不存在
+# 重新登录后生效（ACL 在登录时下发）。
+#
+# 验证：
+#   getfacl /dev/uinput /dev/input/event*   # 应看到当前用户带 rw 的 ACL
+
+KERNEL=="uinput", SUBSYSTEM=="misc", MODE="0660", TAG+="uaccess", OPTIONS+="static_node=uinput"
+
+SUBSYSTEM=="input", KERNEL=="event*", TAG+="uaccess"
