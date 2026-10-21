@@ -17,6 +17,16 @@ public final class GoFileReceiver: @unchecked Sendable {
         public let errorCode: Int
     }
 
+    /// 入站传输进度的非破坏性快照（可每帧调用，不清终态、不消费文件数据）。
+    public struct Progress: Equatable, Sendable {
+        /// 0 空闲 / 1 传输中 / 2 完成 / 3 失败（终态由 `takeComplete()` 消费）。
+        public let state: Int
+        public let receivedBytes: Int
+        public let totalBytes: Int
+        /// 失败时的 §12 协议错误码；否则 0。
+        public let errorCode: Int
+    }
+
     private let handle: Int
 
     public init() throws {
@@ -82,6 +92,32 @@ public final class GoFileReceiver: @unchecked Sendable {
             data: payload,
             errorCode: Int(outErr)
         )
+    }
+
+    /// 非破坏性读取入站传输进度，可每帧调用；句柄失效返回 nil。
+    /// 轮询不清终态、不消费待取的文件数据（终态由 `takeComplete()` 取走）。
+    public func pollProgress() -> Progress? {
+        var outState: Int32 = 0
+        var outReceived: Int32 = 0
+        var outTotal: Int32 = 0
+        var outErr: Int32 = 0
+        let rc: Int32 = fg_file_receiver_poll(handle, &outState, &outReceived, &outTotal, &outErr)
+        guard rc == 0 else { return nil }
+        return Progress(
+            state: Int(outState),
+            receivedBytes: Int(outReceived),
+            totalBytes: Int(outTotal),
+            errorCode: Int(outErr)
+        )
+    }
+
+    /// offer / 完成事件因队列上限被挤掉的累计条数。完成事件丢失会连带丢掉文件
+    /// 数据；任一非 0 都说明客户端轮询太慢，应提高轮询频率或先 drain 再处理 UI。
+    public func droppedCounts() -> (offers: Int, completes: Int) {
+        var outOffers: Int32 = 0
+        var outCompletes: Int32 = 0
+        fg_file_receiver_dropped(handle, &outOffers, &outCompletes)
+        return (Int(outOffers), Int(outCompletes))
     }
 
     deinit {

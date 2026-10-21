@@ -121,6 +121,70 @@ final class FFISessionTests {
         #expect(first.data == payload)
     }
 
+    // MARK: - 剪贴板只读历史（会话队列）
+
+    @Test func clipboardHistoryView() throws {
+        GoSession.setSink(true)
+        let outgoing = try GoClipboardSession()
+        let incoming = try GoClipboardSession()
+        let (s1, s2, r1, r2) = try makeTrackers()
+
+        func roundTrip() throws {
+            _ = try drain(senderToReceiver: s1, receiverToSender: s2, receiverChecker: r1, senderChecker: r2) { type, body in
+                #expect(type == FGFrameType.clipboard)
+                try incoming.handleFrame(body)
+            }
+        }
+
+        #expect(incoming.droppedCount() == 0, "未溢出前 dropped 为 0")
+        #expect(incoming.historyCount() == 0, "空会话历史为 0")
+
+        let first = Data("first-entry".utf8)
+        try outgoing.send(mime: "text/plain", data: first)
+        try roundTrip()
+
+        #expect(incoming.pendingCount() >= 1, "重组完成应入 pending 队列")
+        #expect(incoming.historyCount() == 1, "同一份数据也应入只读历史")
+
+        let e0 = try #require(incoming.history(at: 0))
+        #expect(e0.mime == "text/plain")
+        #expect(e0.data == first)
+        #expect(e0.seq >= 1, "seq 从 1 起单调递增")
+        #expect(e0.receivedAtMs > 0, "receivedAtMs 为 Unix 毫秒时间戳")
+
+        // 非破坏性：反复读同一索引不变；越界返回 nil
+        #expect(incoming.history(at: 0) == e0, "反复读取不变")
+        #expect(incoming.history(at: 1) == nil, "越界返回 nil")
+        #expect(incoming.history(at: -1) == nil, "负索引返回 nil")
+
+        // takePending 消费 pending 但不影响历史
+        let taken = try #require(incoming.takePending())
+        #expect(taken.data == first)
+        #expect(incoming.pendingCount() == 0, "取走后 pending 空")
+        #expect(incoming.historyCount() == 1, "takePending 不动历史")
+        #expect(incoming.history(at: 0)?.data == first, "历史条目仍在")
+
+        // 第二条：历史累积、seq 单调递增、0 = 最旧
+        let second = Data("second-entry".utf8)
+        try outgoing.send(mime: "text/plain", data: second)
+        try roundTrip()
+        #expect(incoming.historyCount() == 2)
+        let h0 = try #require(incoming.history(at: 0))
+        let h1 = try #require(incoming.history(at: 1))
+        #expect(h0.data == first, "0 = 最旧")
+        #expect(h1.data == second, "1 = 最新")
+        #expect(h1.seq > h0.seq, "seq 单调递增")
+
+        // clearHistory 清空只读历史，pending 不受影响（此刻 pending 有 second）
+        #expect(incoming.pendingCount() == 1)
+        incoming.clearHistory()
+        #expect(incoming.historyCount() == 0, "clearHistory 清空只读历史")
+        #expect(incoming.history(at: 0) == nil)
+        #expect(incoming.pendingCount() == 1, "clearHistory 不动 pending")
+        let stillThere = try #require(incoming.takePending())
+        #expect(stillThere.data == second)
+    }
+
     // MARK: - 文件传输往返
 
     @Test func fileTransferRoundTrip() throws {
@@ -175,6 +239,65 @@ final class FFISessionTests {
         #expect(completion.errorCode == 0, "SHA-256 校验应通过")
         #expect(completion.name == "report.pdf")
         #expect(completion.data == fileData)
+    }
+
+    // MARK: - 文件接收进度（非破坏性快照）
+
+    @Test func fileReceiverProgress() throws {
+        GoSession.setSink(true)
+        let sender = try GoFileSender()
+        let receiver = try GoFileReceiver()
+        let (s1, s2, r1, r2) = try makeTrackers()
+
+        // 空闲态快照 + 无溢出
+        let idle = try #require(receiver.pollProgress())
+        #expect(idle.state == 0, "初始为空闲")
+        #expect(idle.receivedBytes == 0 && idle.totalBytes == 0)
+        #expect(idle.errorCode == 0)
+        #expect(receiver.droppedCounts() == (offers: 0, completes: 0), "无溢出")
+
+        let fileData = Data((0..<3_000).map { UInt8($0 % 256) })
+        _ = try sender.offer(name: "report.pdf", data: fileData)
+
+        // 先递交 offer 并接受
+        _ = try drain(senderToReceiver: s1, receiverToSender: s2, receiverChecker: r1, senderChecker: r2) { type, body in
+            _ = try receiver.handleFrame(frameType: type, payload: body)
+        }
+        try receiver.accept(id: (try #require(receiver.takeOffer())).id)
+
+        // 驱动传输，直到接收侧进度进入终态（2 完成 / 3 失败）
+        var finalProgress: GoFileReceiver.Progress?
+        for _ in 0..<500 {
+            _ = try drain(senderToReceiver: s1, receiverToSender: s2, receiverChecker: r1, senderChecker: r2) { type, body in
+                switch type {
+                case FGFrameType.fileAck, FGFrameType.fileAbort:
+                    try sender.handleFrame(frameType: type, payload: body)
+                case FGFrameType.fileOffer, FGFrameType.fileChunk:
+                    _ = try receiver.handleFrame(frameType: type, payload: body)
+                default:
+                    Issue.record("文件传输不应出现帧类型 \(type)")
+                }
+            }
+            _ = try sender.pump(maxChunks: 8)
+            if let p = receiver.pollProgress(), p.state == 2 || p.state == 3 {
+                finalProgress = p
+                break
+            }
+        }
+
+        let prog = try #require(finalProgress, "传输应进入终态")
+        #expect(prog.state == 2, "应成功完成")
+        #expect(prog.receivedBytes == fileData.count, "received 应等于总字节")
+        #expect(prog.totalBytes == fileData.count)
+        #expect(prog.errorCode == 0)
+
+        // 非破坏性：终态轮询不清（takeComplete 才消费）
+        #expect(receiver.pollProgress()?.state == 2, "轮询不清终态")
+
+        let completion = try #require(receiver.takeComplete())
+        #expect(completion.errorCode == 0, "SHA-256 校验通过")
+        #expect(completion.data == fileData)
+        #expect(receiver.droppedCounts() == (offers: 0, completes: 0), "无溢出")
     }
 
     // MARK: - 帧校验错误码语义（未知类型 0x11）
