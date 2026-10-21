@@ -75,7 +75,7 @@ final class LanIDLink: @unchecked Sendable {
         }
         wire.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return }
-            withUnsafePointer(to: &addr) { ptr in
+            _ = withUnsafePointer(to: &addr) { ptr in
                 ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
                     sendto(sendSocket, base, wire.count, 0, sa, socklen_t(MemoryLayout<sockaddr_in>.size))
                 }
