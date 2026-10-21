@@ -407,6 +407,56 @@ bool ClipboardSession::takePending(QString *mime, QByteArray *data)
     return true;
 }
 
+int ClipboardSession::pendingCount() const
+{
+    return fg_clipboard_pending_count(id_);
+}
+
+int ClipboardSession::droppedCount() const
+{
+    return fg_clipboard_dropped(id_);
+}
+
+int ClipboardSession::historyCount() const
+{
+    return fg_clipboard_history_count(id_);
+}
+
+bool ClipboardSession::historyAt(int index, QString *mime, QByteArray *data,
+                                 std::uint64_t *seq, std::int64_t *receivedAtMs) const
+{
+    std::uint8_t *mimeBuf = nullptr;
+    std::size_t mimeLen = 0;
+    std::uint8_t *dataBuf = nullptr;
+    std::size_t dataLen = 0;
+    std::uint64_t entrySeq = 0;
+    std::int64_t entryMs = 0;
+    if (fg_clipboard_history_get(id_, index, &mimeBuf, &mimeLen, &dataBuf, &dataLen,
+                                 &entrySeq, &entryMs) != 1) {
+        return false;
+    }
+    GoBuffer ownedMime(mimeBuf, mimeLen);
+    GoBuffer ownedData(dataBuf, dataLen);
+    if (mime != nullptr) {
+        *mime = QString::fromUtf8(ownedMime.toByteArray());
+    }
+    if (data != nullptr) {
+        *data = ownedData.toByteArray();
+    }
+    if (seq != nullptr) {
+        *seq = entrySeq;
+    }
+    if (receivedAtMs != nullptr) {
+        *receivedAtMs = entryMs;
+    }
+    return true;
+}
+
+void ClipboardSession::clearHistory()
+{
+    fg_clipboard_history_clear(id_);
+}
+
 // ── FileSender ────────────────────────────────────────────────────────
 FileSender::FileSender() : id_(fg_file_sender_new()) {}
 
@@ -561,6 +611,46 @@ bool FileReceiver::takeComplete(QString *outName, QByteArray *outData, int *outE
     }
     if (outErrCode != nullptr) {
         *outErrCode = code;
+    }
+    return true;
+}
+
+bool FileReceiver::poll(State *outState, int *outReceivedBytes, int *outTotalBytes, int *outErrCode)
+{
+    int state = 0;
+    int received = 0;
+    int total = 0;
+    int code = 0;
+    if (fg_file_receiver_poll(id_, &state, &received, &total, &code) != 0) {
+        return false;
+    }
+    if (outState != nullptr) {
+        *outState = static_cast<State>(state);
+    }
+    if (outReceivedBytes != nullptr) {
+        *outReceivedBytes = received;
+    }
+    if (outTotalBytes != nullptr) {
+        *outTotalBytes = total;
+    }
+    if (outErrCode != nullptr) {
+        *outErrCode = code;
+    }
+    return true;
+}
+
+bool FileReceiver::droppedCounts(int *outOffers, int *outCompletes) const
+{
+    int offers = 0;
+    int completes = 0;
+    if (fg_file_receiver_dropped(id_, &offers, &completes) != 0) {
+        return false;
+    }
+    if (outOffers != nullptr) {
+        *outOffers = offers;
+    }
+    if (outCompletes != nullptr) {
+        *outCompletes = completes;
     }
     return true;
 }

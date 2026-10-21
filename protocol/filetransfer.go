@@ -501,12 +501,13 @@ func (s *FileSender) finish(id *uint16, err error) {
 // --- Receive side ---
 
 type fileInTransfer struct {
-	offer     FileOffer
-	accepted  bool
-	chunks    [][]byte
-	received  int
-	created   time.Time
-	lastMove  time.Time
+	offer         FileOffer
+	accepted      bool
+	chunks        [][]byte
+	received      int
+	receivedBytes int
+	created       time.Time
+	lastMove      time.Time
 }
 
 // FileReceiver receives one file at a time (spec 7.4).
@@ -520,6 +521,10 @@ type FileReceiver struct {
 	// OnOffer fires for every inbound FILE_OFFER; the app must eventually
 	// call Accept or Reject (GUI prompt). Required for transfers to proceed.
 	OnOffer func(offer FileOffer)
+	// OnProgress reports bytes received for the active transfer. Optional.
+	// Called outside the receiver lock, so it may safely call back into the
+	// receiver (e.g. Abort). Duplicate chunks do not produce progress reports.
+	OnProgress func(offer FileOffer, received, total int)
 	// OnComplete delivers a verified file, or the failure reason. Optional.
 	OnComplete func(offer FileOffer, data []byte, err error)
 
@@ -624,12 +629,23 @@ func (r *FileReceiver) handleChunk(payload []byte) error {
 	}
 	t.chunks[chunk.ChunkIdx] = chunk.Data
 	t.received++
+	t.receivedBytes += len(chunk.Data)
 	t.lastMove = now
 	finished := t.received == len(t.chunks)
 	if finished {
 		r.active = nil
 	}
+	onProgress := r.OnProgress
+	total := int(t.offer.Size)
+	got := t.receivedBytes
+	offer := t.offer
 	r.mu.Unlock()
+
+	// Report progress after releasing the lock: the callback may render UI or
+	// call Abort, and re-entering the receiver must not deadlock.
+	if onProgress != nil {
+		onProgress(offer, got, total)
+	}
 
 	if !finished {
 		return nil

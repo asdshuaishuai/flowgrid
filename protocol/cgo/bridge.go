@@ -19,6 +19,19 @@ package main
 // It never returns a negative value: it takes no handle, so there is no
 // "invalid handle" case to report. Error codes can be turned into text with
 // fg_error_string.
+//
+// Session pollers are bounded FIFO queues, not single slots. Clipboard pending
+// holds 200 entries (oldest dropped first); fg_clipboard_pending_count and
+// fg_clipboard_dropped expose backlog and lost entries. The clipboard history
+// is a separate non-destructive view of the latest 50 entries: index 0 is the
+// oldest, entries carry a monotonic seq and Unix-ms receive time, and
+// fg_clipboard_take_pending does not remove them.
+//
+// FileReceiver offer/complete events are queued (4 entries each, completions
+// also capped at 64 MiB); fg_file_receiver_dropped reports overflow. The
+// completion queue owns the file data until fg_file_receiver_take_complete.
+// fg_file_receiver_poll is non-destructive: state 0 idle / 1 active / 2 done /
+// 3 failed, plus received/total bytes and an error code.
 #include <stdlib.h>
 #include <stdint.h>
 */
@@ -965,8 +978,23 @@ func fg_identify_response_encode(status C.uint8_t, platform C.uint8_t, caps C.ui
 // 上限 63,240 B，最坏是十几 MB 的短时驻留，而 C 侧一开面板就会把队列取空。
 const clipInboxMax = 200
 
+// clipHistoryMax 对应设计稿「同步历史 · 保留最近 50 条」。历史是只读视图，
+// 与 pending 队列分开：take_pending 取走不影响历史，UI 的列表/计数徽章可以
+// 各自重复读取同一份数据。
+const clipHistoryMax = 50
+
+// clipEntry 是历史里的一条。seq 单调递增，客户端可用它去重/判断是否已被
+// 50 条上限挤出；receivedAt 是重组完成的本机时间，相对时间从它算起，而不是
+// 从 UI 第一次看到它算起。
+type clipEntry struct {
+	seq        uint64
+	receivedAt time.Time
+	clip       protocol.Clipboard
+}
+
 // clipSession 包装 ClipboardSession，并把重组完成的剪贴板按到达顺序排队，
 // 供 fg_clipboard_take_pending 逐条取走——客户端那边是一个 while 循环。
+// 同一份数据同时进有界历史（clipHistoryMax），供只读接口反复读取。
 //
 // 早先这里只有一个槽位（新的直接盖掉旧的），于是面板没开着的时候，除最后一条
 // 以外全部的下行剪贴板都无声消失了，「同步历史」等于只留一条。
@@ -975,6 +1003,9 @@ type clipSession struct {
 
 	mu      sync.Mutex
 	pending []protocol.Clipboard
+	history []clipEntry
+	nextSeq uint64
+	dropped int // pending 满时被挤掉的最旧条数
 }
 
 // popPending 取走最早的一条；调用方必须已持锁。取出后要清掉尾槽——只把切片
@@ -1082,15 +1113,35 @@ func fg_session_poll_out(outType *C.uint8_t, outPayload **C.uint8_t, outLen *C.s
 	return 1
 }
 
+// pushHistoryLocked 追加一条历史并维持 50 条上限；调用方必须已持锁。
+func (cs *clipSession) pushHistoryLocked(c protocol.Clipboard) {
+	if len(cs.history) >= clipHistoryMax {
+		copy(cs.history, cs.history[1:])
+		cs.history[len(cs.history)-1] = clipEntry{}
+		cs.history = cs.history[:len(cs.history)-1]
+	}
+	cs.nextSeq++
+	cs.history = append(cs.history, clipEntry{
+		seq:        cs.nextSeq,
+		receivedAt: time.Now(),
+		clip:       c,
+	})
+}
+
 //export fg_clipboard_session_new
 func fg_clipboard_session_new() uintptr {
 	cs := &clipSession{sess: protocol.NewClipboardSession(emitFrame)}
 	cs.sess.OnClipboard = func(c protocol.Clipboard) {
+		// 会话层可能在回调返回后复用底层缓冲；队列与历史都直接持有它，
+		// 所以这里先拷一份，后面两个结构共享同一个不可变副本。
+		c.Data = append([]byte(nil), c.Data...)
 		cs.mu.Lock()
 		if len(cs.pending) >= clipInboxMax {
 			cs.popPending() // 队列满：先腾掉最旧的一条
+			cs.dropped++
 		}
 		cs.pending = append(cs.pending, c)
+		cs.pushHistoryLocked(c)
 		cs.mu.Unlock()
 	}
 	return clipSessions.put(cs)
@@ -1166,6 +1217,101 @@ func takePendingClipboard(handle uintptr) (protocol.Clipboard, bool) {
 	c, ok := cs.popPending()
 	cs.mu.Unlock()
 	return c, ok
+}
+
+// clipboardPendingStats 返回待取条数与被溢出挤掉的累计条数。抽成普通函数，
+// 让不碰 C 指针的测试能直接验证「满了丢最旧并且能看见丢了多少」。
+func clipboardPendingStats(handle uintptr) (pending, dropped int) {
+	cs, ok := clipSessions.get(handle)
+	if !ok {
+		return 0, 0
+	}
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return len(cs.pending), cs.dropped
+}
+
+// clipboardHistoryEntry 按「0 = 最旧」取一条历史。返回的 clip.Data 与内部
+// 历史共享底层数组，调用方只读；导出函数会立刻拷进 C 缓冲，测试也只看不改。
+func clipboardHistoryEntry(handle uintptr, index int) (clipEntry, bool) {
+	cs, ok := clipSessions.get(handle)
+	if !ok {
+		return clipEntry{}, false
+	}
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if index < 0 || index >= len(cs.history) {
+		return clipEntry{}, false
+	}
+	return cs.history[index], true
+}
+
+// clipboardHistoryCount 返回当前保留的历史条数（0..clipHistoryMax）。
+func clipboardHistoryCount(handle uintptr) int {
+	cs, ok := clipSessions.get(handle)
+	if !ok {
+		return 0
+	}
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return len(cs.history)
+}
+
+//export fg_clipboard_pending_count
+func fg_clipboard_pending_count(handle uintptr) C.int {
+	pending, _ := clipboardPendingStats(handle)
+	return C.int(pending)
+}
+
+// fg_clipboard_dropped 返回 pending 队列因满而被挤掉的累计条数。非 0 表示
+// 客户端轮询太慢、确实丢过数据；历史视图不受影响。
+//
+//export fg_clipboard_dropped
+func fg_clipboard_dropped(handle uintptr) C.int {
+	_, dropped := clipboardPendingStats(handle)
+	return C.int(dropped)
+}
+
+// fg_clipboard_history_count 返回历史条数；0 表示句柄无效或历史为空。
+//
+//export fg_clipboard_history_count
+func fg_clipboard_history_count(handle uintptr) C.int {
+	return C.int(clipboardHistoryCount(handle))
+}
+
+// 按「0 = 最旧」读一条历史，返回 1 表示取到；MIME 与数据都需用
+// fg_free_buffer 释放。读取是非破坏性的：同一索引可以反复读，也不影响
+// fg_clipboard_take_pending。outSeq 单调递增，客户端可据此去重；
+// outReceivedAtMs 是重组完成时的 Unix 毫秒时间戳。
+//
+//export fg_clipboard_history_get
+func fg_clipboard_history_get(handle uintptr, index C.int, outMime **C.uint8_t, outMimeLen *C.size_t, outData **C.uint8_t, outDataLen *C.size_t, outSeq *C.uint64_t, outReceivedAtMs *C.int64_t) C.int {
+	e, ok := clipboardHistoryEntry(handle, int(index))
+	if !ok {
+		return 0
+	}
+	mime := []byte(e.clip.MIMEType)
+	*outMimeLen = C.size_t(len(mime))
+	*outDataLen = C.size_t(len(e.clip.Data))
+	*outMime = cBuffer(mime)
+	*outData = cBuffer(e.clip.Data)
+	*outSeq = C.uint64_t(e.seq)
+	*outReceivedAtMs = C.int64_t(e.receivedAt.UnixMilli())
+	return 1
+}
+
+// 清空只读历史，pending 队列保持不动；seq 继续递增，避免旧 UI 快照把新条目
+// 误认成已经见过的序号。
+//
+//export fg_clipboard_history_clear
+func fg_clipboard_history_clear(handle uintptr) {
+	cs, ok := clipSessions.get(handle)
+	if !ok {
+		return
+	}
+	cs.mu.Lock()
+	cs.history = nil
+	cs.mu.Unlock()
 }
 
 var (
@@ -1300,44 +1446,129 @@ func fg_file_sender_poll(handle uintptr, outState *C.int, outSent *C.int, outTot
 	return 0
 }
 
-// fileReceiver 包装 FileReceiver，并暂存「收到 offer」与「完成/失败」两类结果。
+// fileInboxMax 限制待取 offer / 完成事件条数；fileInboxBytesMax 另外限制
+// 完成队列里驻留的文件字节数。单个文件最大 16 MiB，条数上限若取大值，客户端
+// 不轮询时会把内存拖到几百 MB，所以两个上限都要有。满时丢最旧的一条并累加
+// dropped 计数——不再像早先的单槽位那样无声覆盖。
+const (
+	fileInboxMax      = 4
+	fileInboxBytesMax = 64 << 20
+)
+
+// receiver 的进度状态沿用 sender 的四态，C 侧一套枚举即可。
+const (
+	fileReceiverIdle   = fileSenderIdle
+	fileReceiverActive = fileSenderActive
+	fileReceiverDone   = fileSenderDone
+	fileReceiverFailed = fileSenderFailed
+)
+
+type fileComplete struct {
+	offer   protocol.FileOffer
+	data    []byte
+	errCode int
+}
+
+// fileReceiver 包装 FileReceiver，并把 offer / 完成事件排队；进度是独立的
+// 非破坏性快照，供 fg_file_receiver_poll 读取。
 type fileReceiver struct {
 	sess *protocol.FileReceiver
 
-	mu       sync.Mutex
-	offer    *protocol.FileOffer
-	complete *protocol.FileOffer
-	data     []byte
+	mu               sync.Mutex
+	offers           []protocol.FileOffer
+	completes        []fileComplete
+	completeBytes    int
+	droppedOffers    int
+	droppedCompletes int
+
+	state    int
+	received int
+	total    int
 	errCode  int
-	hasDone  bool
 }
 
-func (fr *fileReceiver) takeOffer() *protocol.FileOffer {
+func (fr *fileReceiver) takeOffer() (protocol.FileOffer, bool) {
 	fr.mu.Lock()
 	defer fr.mu.Unlock()
-	o := fr.offer
-	fr.offer = nil
-	return o
+	if len(fr.offers) == 0 {
+		return protocol.FileOffer{}, false
+	}
+	o := fr.offers[0]
+	copy(fr.offers, fr.offers[1:])
+	fr.offers[len(fr.offers)-1] = protocol.FileOffer{}
+	fr.offers = fr.offers[:len(fr.offers)-1]
+	return o, true
+}
+
+func (fr *fileReceiver) takeComplete() (fileComplete, bool) {
+	fr.mu.Lock()
+	defer fr.mu.Unlock()
+	if len(fr.completes) == 0 {
+		return fileComplete{}, false
+	}
+	c := fr.completes[0]
+	copy(fr.completes, fr.completes[1:])
+	fr.completes[len(fr.completes)-1] = fileComplete{}
+	fr.completes = fr.completes[:len(fr.completes)-1]
+	fr.completeBytes -= len(c.data)
+	if len(fr.completes) == 0 {
+		// 终态事件已被取走，进度归零，下一路传输不会带着上一路的 100%。
+		fr.state, fr.received, fr.total, fr.errCode = fileReceiverIdle, 0, 0, 0
+	}
+	return c, true
+}
+
+// progressSnapshot 只读当前进度，不消费终态；终态由 take_complete 消费。
+func (fr *fileReceiver) progressSnapshot() (state, received, total, code int) {
+	fr.mu.Lock()
+	defer fr.mu.Unlock()
+	return fr.state, fr.received, fr.total, fr.errCode
 }
 
 //export fg_file_receiver_new
 func fg_file_receiver_new() uintptr {
 	fr := &fileReceiver{sess: protocol.NewFileReceiver(emitFrame)}
 	fr.sess.OnOffer = func(offer protocol.FileOffer) {
-		cpy := offer
 		fr.mu.Lock()
-		fr.offer = &cpy
+		if len(fr.offers) >= fileInboxMax {
+			copy(fr.offers, fr.offers[1:])
+			fr.offers[len(fr.offers)-1] = protocol.FileOffer{}
+			fr.offers = fr.offers[:len(fr.offers)-1]
+			fr.droppedOffers++
+		}
+		fr.offers = append(fr.offers, offer)
+		fr.mu.Unlock()
+	}
+	fr.sess.OnProgress = func(offer protocol.FileOffer, received, total int) {
+		fr.mu.Lock()
+		fr.state, fr.received, fr.total, fr.errCode = fileReceiverActive, received, total, 0
 		fr.mu.Unlock()
 	}
 	fr.sess.OnComplete = func(offer protocol.FileOffer, data []byte, err error) {
-		cpy := offer
-		fr.mu.Lock()
-		fr.complete = &cpy
-		fr.data = data
-		fr.hasDone = true
-		fr.errCode = 0
+		// data 归接收方所有，但队列可能比调用方活得更久；拷一份，避免上层
+		// 复用缓冲时把已排队的文件改坏。
+		cp := append([]byte(nil), data...)
+		code := 0
 		if err != nil {
-			fr.errCode = errCode(err)
+			code = errCode(err)
+		}
+		fr.mu.Lock()
+		for len(fr.completes) >= fileInboxMax ||
+			(fr.completeBytes+len(cp) > fileInboxBytesMax && len(fr.completes) > 0) {
+			fr.completeBytes -= len(fr.completes[0].data)
+			copy(fr.completes, fr.completes[1:])
+			fr.completes[len(fr.completes)-1] = fileComplete{}
+			fr.completes = fr.completes[:len(fr.completes)-1]
+			fr.droppedCompletes++
+		}
+		fr.completes = append(fr.completes, fileComplete{offer: offer, data: cp, errCode: code})
+		fr.completeBytes += len(cp)
+		fr.errCode = code
+		if err != nil {
+			fr.state = fileReceiverFailed
+		} else {
+			fr.state = fileReceiverDone
+			fr.received, fr.total = len(cp), int(offer.Size)
 		}
 		fr.mu.Unlock()
 	}
@@ -1379,8 +1610,8 @@ func fg_file_receiver_take_offer(handle uintptr, outID *C.uint16_t, outName **C.
 	if !ok {
 		return 0
 	}
-	o := fr.takeOffer()
-	if o == nil {
+	o, ok := fr.takeOffer()
+	if !ok {
 		return 0
 	}
 	*outID = C.uint16_t(o.TransferID)
@@ -1424,22 +1655,53 @@ func fg_file_receiver_take_complete(handle uintptr, outName **C.uint8_t, outName
 	if !ok {
 		return 0
 	}
-	fr.mu.Lock()
-	o := fr.complete
-	data := fr.data
-	code := fr.errCode
-	fr.complete, fr.data, fr.hasDone, fr.errCode = nil, nil, false, 0
-	fr.mu.Unlock()
-	if o == nil {
+	c, ok := fr.takeComplete()
+	if !ok {
 		return 0
 	}
-	*outErr = C.int(code)
-	nb := []byte(o.Name)
+	*outErr = C.int(c.errCode)
+	nb := []byte(c.offer.Name)
 	*outNameLen = C.size_t(len(nb))
 	*outName = cBuffer(nb)
-	*outDataLen = C.size_t(len(data))
-	*outData = cBuffer(data)
+	*outDataLen = C.size_t(len(c.data))
+	*outData = cBuffer(c.data)
 	return 1
+}
+
+// fg_file_receiver_poll 读数入站传输进度，非破坏性，可每帧调用。
+// state: 0 空闲 / 1 传输中 / 2 完成 / 3 失败。终态由
+// fg_file_receiver_take_complete 消费；轮询本身不会清掉待取的文件数据。
+// 返回 -1 表示句柄无效，0 表示成功。
+//
+//export fg_file_receiver_poll
+func fg_file_receiver_poll(handle uintptr, outState *C.int, outReceived *C.int, outTotal *C.int, outErr *C.int) C.int {
+	fr, ok := fileReceivers.get(handle)
+	if !ok {
+		return -1
+	}
+	state, received, total, code := fr.progressSnapshot()
+	*outState = C.int(state)
+	*outReceived = C.int(received)
+	*outTotal = C.int(total)
+	*outErr = C.int(code)
+	return 0
+}
+
+// fg_file_receiver_dropped 返回 offer / 完成事件因队列上限被挤掉的累计条数。
+// 任一非 0 都说明客户端轮询太慢、确实丢过事件（完成事件丢失会连带丢掉文件
+// 数据），应提高轮询频率或先 drain 再处理 UI。
+//
+//export fg_file_receiver_dropped
+func fg_file_receiver_dropped(handle uintptr, outOffers *C.int, outCompletes *C.int) C.int {
+	fr, ok := fileReceivers.get(handle)
+	if !ok {
+		return -1
+	}
+	fr.mu.Lock()
+	*outOffers = C.int(fr.droppedOffers)
+	*outCompletes = C.int(fr.droppedCompletes)
+	fr.mu.Unlock()
+	return 0
 }
 
 // --- LanID 身份密钥（ECDSA P-256，持久） ---

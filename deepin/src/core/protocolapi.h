@@ -162,8 +162,9 @@ private:
 // ── 会话层：ClipboardSession / FileSender / FileReceiver ──────────────
 //
 // 设计上刻意不传回调函数指针：Go 侧的回调无法直接跨 C ABI，改成「Go 缓存
-// 结果、C 侧轮询」。三个类的终态都是「读一次即清」，所以 UI 只需在自己的
-// 定时器里 poll，不会重复弹提示。
+// 结果、C 侧轮询」。事件队列有界（剪贴板 200 条、文件事件各 4 条），终态事件
+// 仍是「读一次即清」；进度轮询（FileSender::poll / FileReceiver::poll）只读，
+// UI 可以每帧调用。
 
 // 剪贴板同步会话（PROTOCOL.md §5.3）。
 class ClipboardSession {
@@ -187,6 +188,17 @@ public:
     // 取一份重组完成的剪贴板；没有则返回 false。
     // mime / data 均为拷贝，不涉及 Go 缓冲所有权。
     bool takePending(QString *mime, QByteArray *data);
+
+    // 待取队列积压条数 / 因队列满被挤掉的累计条数。drops>0 说明轮询太慢。
+    int pendingCount() const;
+    int droppedCount() const;
+
+    // 只读历史：最近 50 条，index=0 为最旧；同一索引可反复读，也不影响
+    // takePending。seq 单调递增，receivedAtMs 是重组完成时的 Unix 毫秒时间。
+    int historyCount() const;
+    bool historyAt(int index, QString *mime, QByteArray *data,
+                   std::uint64_t *seq = nullptr, std::int64_t *receivedAtMs = nullptr) const;
+    void clearHistory();
 
 private:
     unsigned long long id_ = 0;
@@ -233,6 +245,9 @@ struct FileOffer {
 
 class FileReceiver {
 public:
+    // 与 FileSender::State 同序，UI 可共用一套进度渲染。
+    enum class State { Idle = 0, Streaming = 1, Done = 2, Failed = 3 };
+
     FileReceiver();
     ~FileReceiver();
 
@@ -255,6 +270,13 @@ public:
 
     // 取一次终态结果（完成或失败）。errCode 非 0 表示失败，data 为空。
     bool takeComplete(QString *outName, QByteArray *outData, int *outErrCode);
+
+    // 入站进度，非破坏性：可每帧调用；终态仍由 takeComplete 消费。
+    bool poll(State *outState, int *outReceivedBytes, int *outTotalBytes, int *outErrCode);
+
+    // offer / 完成事件因队列上限被挤掉的累计条数。任意非 0 表示客户端
+    // drain 太慢，完成事件丢失会连带丢掉文件数据。
+    bool droppedCounts(int *outOffers, int *outCompletes) const;
 
 private:
     unsigned long long id_ = 0;

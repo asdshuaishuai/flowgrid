@@ -48,9 +48,52 @@ func newFilePair() *filePair {
 	return p
 }
 
+// 入站进度要和发送侧一样报「真实已收字节」，且只增不减。UI 用它在
+// FilesPanel 里画 24% / 速率 / 剩余时间；只报 chunk 数会让末段不满时算错。
+func TestFileReceiverProgressIsRealAndMonotonic(t *testing.T) {
+	p := newFilePair()
+	var reports [][2]int
+	p.receiver.OnProgress = func(_ FileOffer, received, total int) {
+		reports = append(reports, [2]int{received, total})
+	}
+
+	data := make([]byte, 1000) // 5 段（249 B/段），末段只有 4 B
+	if _, err := p.sender.OfferFile("report.txt", data); err != nil {
+		t.Fatalf("OfferFile: %v", err)
+	}
+	for i := 0; i < 100; i++ {
+		n, err := p.sender.Pump(1)
+		if err != nil {
+			t.Fatalf("Pump: %v", err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+
+	if len(reports) == 0 {
+		t.Fatal("接收侧一次进度都没报")
+	}
+	prev := 0
+	for i, r := range reports {
+		if r[0] < prev {
+			t.Errorf("第 %d 次进度回退：%d -> %d", i, prev, r[0])
+		}
+		if r[1] != len(data) {
+			t.Errorf("第 %d 次 total=%d，想要 %d", i, r[1], len(data))
+		}
+		if r[0] > r[1] {
+			t.Errorf("第 %d 次 received=%d 超过 total=%d", i, r[0], r[1])
+		}
+		prev = r[0]
+	}
+	if prev != len(data) {
+		t.Errorf("最终收到 %d B，想要 %d B", prev, len(data))
+	}
+}
+
 func TestFileTransferFullLoop(t *testing.T) {
 	p := newFilePair()
-
 	data := make([]byte, 1000) // 5 chunks at 249 bytes
 	for i := range data {
 		data[i] = byte(i * 7)

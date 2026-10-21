@@ -40,6 +40,19 @@ extern const char *_GoStringPtr(_GoString_ s);
 // It never returns a negative value: it takes no handle, so there is no
 // "invalid handle" case to report. Error codes can be turned into text with
 // fg_error_string.
+//
+// Session pollers are bounded FIFO queues, not single slots. Clipboard pending
+// holds 200 entries (oldest dropped first); fg_clipboard_pending_count and
+// fg_clipboard_dropped expose backlog and lost entries. The clipboard history
+// is a separate non-destructive view of the latest 50 entries: index 0 is the
+// oldest, entries carry a monotonic seq and Unix-ms receive time, and
+// fg_clipboard_take_pending does not remove them.
+//
+// FileReceiver offer/complete events are queued (4 entries each, completions
+// also capped at 64 MiB); fg_file_receiver_dropped reports overflow. The
+// completion queue owns the file data until fg_file_receiver_take_complete.
+// fg_file_receiver_poll is non-destructive: state 0 idle / 1 active / 2 done /
+// 3 failed, plus received/total bytes and an error code.
 #include <stdlib.h>
 #include <stdint.h>
 
@@ -192,6 +205,28 @@ extern int fg_clipboard_handle_frame(GoUintptr handle, uint8_t* payload, size_t 
 // 返回 1 表示取到一份重组完成的剪贴板，MIME 与数据交给调用方用 fg_free_buffer 释放。
 //
 extern int fg_clipboard_take_pending(GoUintptr handle, uint8_t** outMime, size_t* outMimeLen, uint8_t** outData, size_t* outDataLen);
+extern int fg_clipboard_pending_count(GoUintptr handle);
+
+// fg_clipboard_dropped 返回 pending 队列因满而被挤掉的累计条数。非 0 表示
+// 客户端轮询太慢、确实丢过数据；历史视图不受影响。
+//
+extern int fg_clipboard_dropped(GoUintptr handle);
+
+// fg_clipboard_history_count 返回历史条数；0 表示句柄无效或历史为空。
+//
+extern int fg_clipboard_history_count(GoUintptr handle);
+
+// 按「0 = 最旧」读一条历史，返回 1 表示取到；MIME 与数据都需用
+// fg_free_buffer 释放。读取是非破坏性的：同一索引可以反复读，也不影响
+// fg_clipboard_take_pending。outSeq 单调递增，客户端可据此去重；
+// outReceivedAtMs 是重组完成时的 Unix 毫秒时间戳。
+//
+extern int fg_clipboard_history_get(GoUintptr handle, int index, uint8_t** outMime, size_t* outMimeLen, uint8_t** outData, size_t* outDataLen, uint64_t* outSeq, int64_t* outReceivedAtMs);
+
+// 清空只读历史，pending 队列保持不动；seq 继续递增，避免旧 UI 快照把新条目
+// 误认成已经见过的序号。
+//
+extern void fg_clipboard_history_clear(GoUintptr handle);
 extern GoUintptr fg_file_sender_new(void);
 extern void fg_file_sender_free(GoUintptr handle);
 extern int fg_file_sender_offer(GoUintptr handle, char* name, uint8_t* data, size_t dataLen, uint16_t* outID);
@@ -222,6 +257,19 @@ extern int fg_file_receiver_reject(GoUintptr handle, uint16_t id, uint8_t status
 // outErr 非 0 表示校验失败或传输失败，data 为空。
 //
 extern int fg_file_receiver_take_complete(GoUintptr handle, uint8_t** outName, size_t* outNameLen, uint8_t** outData, size_t* outDataLen, int* outErr);
+
+// fg_file_receiver_poll 读数入站传输进度，非破坏性，可每帧调用。
+// state: 0 空闲 / 1 传输中 / 2 完成 / 3 失败。终态由
+// fg_file_receiver_take_complete 消费；轮询本身不会清掉待取的文件数据。
+// 返回 -1 表示句柄无效，0 表示成功。
+//
+extern int fg_file_receiver_poll(GoUintptr handle, int* outState, int* outReceived, int* outTotal, int* outErr);
+
+// fg_file_receiver_dropped 返回 offer / 完成事件因队列上限被挤掉的累计条数。
+// 任一非 0 都说明客户端轮询太慢、确实丢过事件（完成事件丢失会连带丢掉文件
+// 数据），应提高轮询频率或先 drain 再处理 UI。
+//
+extern int fg_file_receiver_dropped(GoUintptr handle, int* outOffers, int* outCompletes);
 extern GoUintptr fg_lanid_identity_generate(void);
 extern uint8_t* fg_lanid_identity_export(GoUintptr id, size_t* outLen);
 extern GoUintptr fg_lanid_identity_import(uint8_t* data, size_t length);

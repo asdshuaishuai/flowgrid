@@ -198,6 +198,176 @@ func TestClipboardInboxDropsOldestWhenFull(t *testing.T) {
 	if first != strconv.Itoa(overflow) {
 		t.Errorf("该丢最旧的 %d 条，队首却是 %q", overflow, first)
 	}
+	if pending, dropped := clipboardPendingStats(h); pending != clipInboxMax || dropped != overflow {
+		t.Errorf("溢出计数不对：pending=%d dropped=%d，想要 %d/%d", pending, dropped, clipInboxMax, overflow)
+	}
+}
+
+// 历史是只读、有界、非破坏性的：take_pending 取走不影响历史，同一索引可反复
+// 读；超过 50 条只挤掉最旧的。UI 的「最近同步」列表和设备页计数徽章可以各自
+// 读同一份数据，不会互相把对方的数据取空。
+func TestClipboardHistoryIsBoundedAndNonDestructive(t *testing.T) {
+	h := fg_clipboard_session_new()
+	defer fg_clipboard_session_free(h)
+
+	total := clipHistoryMax + 5
+	for i := 0; i < total; i++ {
+		feedClipboard(t, h, "text/plain", strconv.Itoa(i))
+	}
+
+	if got := clipboardHistoryCount(h); got != clipHistoryMax {
+		t.Fatalf("历史应保留 %d 条，实际 %d", clipHistoryMax, got)
+	}
+	first, ok := clipboardHistoryEntry(h, 0)
+	if !ok {
+		t.Fatal("取不到最旧的一条历史")
+	}
+	if string(first.clip.Data) != strconv.Itoa(total-clipHistoryMax) {
+		t.Errorf("最旧历史应为第 %d 条，实际 %q", total-clipHistoryMax, first.clip.Data)
+	}
+	last, ok := clipboardHistoryEntry(h, clipHistoryMax-1)
+	if !ok {
+		t.Fatal("取不到最新的一条历史")
+	}
+	if string(last.clip.Data) != strconv.Itoa(total-1) {
+		t.Errorf("最新历史应为 %q，实际 %q", strconv.Itoa(total-1), last.clip.Data)
+	}
+	if first.seq >= last.seq {
+		t.Errorf("seq 应递增：first=%d last=%d", first.seq, last.seq)
+	}
+	if first.receivedAt.IsZero() || last.receivedAt.IsZero() {
+		t.Error("历史必须带重组完成时间戳")
+	}
+
+	// 取走 pending 不影响历史；重复读同一索引结果一致。
+	if _, ok := takePendingClipboard(h); !ok {
+		t.Fatal("pending 队列不应为空")
+	}
+	if got := clipboardHistoryCount(h); got != clipHistoryMax {
+		t.Errorf("take_pending 后历史被破坏：%d 条", got)
+	}
+	again, ok := clipboardHistoryEntry(h, 0)
+	if !ok || again.seq != first.seq || string(again.clip.Data) != string(first.clip.Data) {
+		t.Errorf("同一索引第二次读取不一致：%+v vs %+v", first, again)
+	}
+
+	fg_clipboard_history_clear(h)
+	if got := clipboardHistoryCount(h); got != 0 {
+		t.Errorf("清空后历史应为 0，实际 %d", got)
+	}
+	if pending, _ := clipboardPendingStats(h); pending == 0 {
+		t.Error("清空历史不应连带清掉 pending 队列")
+	}
+}
+
+// 文件接收侧的 offer / 完成事件也要排队：两个文件在同一个轮询周期完成时，
+// 前一个的 data 不能像单槽位时代那样被覆盖丢掉。溢出时丢最旧，并把次数暴露
+// 给客户端。
+func TestFileReceiverQueuesEventsAndReportsOverflow(t *testing.T) {
+	h := fg_file_receiver_new()
+	defer fg_file_receiver_free(h)
+	fr, ok := fileReceivers.get(h)
+	if !ok {
+		t.Fatal("接收器句柄取不到")
+	}
+
+	const overflow = 2
+	for i := 0; i < fileInboxMax+overflow; i++ {
+		fr.sess.OnOffer(protocol.FileOffer{
+			TransferID: uint16(i + 1),
+			Name:       "offer-" + strconv.Itoa(i),
+			Size:       uint64(i + 1),
+		})
+	}
+	fr.mu.Lock()
+	offerCount, droppedOffers := len(fr.offers), fr.droppedOffers
+	fr.mu.Unlock()
+	if offerCount != fileInboxMax || droppedOffers != overflow {
+		t.Errorf("offer 队列应有 %d 条/丢 %d，实际 %d/%d", fileInboxMax, overflow, offerCount, droppedOffers)
+	}
+	for i := overflow; i < fileInboxMax+overflow; i++ {
+		o, ok := fr.takeOffer()
+		if !ok {
+			t.Fatalf("第 %d 个 offer 取不到", i)
+		}
+		if o.TransferID != uint16(i+1) {
+			t.Errorf("offer 顺序不对：拿到 ID=%d，想要 %d", o.TransferID, i+1)
+		}
+	}
+	if _, ok := fr.takeOffer(); ok {
+		t.Error("offer 队列取空后仍返回条目")
+	}
+
+	for i := 0; i < fileInboxMax+overflow; i++ {
+		data := []byte{byte(i)}
+		fr.sess.OnComplete(protocol.FileOffer{
+			TransferID: uint16(i + 1),
+			Name:       "done-" + strconv.Itoa(i),
+			Size:       uint64(len(data)),
+		}, data, nil)
+	}
+	fr.mu.Lock()
+	completeCount, droppedCompletes := len(fr.completes), fr.droppedCompletes
+	fr.mu.Unlock()
+	if completeCount != fileInboxMax || droppedCompletes != overflow {
+		t.Errorf("完成队列应有 %d 条/丢 %d，实际 %d/%d", fileInboxMax, overflow, completeCount, droppedCompletes)
+	}
+	for i := overflow; i < fileInboxMax+overflow; i++ {
+		c, ok := fr.takeComplete()
+		if !ok {
+			t.Fatalf("第 %d 个完成事件取不到", i)
+		}
+		if c.offer.TransferID != uint16(i+1) {
+			t.Errorf("完成事件顺序不对：拿到 ID=%d，想要 %d", c.offer.TransferID, i+1)
+		}
+		if len(c.data) != 1 || c.data[0] != byte(i) {
+			t.Errorf("第 %d 个文件数据被覆盖：%v", i, c.data)
+		}
+	}
+	if _, ok := fr.takeComplete(); ok {
+		t.Error("完成队列取空后仍返回条目")
+	}
+}
+
+// 轮询进度是非破坏性的：可以每帧读，终态只有 take_complete 才消费；取空后
+// 状态回到空闲，下一路不会带着上一路的 100%。
+func TestFileReceiverPollProgressIsNonDestructive(t *testing.T) {
+	h := fg_file_receiver_new()
+	defer fg_file_receiver_free(h)
+	fr, ok := fileReceivers.get(h)
+	if !ok {
+		t.Fatal("接收器句柄取不到")
+	}
+
+	offer := protocol.FileOffer{TransferID: 7, Name: "progress.bin", Size: 100}
+	fr.sess.OnProgress(offer, 40, 100)
+	if state, got, total, code := fr.progressSnapshot(); state != fileReceiverActive || got != 40 || total != 100 || code != 0 {
+		t.Fatalf("进行中快照不对：state=%d received=%d total=%d code=%d", state, got, total, code)
+	}
+
+	fr.sess.OnComplete(offer, make([]byte, 100), nil)
+	for i := 0; i < 2; i++ {
+		state, got, total, code := fr.progressSnapshot()
+		if state != fileReceiverDone || got != 100 || total != 100 || code != 0 {
+			t.Fatalf("第 %d 次完成快照不对：state=%d received=%d total=%d code=%d", i+1, state, got, total, code)
+		}
+	}
+	if _, ok := fr.takeComplete(); !ok {
+		t.Fatal("完成事件被轮询吃掉了")
+	}
+	if state, _, _, _ := fr.progressSnapshot(); state != fileReceiverIdle {
+		t.Errorf("取走终态后应回到空闲，实际 state=%d", state)
+	}
+
+	// 失败终态：错误码要能通过轮询拿到，且 take_complete 仍交出事件。
+	fr.sess.OnComplete(offer, nil, protocol.NewError(protocol.ErrTransferTimeout, "stalled"))
+	if state, _, _, code := fr.progressSnapshot(); state != fileReceiverFailed || code != int(protocol.ErrTransferTimeout) {
+		t.Fatalf("失败快照不对：state=%d code=%d", state, code)
+	}
+	c, ok := fr.takeComplete()
+	if !ok || c.errCode != int(protocol.ErrTransferTimeout) {
+		t.Errorf("失败事件取不到或错误码丢失：%+v ok=%v", c, ok)
+	}
 }
 
 // 终态报一次就要把随行的进度一起清掉。留着的话，下一路传输在客户端眼里是从

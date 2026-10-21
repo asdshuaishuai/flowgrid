@@ -197,9 +197,24 @@ Receiver: OFFER →(用户 Accept)→ 缓存 CHUNK → SHA-256 校验 → ACK co
   不认识 → 整条丢；`0x12` 载荷长度与 PayloadLen 不符 → 发送侧编错了）。它不接
   句柄，所以没有「句柄无效」那一档，永远不返回负数
 - 会话层（clipboard / filetransfer）已有 cgo 导出，一律「Go 缓存、C 轮询」：
-  - 接收侧：`fg_clipboard_take_pending`、`fg_file_sender_poll`、
-    `fg_file_receiver_take_offer`、`fg_file_receiver_take_complete`
-    （终态读一次即复位，不会重复提示）
+  - 接收侧剪贴板：`fg_clipboard_take_pending` 逐条取走（破坏性，取空返回 0），
+    内部是上限 200 条的 FIFO，满时丢最旧。`fg_clipboard_pending_count` 看积压，
+    `fg_clipboard_dropped` 看累计溢出条数（非 0 说明轮询太慢、确实丢过数据）。
+  - 剪贴板历史：`fg_clipboard_history_count` / `fg_clipboard_history_get`
+    是**只读、有界、非破坏性**的视图，保留最近 50 条；索引 0 = 最旧，同一索引
+    可反复读，`take_pending` 不会清掉它。每条带单调递增的 `seq` 与重组完成时的
+    Unix 毫秒时间戳，UI 的相对时间从后者算，不要从第一次看到它算。
+    `fg_clipboard_history_clear` 只清历史，不动 pending。
+  - 接收侧文件：`fg_file_receiver_take_offer` / `fg_file_receiver_take_complete`
+    从队列取事件（各上限 4 条，完成队列另有 64 MiB 上限），满时丢最旧；
+    `fg_file_receiver_dropped` 返回 offer/完成两侧的累计溢出数。完成事件被挤掉
+    会连带丢掉文件数据，非 0 必须当作错误上报。
+  - 入站进度：`fg_file_receiver_poll` 与 `fg_file_sender_poll` 对称，返回
+    state（0 空闲 / 1 传输中 / 2 完成 / 3 失败）、已收字节、总字节、错误码。
+    轮询是**非破坏性**的，可每帧调用；终态由 `take_complete` 消费，取空后进度
+    自动回空闲。
+  - 轮询节奏：队列已经保证两次 poll 之间不覆盖，不再要求 500ms 级高频；
+    建议 UI 200–500ms drain 一次，并周期性检查 `*_dropped`。
   - 发送侧：先 `fg_session_set_sink(1)` 声明传输就绪，再调用
     `fg_clipboard_send` / `fg_file_sender_offer` + `fg_file_sender_pump` 等；
     产出的帧进全局出帧队列，用 `fg_session_poll_out` 逐帧取走。帧只带
@@ -207,6 +222,9 @@ Receiver: OFFER →(用户 Accept)→ 缓存 CHUNK → SHA-256 校验 → ACK co
     **未声明 sink 时发送接口返回 `ErrNotConnected`(0x05)，不会静默丢帧报成功**；
     队列上限 4096 帧，满了返回 `ErrSendFailed`(0x06)。队列是全局的，v1.1
     只支持单连接。
+  - CLIPBOARD 不携带来源应用（§5.3）：不要在 Data 后自行追加字段，旧接收端
+    会把它拼进剪贴板内容。需要「忽略密码管理器」的客户端在捕获侧本地判断并
+    直接不发送；协议层不提供该字段。
 - **改任何 cgo 导出后必须在 Linux 上重新生成 `protocol/cgo/cgo.h`**（AGENTS.md）：
   `cd protocol/cgo && CGO_ENABLED=1 CC=/usr/bin/gcc CXX=/usr/bin/g++ go build -buildmode=c-archive -o libflowgrid_protocol.a . && cp libflowgrid_protocol.h cgo.h`
 

@@ -427,6 +427,14 @@ CLIPBOARD 帧、按 Sequence 顺序发送；接收方按 Idx 收齐 Tot 段后�
 v1.0 的 "Data Length + 全量 Data" 单帧格式已废除：UInt8 载荷上限下单帧最多
 携带约 250 字节，64KB 目标必须走分段。
 
+**来源应用（不在 v1.1 线格式内）**：CLIPBOARD 载荷不携带「从哪个应用复制」
+字段。不要在 Data 后追加尾随字节——旧接收端按 `载荷剩余长度 - 固定头 - MIME`
+取 Data（不是按 Total Size 截断），会把尾随字节拼进剪贴板内容且不报错。需要「忽略密码管理器内容」等策略的
+客户端应在捕获侧本地判断（Windows 剪贴板 owner / macOS pasteboard / X11
+selection owner），命中后不发送；这是客户端策略，不是协议能力。未来若增加，
+必须用新能力位 + 独立元数据帧（或升版本号），不能复用本帧尾随字节。
+（v1.1 勘误，2026-10-21，见 docs/PROTOCOL-ISSUES.md P12。）
+
 #### HEARTBEAT (0x08) — 0 bytes
 
 无载荷。收到后立即回复 HEARTBEAT。
