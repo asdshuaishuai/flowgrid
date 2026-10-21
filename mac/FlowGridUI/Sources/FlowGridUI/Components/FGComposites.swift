@@ -99,24 +99,6 @@ public struct FGKeyPairCell: View {
     }
 }
 
-/// 3 列键位对网格（mapping：gap 8，pad 12）。
-public struct FGMappingGrid: View {
-    private let rows: [KeyMappingRow]
-
-    public init(_ rows: [KeyMappingRow]) {
-        self.rows = rows
-    }
-
-    public var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: 3), spacing: FGSpacing.s2) {
-            ForEach(rows) { row in
-                FGKeyPairCell(row)
-            }
-        }
-        .padding(FGSpacing.s3)
-    }
-}
-
 // MARK: - 柱状图（height 70；柱圆角上；最新一根实色；高度过渡 500ms）
 
 public struct FGLatencyChart: View {
@@ -163,51 +145,6 @@ public struct FGLatencyChart: View {
     }
 
     private var plotHeight: CGFloat { 70 - FGSpacing.s3 - FGSpacing.s2 }
-}
-
-// MARK: - 剪贴板行（pad 7/8；类型块 18×18；时间；可选徽章与复制钮）
-
-public struct FGClipRow: View {
-    private let item: ClipboardItem
-    private let onCopy: () -> Void
-    @State private var hovering = false
-
-    public init(item: ClipboardItem, onCopy: @escaping () -> Void) {
-        self.item = item
-        self.onCopy = onCopy
-    }
-
-    public var body: some View {
-        HStack(spacing: FGSpacing.s2) {
-            FGIcon(item.kind.iconName, size: 12, color: FGColor.text2)
-                .frame(width: 18, height: 18)
-                .background(FGColor.surface3)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-
-            Text(item.preview)
-                .font(.system(size: 11))
-                .foregroundStyle(FGColor.text2)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            if item.oversize {
-                FGBadge("超限", kind: .warn)
-            }
-
-            Text(item.ageSeconds.ageText)
-                .font(.system(size: 11))
-                .monospacedDigit()
-                .foregroundStyle(FGColor.text3)
-
-            FGIconButton("copy", size: 14, action: onCopy)
-        }
-        .padding(.vertical, 7)
-        .padding(.horizontal, FGSpacing.s2)
-        .background(hovering ? FGColor.surfaceHi : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: FGRadius.control, style: .continuous))
-        .onHover { hovering = $0 }
-    }
 }
 
 // MARK: - 传输行（icon 28；名称 + pct；meta；进行中含进度条）
@@ -399,67 +336,6 @@ public struct FGDropZone: View {
             return true
         } isTargeted: { targeted in
             dropTargeted = targeted
-        }
-    }
-}
-
-// MARK: - 向导步骤（20 圆；done check / on accent / 默认线框）
-
-public struct FGSteps: View {
-    public enum StepState: Sendable {
-        case waiting
-        case current
-        case done
-    }
-
-    private let items: [(label: String, state: StepState)]
-
-    public init(_ items: [(label: String, state: StepState)]) {
-        self.items = items
-    }
-
-    public var body: some View {
-        HStack(spacing: FGSpacing.s2) {
-            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                HStack(spacing: 6) {
-                    circle(for: item.state, number: index + 1)
-                    Text(item.label)
-                        .font(.system(size: 11, weight: item.state == .current ? .semibold : .medium))
-                        .foregroundStyle(item.state == .waiting ? FGColor.text3 : FGColor.text1)
-                }
-                if index != items.count - 1 {
-                    Rectangle()
-                        .fill(FGColor.line2)
-                        .frame(width: 20, height: 1)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-    }
-
-    @ViewBuilder private func circle(for state: StepState, number: Int) -> some View {
-        switch state {
-        case .done:
-            FGIcon("check", size: 12, color: FGColor.okText)
-                .frame(width: 20, height: 20)
-                .background(FGColor.okSoft)
-                .clipShape(Circle())
-                .overlay(Circle().strokeBorder(FGColor.okLine, lineWidth: 1))
-        case .current:
-            Text("\(number)")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(FGColor.onAccent)
-                .frame(width: 20, height: 20)
-                .background(FGColor.accent)
-                .clipShape(Circle())
-        case .waiting:
-            Text("\(number)")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(FGColor.text3)
-                .frame(width: 20, height: 20)
-                .background(FGColor.surface)
-                .clipShape(Circle())
-                .overlay(Circle().strokeBorder(FGColor.line2, lineWidth: 1))
         }
     }
 }

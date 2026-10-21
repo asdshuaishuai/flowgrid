@@ -59,8 +59,3 @@ const (
 	CapDefinedMask CapabilityFlags = CapIntelligentLink | CapDirectLink | CapWiFiDirect |
 		CapDTLS13 | CapClipboard | CapFileTransfer
 )
-
-// Has checks if flag has a specific capability set.
-func (f CapabilityFlags) Has(cap CapabilityFlags) bool {
-	return f&cap != 0
-}
