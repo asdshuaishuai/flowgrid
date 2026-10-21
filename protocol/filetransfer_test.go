@@ -504,3 +504,73 @@ func TestFileSenderProgressIsRealAndMonotonic(t *testing.T) {
 		t.Errorf("跑完一遍应报到 100%%，最后一次却只到 %d/%d", prev, len(data))
 	}
 }
+
+// §7.4 FILE_ABORT 是「任意时刻」双向：接收侧处理入站中止（handleAbort）必须清掉
+// active/offered 传输并报终态，否则接收方一直占着 active，直到 idle 超时前所有新
+// offer 都被当 busy 拒掉——与 TestFileTransferAbortWhileOffered 守护的发送侧对称。
+// 此前只测了「发出」中止与编解码，没测「接收」入站帧这条状态机路径。
+func TestFileReceiverHandlesInboundAbort(t *testing.T) {
+	p := newFilePair() // OnOffer 自动接受 → OfferFile 后 receiver.active 即就绪
+
+	id, err := p.sender.OfferFile("report.bin", []byte("payload"))
+	if err != nil {
+		t.Fatalf("OfferFile: %v", err)
+	}
+
+	abortPayload := (&FileAbort{TransferID: id, Reason: FileAbortUser}).Marshal()
+
+	// 喂入站 FILE_ABORT（发送方取消），走 HandleFrame → handleAbort
+	if _, err := p.receiver.HandleFrame(FrameFileAbort, abortPayload); err != nil {
+		t.Fatalf("HandleFrame(FILE_ABORT): %v", err)
+	}
+
+	// 终态：OnComplete 带 ErrTransferRejected、不交付数据、offer 对得上
+	select {
+	case c := <-p.completed:
+		pe, ok := c.err.(*ProtocolError)
+		if !ok || pe.Code != ErrTransferRejected {
+			t.Errorf("终态应为 ErrTransferRejected，得到 %v", c.err)
+		}
+		if c.data != nil {
+			t.Error("中止不应交付数据")
+		}
+		if c.offer.TransferID != id {
+			t.Errorf("终态 offer.TransferID = %d，期望 %d", c.offer.TransferID, id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("入站中止没触发 OnComplete")
+	}
+
+	// 幂等：同一 id 再中止一次，状态已清空 → 静默 no-op，不重复报终态
+	if _, err := p.receiver.HandleFrame(FrameFileAbort, abortPayload); err != nil {
+		t.Errorf("重复中止应静默 no-op，却报了 %v", err)
+	}
+	select {
+	case c := <-p.completed:
+		t.Errorf("重复中止不应再触发 OnComplete，却收到 %+v", c)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// 不匹配的 id：同样静默 no-op（只清匹配的传输）
+	wrongAbort := (&FileAbort{TransferID: id + 99, Reason: FileAbortUser}).Marshal()
+	if _, err := p.receiver.HandleFrame(FrameFileAbort, wrongAbort); err != nil {
+		t.Errorf("不匹配 id 的中止应 no-op，却报了 %v", err)
+	}
+
+	// 接收侧 active 已清空：直接喂一封新 offer（不同 id）应触发 OnOffer，
+	// 而非像还占着 active 时那样被当 busy 拒掉。
+	var newOfferSeen bool
+	p.receiver.OnOffer = func(FileOffer) { newOfferSeen = true } // 不再自动接受，避免回 sender
+	newOffer := &FileOffer{TransferID: id + 1, Size: 4, Name: "next.bin"}
+	newOffer.SHA256 = [32]byte{9}
+	newPayload, err := newOffer.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal new offer: %v", err)
+	}
+	if _, err := p.receiver.HandleFrame(FrameFileOffer, newPayload); err != nil {
+		t.Fatalf("中止后应能接收新 offer，却报了 %v", err)
+	}
+	if !newOfferSeen {
+		t.Error("中止后新 offer 应触发 OnOffer（接收侧 active 已清空，未被当 busy）")
+	}
+}
