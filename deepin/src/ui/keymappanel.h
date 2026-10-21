@@ -60,11 +60,22 @@ private:
     QWidget *buildAdvancedSection();
     QWidget *buildFooter();
     void rebuildRows();
+    // 给网格末尾那个「未设置 → 未设置 / 点击添加」的占位格装上点击响应。
+    // mac 端那一格是真按钮（点了加一条规则），这一屏的网格在 widgets.cpp 里
+    // 画（不能改），所以用事件过滤器补上——不然「点击添加」四个字就是一句
+    // 空话。
+    void makeGhostCellClickable(QWidget *grid, int ghostIndex);
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
+private:
     QVBoxLayout *mappingLayout_ = nullptr;
     Badge *countBadge_ = nullptr;
     Badge *globalBadge_ = nullptr;
     QList<KeyRule> rules_;
+    // 占位格（点击添加）那个格子，事件过滤器认它用。
+    QWidget *ghostCell_ = nullptr;
 };
 
 } // namespace fg

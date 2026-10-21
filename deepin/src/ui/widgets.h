@@ -354,8 +354,28 @@ public:
     void setDevice(const Device &device);
     QString deviceId() const { return id_; }
 
+    // 固定副标题：盖掉 setDevice() 按设备字段拼出来的那一串。
+    //
+    // 设备卡自带的副标题是「系统 · 链路 · 地址 · 当前控制端」，那是设备列表
+    // 的口径；连接屏那一行要的是 mac 的 meta(for:) 口径（「本机 · deepin 25」
+    // 「Windows 11 · DirectLink · 已连接」）。两屏各用各的行文，就得有这个
+    // 覆写口子，否则只能把整张卡重写一遍。
+    //
+    // 传空串恢复默认。
+    void setMetaText(const QString &text);
+
     // 侧栏动作按钮：切换 / 重连 / 更多信息。离线设备给重连。
     void setAction(const QString &kind);   // "switch" | "reconnect" | "more" | "none"
+
+    // 自定义尾部插槽：把默认的「延迟芯片 + 动作按钮」换掉。
+    //
+    // 对应 mac 端 FGDeviceRow 的 trailing 闭包——同一张设备卡，本机、对端、
+    // 离线设备右侧要摆的东西完全不同（本机是「本机」徽章，对端是「控制中」
+    // + 延迟 + 断开按钮）。不给出这个口子，这些差异就只能散在各个屏幕里
+    // 各写一遍，或者退化成 mac 那样的一行纯文本。
+    //
+    // 传 nullptr 不改变现状（仍用默认的延迟芯片 + 动作按钮）。
+    void setTrailingWidget(QWidget *widget);
 
 Q_SIGNALS:
     void switchRequested(const QString &deviceId);
@@ -375,12 +395,15 @@ private:
     bool online_ = false;
     bool hovered_ = false;
     QString actionKind_;
+    QString metaOverride_;   // 非空时盖掉默认副标题
 
     QLabel *icon_ = nullptr;
     QLabel *name_ = nullptr;
     QLabel *meta_ = nullptr;
     LatencyChip *latency_ = nullptr;
     IconButton *action_ = nullptr;
+    QGridLayout *grid_ = nullptr;
+    QWidget *trailing_ = nullptr;
 };
 
 // ── 导航行：图标 + 文字 + 右侧任意控件，整行可点、整行 hover ──────────

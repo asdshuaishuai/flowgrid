@@ -9,6 +9,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLoggingCategory>
+#include <QMouseEvent>
 #include <QVBoxLayout>
 
 #include <functional>
@@ -53,19 +54,22 @@ void unwiredToggle(ToggleSwitch *sw, const QString &what, QObject *ctx)
 }
 
 // 行首带图标的列表行标题（设计稿里的 code / play 图标）。
-QWidget *iconTitle(const QString &iconName, const QString &text, const QColor &color,
-                   QWidget *parent)
+// 图标与文字分两个颜色：mac 端图标是 text-2、文字是 text-1，一个颜色画两样
+// 会让图标抢过文字。
+QWidget *iconTitle(const QString &iconName, const QString &text, const QColor &iconColor,
+                   const QColor &textColor, QWidget *parent)
 {
     auto *w = new QWidget(parent);
     auto *hl = new QHBoxLayout(w);
     hl->setContentsMargins(0, 0, 0, 0);
     hl->setSpacing(tokens::kS2);
     auto *icon = new QLabel(w);
-    icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
-    icon->setPixmap(icons::icon(iconName, tokens::kIconSm, color).pixmap(tokens::kIconSm, tokens::kIconSm));
+    icon->setFixedSize(tokens::kIconMd, tokens::kIconMd);
+    icon->setPixmap(icons::icon(iconName, tokens::kIconMd, iconColor)
+                        .pixmap(tokens::kIconMd, tokens::kIconMd));
     auto *label = new QLabel(text, w);
     label->setFont(uiFont(tokens::kFont12));
-    label->setStyleSheet(QStringLiteral("color:%1").arg(css(color)));
+    label->setStyleSheet(QStringLiteral("color:%1").arg(css(textColor)));
     hl->addWidget(icon);
     hl->addWidget(label);
     return w;
@@ -151,7 +155,8 @@ QWidget *KeymapPanel::buildAppSection()
         auto *host = new QWidget(body);
         auto *hl = new QHBoxLayout(host);
         hl->setContentsMargins(0, 0, 0, 0);
-        hl->setSpacing(tokens::kS2);
+        // mac 端开关与「编辑」按钮之间是 s3(12)，这里原来写的是 s2(8)。
+        hl->setSpacing(tokens::kS3);
 
         auto *sw = new ToggleSwitch(host);
         sw->setChecked(true);
@@ -161,7 +166,8 @@ QWidget *KeymapPanel::buildAppSection()
         hl->addWidget(sw);
         hl->addWidget(edit);
 
-        auto *title = iconTitle(QString::fromUtf8(apps[i].icon), tr(apps[i].name), p.text1, host);
+        auto *title = iconTitle(QString::fromUtf8(apps[i].icon), tr(apps[i].name), p.text2,
+                                p.text1, host);
         vl->addWidget(new ListRow(QString(), tr(apps[i].hint), host, this, title));
     }
 
@@ -276,13 +282,59 @@ void KeymapPanel::rebuildRows()
 
     QList<KeyPair> pairs;
     pairs.reserve(rules_.size());
-    for (const KeyRule &rule : rules_) {
+    int ghostIndex = -1;
+    for (int i = 0; i < rules_.size(); ++i) {
+        const KeyRule &rule = rules_.at(i);
         // 占位槽与徽章计数共用判据（isPlaceholderKeyRule），两处各写一遍就会漂开。
         const bool ghost = isPlaceholderKeyRule(rule);
+        if (ghost) {
+            ghostIndex = i;
+        }
         pairs.append(KeyPair{ghost ? tr("未设置") : rule.from, ghost ? tr("未设置") : rule.to,
                              rule.context, ghost});
     }
-    mappingLayout_->addWidget(buildMappingGrid(pairs, this));
+    auto *grid = buildMappingGrid(pairs, this);
+    mappingLayout_->addWidget(grid);
+    makeGhostCellClickable(grid, ghostIndex);
+}
+
+// mac 端那个「未设置 → 未设置 / 点击添加」的格子是个按钮：点了就加一条规则。
+// 网格本身在 widgets.cpp 里画（那边不能改），所以这里给它装个事件过滤器。
+// 找不到对应格子就什么都不做——宁可这一格不可点，也不要点到别的格子上。
+void KeymapPanel::makeGhostCellClickable(QWidget *grid, int ghostIndex)
+{
+    ghostCell_ = nullptr;
+    if (grid == nullptr || ghostIndex < 0) {
+        return;
+    }
+    QList<QWidget *> cells;
+    for (QWidget *child : grid->findChildren<QWidget *>()) {
+        if (child->parentWidget() == grid) {
+            cells.append(child);
+        }
+    }
+    if (cells.size() != rules_.size() || ghostIndex >= cells.size()) {
+        return;
+    }
+    QWidget *ghost = cells.at(ghostIndex);
+    ghost->setCursor(Qt::PointingHandCursor);
+    ghost->installEventFilter(this);
+    ghostCell_ = ghost;
+}
+
+bool KeymapPanel::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == ghostCell_ && event->type() == QEvent::MouseButtonRelease) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() == Qt::LeftButton) {
+            // 规则编辑器未接通：点「点击添加」与点顶部「新增规则」一样，如实记
+            // 一笔「尚未接通」，不假装已经加上了规则。
+            qCInfo(lcKeymap) << tr("新增规则") << QStringLiteral("尚未接通，规则表仍由 YAML 提供");
+            Q_EMIT editRequested();
+            return true;
+        }
+    }
+    return Panel::eventFilter(watched, event);
 }
 
 } // namespace fg

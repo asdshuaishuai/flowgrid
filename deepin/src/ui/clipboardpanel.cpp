@@ -74,6 +74,22 @@ QString iconOfKind(const QString &kind)
     return QStringLiteral("type");
 }
 
+// 只看 MIME 的粗分类。超限条目的载荷可能有几百 MB：为了分个类把整包解成
+// QString 就是几百 MB 的额外内存，纯属白扔。
+QString kindOfMime(const QString &mime)
+{
+    if (mime.startsWith(QLatin1String("image/"))) {
+        return QStringLiteral("image");
+    }
+    if (mime == QLatin1String("text/uri-list")) {
+        return QStringLiteral("link");
+    }
+    if (mime.contains(QLatin1String("html"))) {
+        return QStringLiteral("code");
+    }
+    return QStringLiteral("text");
+}
+
 // 列表主文本压成一行：换行会让 ClipRow 的双行结构失效。
 QString oneLine(const QString &text)
 {
@@ -120,9 +136,16 @@ QString humanSize(qint64 bytes)
 // 示例数据下的结论，不是任何载荷的通用事实：单帧能装多少由 MIME 长度决定
 // （Go 侧 MaxClipboardChunk = 255 - 7 - len(mime)，§5.3），text/plain 时超过
 // 238 B 就必然多帧。这里按协议同一条公式算段数，不无条件宣称「未分段」。
+//
+// 多帧那半句跟 mac 端对齐：「分段发送 · N 段」（不是「分 N 帧发送」）。
 QString specText(const ClipEntry &e)
 {
-    if (e.raw.isEmpty()) {
+    const qint64 size = e.sizeBytes > 0 ? e.sizeBytes : e.raw.size();
+    if (e.oversize) {
+        // 超限的条目没有载荷可写可推，直说它超在哪，别拿「暂无内容」搪塞。
+        return ClipboardPanel::tr("%1 · 超出单条上限，不同步").arg(humanSize(size));
+    }
+    if (size <= 0) {
         // 空内容时照实说「暂无内容」。
         //
         // 早先这里写的是 "--"，界面上就只剩一个信息图标后面跟着两个横杠：
@@ -132,15 +155,29 @@ QString specText(const ClipEntry &e)
     }
     const int perFrame = 248 - e.mime.toUtf8().size();
     if (perFrame <= 0) {
-        return ClipboardPanel::tr("%1 · MIME 名过长，协议会拒绝发送")
-            .arg(humanSize(e.raw.size()));
+        return ClipboardPanel::tr("%1 · MIME 名过长，协议会拒绝发送").arg(humanSize(size));
     }
-    const int frames = static_cast<int>((e.raw.size() + perFrame - 1) / perFrame);
+    const int frames = static_cast<int>((size + perFrame - 1) / perFrame);
     return frames <= 1
-               ? ClipboardPanel::tr("%1 · 单帧发送 · 未分段").arg(humanSize(e.raw.size()))
-               : ClipboardPanel::tr("%1 · 分 %2 帧发送")
-                     .arg(humanSize(e.raw.size()))
+               ? ClipboardPanel::tr("%1 · 单帧发送 · 未分段").arg(humanSize(size))
+               : ClipboardPanel::tr("%1 · 分段发送 · %2 段")
+                     .arg(humanSize(size))
                      .arg(frames);
+}
+
+// 超限条目的行首方片：warn 图标 + warn-soft 底。普通条目是 surface-3 底 +
+// text-2 图标（ClipRow 默认那套），超限那条要一眼看得出不一样。
+QLabel *oversizeChip(QWidget *parent)
+{
+    const Palette &p = Theme::instance().palette();
+    auto *box = new QLabel(parent);
+    box->setFixedSize(tokens::kBadgeHeight, tokens::kBadgeHeight);
+    box->setAlignment(Qt::AlignCenter);
+    box->setPixmap(icons::icon(QStringLiteral("warn"), tokens::kIconXs, p.warn.text)
+                       .pixmap(tokens::kIconXs, tokens::kIconXs));
+    applyBoxStyle(box, QStringLiteral("border-radius:%1px;background:%2")
+                           .arg(QString::number(tokens::kRadiusChip), css(p.warn.soft)));
+    return box;
 }
 
 // 「标签 + 开关」一行：ui.css .row.between + .switch。
@@ -279,29 +316,47 @@ void ClipboardPanel::captureLocalClipboard()
 
     // 同一条内容不重复记。剪贴板一次复制常连发好几个 dataChanged
     // （应用逐段设置 mime），不去重的话历史里会连着出现三条一样的。
-    if (!history_.isEmpty() && history_.first().raw == raw && history_.first().mime == type) {
-        return;
+    // 超限条目不留载荷，只能拿「类型 + 体积」当指纹。
+    if (!history_.isEmpty()) {
+        const ClipEntry &last = history_.first();
+        const bool same = last.mime == type
+            && (raw.size() > kClipSegLimit
+                    ? last.oversize && last.sizeBytes == raw.size()
+                    : last.raw == raw);
+        if (same) {
+            return;
+        }
     }
 
     ClipEntry e;
     e.mime = type;
-    e.raw = raw;
-    e.kind = kindOf(type, raw);
     e.source = hostinfo::hostName();   // 真实来源：这台机器
     e.atMs = QDateTime::currentMSecsSinceEpoch();
     e.agoSecs = 0;
+    e.fromPeer = false;
+    e.sizeBytes = raw.size();
     e.oversize = raw.size() > kClipSegLimit;
     if (e.oversize) {
-        // 超限的条目推不出去，也不该占着「当前剪贴板」的位置——顶部预览
-        // 取的就是 history_.first()。
+        // 超限的条目推不出去（协议 §5.3 一条 63,240 B），但**要留在历史里**
+        // 并标成「超限」：mac 端与设计稿 clipboard.html 都有这一行。直接丢掉
+        // 的话，用户复制了一张大图，屏幕上什么也不变，只能以为没复制成功。
+        //
+        // 载荷不留——一次复制可能几百 MB，留在历史里就是几十张图的内存；只留
+        // 体积和一小段预览，够认出「我刚才复制的是哪一坨」。
+        e.raw.clear();
+        e.kind = kindOfMime(type);
         qCInfo(lcClipboard) << "本机剪贴板条目超单条上限" << raw.size()
-                            << QStringLiteral("B，不进历史");
-        return;
+                            << QStringLiteral("B，标记为超限，不推送");
+    } else {
+        e.raw = raw;
+        e.kind = kindOf(type, raw);
     }
     // 纯文本给原文；别的类型给「类型 + 体积」，总比一句假摘要强。
     if (type == QLatin1String("text/plain") || type == QLatin1String("text/html")
         || type == QLatin1String("text/uri-list")) {
-        e.text = oneLine(QString::fromUtf8(raw));
+        e.text = oneLine(e.oversize
+                             ? QString::fromUtf8(raw.left(240)).left(60)
+                             : QString::fromUtf8(raw));
     } else {
         e.text = tr("%1 · %2").arg(type, humanSize(raw.size()));
     }
@@ -334,6 +389,7 @@ QWidget *ClipboardPanel::buildCurrent()
     applyBoxStyle(typeIcon,
                   QStringLiteral("border-radius:%1px;background:%2")
                       .arg(QString::number(tokens::kRadiusChip), css(p.surface3)));
+    typeIcon_ = typeIcon;
     auto *title = new QLabel(tr("当前剪贴板"), head);
     title->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
     auto *mimeBadge = new Badge(QStringLiteral("--"), Badge::Variant::Neutral, head);
@@ -342,10 +398,23 @@ QWidget *ClipboardPanel::buildCurrent()
     hl->addWidget(title);
     hl->addWidget(mimeBadge);
     hl->addStretch(1);
-    auto *from = new QLabel(tr("来自 本机"), head);
-    from->setFont(uiFont(tokens::kFont11));
-    from->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-    hl->addWidget(from);
+    // 右侧「来自 …」：mac 端只有**收到对端**的条目才画这一块（fromDevice 为
+    // 空时整块不画），本机复制的那条不画。早先这里写死一句「来自 本机」，
+    // 收到对端条目时它还照旧写着「来自 本机」——那是在说假话。
+    auto *fromBox = new QWidget(head);
+    auto *fromHl = new QHBoxLayout(fromBox);
+    fromHl->setContentsMargins(0, 0, 0, 0);
+    fromHl->setSpacing(tokens::kS1);
+    auto *fromIcon = new QLabel(fromBox);
+    fromIcon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
+    fromIcon->setPixmap(icons::icon(QStringLiteral("laptop"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
+    fromLabel_ = new QLabel(fromBox);
+    fromLabel_->setFont(uiFont(tokens::kFont11));
+    fromLabel_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    fromHl->addWidget(fromIcon);
+    fromHl->addWidget(fromLabel_);
+    hl->addWidget(fromBox);
+    fromBox_ = fromBox;
     applyBoxStyle(head,
                   QStringLiteral("background:%1;border-bottom:1px solid %2;"
                                  "border-top-left-radius:%3px;border-top-right-radius:%3px")
@@ -492,7 +561,10 @@ QWidget *ClipboardPanel::buildSettings()
     auto *body = new QWidget(this);
     auto *vl = new QVBoxLayout(body);
     vl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
-    vl->setSpacing(tokens::kS2);
+    // 行距跟 mac 端对齐：FGSection 内容是 VStack(spacing: s3)，设计稿
+    // .section__body 里也是 .col-3（gap 12）。这里原来写的是 s2(8)，四行开关
+    // 比设计稿挤一档。
+    vl->setSpacing(tokens::kS3);
 
     auto *sync = switchRow(tr("跨端同步"), s.clipboardSync(), QString(), body);
     auto *syncToggle = sync->findChild<ToggleSwitch *>();
@@ -619,6 +691,8 @@ void ClipboardPanel::reloadHistory()
         e.source = tr("对端");
         e.agoSecs = 0;
         e.atMs = QDateTime::currentMSecsSinceEpoch();
+        e.sizeBytes = data.size();
+        e.fromPeer = true;   // 收到的条目才配说「来自 对端」
         e.oversize = data.size() > kClipSegLimit;
         if (e.oversize) {
             // 超限的条目协议侧已经不会送进来，这里再挡一道只是兜底；
@@ -650,6 +724,39 @@ void ClipboardPanel::trimHistory()
         // 队尾是最旧的（见 reloadHistory 的不变量），要淘汰的是它。
         history_.removeLast();
     }
+}
+
+// 段数：协议 §5.3，每帧最多 255 - 7 - len(MIME) 字节（Go 侧
+// MaxClipboardChunk 是同一条公式），text/plain 时每帧 238 B。
+int ClipboardPanel::segmentCountOf(const ClipEntry &e) const
+{
+    const qint64 size = e.sizeBytes > 0 ? e.sizeBytes : e.raw.size();
+    const int perFrame = 248 - e.mime.toUtf8().size();
+    if (perFrame <= 0 || size <= 0) {
+        return 0;
+    }
+    return static_cast<int>((size + perFrame - 1) / perFrame);
+}
+
+// 历史行下面那行小字。mac 端的拼法是「来源 → 本机 · 体积 · MIME」，
+// 其中「来源 → 本机」只有**收到对端**的条目才有（早先这里对每一条都写，
+// 本机自己复制的那条会显示成「主机名 → 本机」）；多帧的再带一句「N 段」。
+QString ClipboardPanel::historyHint(const ClipEntry &e) const
+{
+    if (e.oversize) {
+        return tr("%1 · 超出单条上限，未同步").arg(humanSize(e.sizeBytes));
+    }
+    QStringList parts;
+    if (e.fromPeer) {
+        parts << tr("%1 → 本机").arg(e.source);
+    }
+    parts << humanSize(e.sizeBytes > 0 ? e.sizeBytes : e.raw.size());
+    parts << e.mime;
+    const int frames = segmentCountOf(e);
+    if (frames > 1) {
+        parts << tr("%1 段").arg(frames);
+    }
+    return parts.join(QStringLiteral(" · "));
 }
 
 void ClipboardPanel::setPreviewText(const QString &text)
@@ -736,9 +843,23 @@ void ClipboardPanel::rebuildHistory()
     // 当前预览取历史首条，也就是最新一条——Go 侧只给「刚到的那条」，没有
     // 「本机现在的剪贴板是什么」的查询口，所以这里和历史首条同源。
     current_ = history_.isEmpty() ? ClipEntry() : history_.first();
-    setPreviewText(current_.raw.isEmpty() ? tr("暂无剪贴板内容") : current_.text);
+    const bool hasContent = current_.sizeBytes > 0 || !current_.raw.isEmpty();
+    setPreviewText(hasContent ? current_.text : tr("暂无剪贴板内容"));
     if (mimeBadge_ != nullptr) {
-        mimeBadge_->setText(current_.raw.isEmpty() ? QStringLiteral("--") : current_.mime);
+        mimeBadge_->setText(hasContent ? current_.mime : QStringLiteral("--"));
+    }
+    if (typeIcon_ != nullptr) {
+        // 类别图标跟着条目走（mac 端用 item.kind.iconName）：收到一张图还挂着
+        // 文本图标，等于把图片说成文字。
+        const QString iconName = current_.kind.isEmpty() ? QStringLiteral("type")
+                                                          : iconOfKind(current_.kind);
+        typeIcon_->setPixmap(icons::icon(iconName, tokens::kIconXs, p.text2)
+                                 .pixmap(tokens::kIconXs, tokens::kIconXs));
+    }
+    if (fromBox_ != nullptr && fromLabel_ != nullptr) {
+        const bool showFrom = current_.fromPeer && !current_.source.isEmpty();
+        fromLabel_->setText(showFrom ? tr("来自 %1").arg(current_.source) : QString());
+        fromBox_->setVisible(showFrom);
     }
     spec_->setText(specText(current_));
     // 没有内容时把两个动作按钮**禁用**。
@@ -746,12 +867,11 @@ void ClipboardPanel::rebuildHistory()
     // 早先它们一直是可点的，点了却在 lambda 里直接 return：既没有提示，也没
     // 有任何变化——一个点了没反应的控件。禁用比「点了没反应」诚实得多，
     // 而且按钮本身变灰，一眼就知道现在不能推。
-    const bool hasContent = !current_.raw.isEmpty();
     if (writeBtn_ != nullptr) {
-        writeBtn_->setEnabled(hasContent);
+        writeBtn_->setEnabled(hasContent && !current_.oversize);
     }
     if (pushBtn_ != nullptr) {
-        pushBtn_->setEnabled(hasContent);
+        pushBtn_->setEnabled(hasContent && !current_.oversize);
     }
 
     const QString kind = filter_ != nullptr ? filter_->currentData().toString()
@@ -789,22 +909,35 @@ void ClipboardPanel::rebuildHistory()
         auto *tl = new QHBoxLayout(trailing);
         tl->setContentsMargins(0, 0, 0, 0);
         tl->setSpacing(tokens::kS1);
+        if (e.oversize) {
+            // mac 端超限那条：warn 图标 + 「超限」徽章 + 年龄，**没有**写入
+            // 按钮——超限的条目既推不出去也写不回本机（载荷压根没留）。
+            tl->addWidget(new Badge(tr("超限"), Badge::Variant::Warn, trailing), 0,
+                          Qt::AlignVCenter);
+        }
         auto *ago = new QLabel(agoText(ageSecsOf(e)), trailing);
         ago->setFont(uiFont(tokens::kFont11));
         ago->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
         tl->addWidget(ago, 0, Qt::AlignVCenter);
-        auto *copy = new IconButton(QStringLiteral("copy"), tr("写入本地"), trailing);
-        connect(copy, &IconButton::clicked, this, [this, e] {
-            Q_EMIT localWriteRequested(e);
-            toast(tr("已写入本地剪贴板"), ToastKind::Ok);
-        });
-        tl->addWidget(copy, 0, Qt::AlignVCenter);
+        if (!e.oversize) {
+            auto *copy = new IconButton(QStringLiteral("copy"), tr("写入本地"), trailing);
+            connect(copy, &IconButton::clicked, this, [this, e] {
+                Q_EMIT localWriteRequested(e);
+                toast(tr("已写入本地剪贴板"), ToastKind::Ok);
+            });
+            tl->addWidget(copy, 0, Qt::AlignVCenter);
+        }
 
-        auto *row = new ClipRow(iconOfKind(e.kind), e.text,
-                                tr("%1 → 本机 · %2 · %3").arg(e.source, humanSize(e.raw.size()),
-                                                             e.mime),
-                                trailing, host);
-        connect(row, &ClipRow::clicked, this, [this, e] { Q_EMIT localWriteRequested(e); });
+        auto *row = new ClipRow(iconOfKind(e.kind), e.text, historyHint(e), trailing, host,
+                                e.oversize ? static_cast<QWidget *>(oversizeChip(host)) : nullptr);
+        if (e.oversize) {
+            // 点超限那一条要说清楚它为什么不能写、不能推，别让点击无声无息。
+            connect(row, &ClipRow::clicked, this, [this, e] {
+                toast(tr("该条目超出单条上限，未同步"), ToastKind::Danger);
+            });
+        } else {
+            connect(row, &ClipRow::clicked, this, [this, e] { Q_EMIT localWriteRequested(e); });
+        }
         rowsLayout_->addWidget(row);
     }
 }

@@ -1,28 +1,39 @@
-// 设备与连接浮板：对应 design/unified/screens/connections.html。
+// 设备与连接浮板（对齐 mac 端 ConnectionsView.swift）。
 //
-// 顶栏「已连接 X / 添加设备」、设备卡列表、五个可折叠区（键位映射 / 网络延迟 /
-// 剪贴板同步 / 文件传输 / 设备布局）。网络延迟折叠区接的是真采样，文件传输区
-// 读的是 FilesPanel 的只读快照；键位映射与剪贴板两区尚未接通，按设计稿摆出
-// 静态结构并标注；设备布局的格子可点但不可拖（没有可持久化的屏幕布局）。
+// 结构与 mac 同构：
+//
+//   头部        状态胶囊 + 「连接设备」按钮
+//   接管行      仅在**有对端且已连接**时出现：接管对端键鼠开关 + 授权提示
+//   设备列表    本机（带「本机」徽章）+ 对端（带延迟胶囊 + 断开按钮）
+//               没有对端时补一句「连接设备后，对端会出现在这里」
+//   快捷入口    键位映射 / 网络延迟 / 剪贴板 / 文件传输 四个小按钮
+//   页脚        「DirectLink · 帧级 HMAC 校验」+ 设置 + 关闭
+//
+// 之前这一屏是照 design/unified/screens/connections.html 做的：五个可折叠区
+// （键位映射 / 网络延迟 / 剪贴板同步 / 文件传输 / 设备布局）竖着堆在下面。
+// 那是设计稿原型的布局，mac 实现时换成了上面这套——「设备列表 + 快捷入口」，
+// 细节留给各自的浮板。
+//
+// 三端对齐以 mac 的实现为准，本屏按它重排：折叠区换成快捷入口，折叠区里
+// 那些内容并没有丢，它们本来就各有各的浮板（延迟、剪贴板、文件传输、键位
+// 映射），入口从托盘和这里的快捷入口两处都能进。
 #ifndef FLOWGRID_CONNECTIONSPANEL_H
 #define FLOWGRID_CONNECTIONSPANEL_H
 
 #include "ui/panel.h"
 
+class QLabel;
 class QVBoxLayout;
-class QGridLayout;
 
 namespace fg {
 
 // 这些类定义在 widgets.h，本头只需要指针，前向声明必须落在 fg 命名空间内，
 // 否则声明出的是全局同名类，与实际类型对不上。
-class ClipboardPanel;
-class DeviceCard;
-class FilesPanel;
-class KeymapPanel;
 class StatusDot;
-class BarChart;
-class Badge;
+class ToggleSwitch;
+
+// Device 定义在 core/devicemanager.h。
+struct Device;
 
 class ConnectionsPanel : public Panel {
     Q_OBJECT
@@ -31,73 +42,61 @@ public:
 
     void refresh();
 
-    // 剪贴板与文件传输两个折叠区的数据源。传进来之后本屏只读它们的公开状态，
-    // 不另开会话、不另存一份计数——FileSender / FileReceiver 同时只有一个活动
-    // 事务，两个面板各拿一份会互抢。
-    void attachPanels(ClipboardPanel *clip, FilesPanel *files);
-
-    // 键位映射折叠区只读键位浮板的规则表：早先这里写死三条示例 + 「3 条生效」，
-    // 而键位浮板里生效的有五条，同一个应用里两块屏各说各话。
-    void attachKeymap(KeymapPanel *keymap);
-
 public Q_SLOTS:
-    // 每个采样周期推一根柱、更新均值徽章；与普通刷新分开，避免重复推点。
+    // 采样周期到了：刷新设备行上的延迟读数。
     void onSampled();
-    // 两个数据源各自的变化：剪贴板只改徽章，文件传输要重建整区。
-    void refreshClipboardBadge();
-    void refreshClipboardFootHint();
-    void rebuildFileRows();
 
 Q_SIGNALS:
     // 页脚「设置」按钮：切到设置浮板由 main 统一调度（浮板互斥逻辑在 main）。
     void settingsRequested();
 
-    // 顶栏「添加设备」：切到配对浮板，同样交给 main 调度。
+    // 头部「连接设备」：切到配对浮板，同样交给 main 调度。
     void addRequested();
 
-    // 设计稿里键位映射区的「编辑」、网络延迟区的「详情」、剪贴板区的入口，
-    // 同样是跨屏跳转，统一交给 main 调度。
+    // 快捷入口：跨屏跳到各自的浮板，统一交给 main 调度。
     void keymapRequested();
     void latencyRequested();
     void clipboardRequested();
     void filesRequested();
 
 private:
-    QWidget *buildFileSection();
-    QWidget *buildLayoutSection();
+    QWidget *buildHeader();
+    QWidget *buildCaptureRow();
     QWidget *buildDeviceList();
-    QWidget *buildKeymapSection();
-    QWidget *buildLatencySection();
-    QWidget *buildClipboardSection();
+    QWidget *buildQuickLinks();
     QWidget *buildFooter();
+
     void rebuildDeviceCards();
-    // 3×3 屏幕布局网格：与设备卡一样跟着设备状态重建（切换控制端会挪「当前」）。
-    void rebuildLayoutGrid();
-    // 键位映射摘要：读键位浮板的表，最多列前三条生效规则。
-    void rebuildKeymapGrid();
-    void updateLatencyBadge();
+
+    // 当前控制的对端（在线的非本机设备）。没有对端时返回 nullptr。
+    //
+    // 「有没有对端」在这屏有三处要用：状态胶囊、接管行、设备列表的空态提示，
+    // 各写一遍判断早晚会不一致，所以收成一个口子。
+    const Device *activePeer() const;
+
+    // 给界面用的设备副本：只有在线的对端才标成「当前控制端」。
+    //
+    // 模型里本机恒为 active（延迟采样以它为锚），照搬过来本机那行会是一块
+    // 主色底——可在这屏里「当前控制的是本机自己」并不是要说明的事。
+    Device displayDevice(const Device &d) const;
+
+    // 状态胶囊的文案（对齐 mac ConnectionStatus.displayText）。
+    QString statusText() const;
+
+    // 接管对端键鼠：开关拨到 on 时真正去开捕获引擎。开不起来就如实回退，
+    // 不留一个「显示为开、实际没接管」的开关。
+    void setCaptureEnabled(bool on);
 
     QVBoxLayout *contentLayout_ = nullptr;
     QVBoxLayout *deviceListLayout_ = nullptr;
-    QGridLayout *layoutGrid_ = nullptr;
-    QGridLayout *keymapGrid_ = nullptr;
-    Badge *keymapBadge_ = nullptr;
-    KeymapPanel *keymap_ = nullptr;
     QWidget *deviceList_ = nullptr;
+    QWidget *captureRow_ = nullptr;
+    QWidget *statusPill_ = nullptr;
     StatusDot *statusDot_ = nullptr;
     QLabel *statusLabel_ = nullptr;
-    BarChart *chart_ = nullptr;
-    Badge *latencyBadge_ = nullptr;
-
-    // 文件传输区：正文容器 + 行容器 + 徽章，外加两个数据源。
-    ClipboardPanel *clipboard_ = nullptr;
-    FilesPanel *files_ = nullptr;
-    Badge *clipboardBadge_ = nullptr;
-    // 剪贴板折叠区页脚那句「历史保留 N 条」，N 跟着 sync/clipboard_history 走。
-    QLabel *clipboardFootHint_ = nullptr;
-    QWidget *fileBody_ = nullptr;
-    QVBoxLayout *fileRows_ = nullptr;
-    Badge *fileBadge_ = nullptr;
+    ToggleSwitch *captureSwitch_ = nullptr;
+    QLabel *captureHint_ = nullptr;
+    bool captureEnabled_ = false;
 };
 
 } // namespace fg

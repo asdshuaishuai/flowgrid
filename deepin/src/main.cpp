@@ -11,6 +11,7 @@
 #include "core/designtokens.h"
 #include "core/devicemanager.h"
 #include "core/hosttheme.h"
+#include "core/laniddiscovery.h"
 #include "core/settings.h"
 #include "core/theme.h"
 #include "ui/clipboardpanel.h"
@@ -387,6 +388,15 @@ int main(int argc, char *argv[])
     g_clipboard = new ClipboardPanel;
     g_files = new FilesPanel;
 
+    // 智能连接（LAN 私有链发现，§3.1）在这里起一次。
+    //
+    // 发现是**全局**状态：托盘浮层、连接屏、添加设备屏可能同时要看同一份
+    // 对端列表，各自建一份 UDP 收包 socket 只会让同一份通告被收两遍、
+    // 还会互相抢端口。所以做成进程级单例（LanIdDiscovery），由这里统一起。
+    //
+    // 起不来也不拦着应用：起不来只是列表一直空，界面会照实说明原因。
+    LanIdDiscovery::instance().start();
+
     // context 用 sender 自己而非 &app：本 TU 里 DApplication 到 const QObject*
     // 的隐式转换不成立，而连接本来也该随浮板一起消失。
     QObject::connect(g_trayPopup, &TrayPopup::openConnections, g_trayPopup,
@@ -432,10 +442,9 @@ int main(int argc, char *argv[])
                      [] { g_clipboard->reloadHistory(); showPanel(g_clipboard); });
     QObject::connect(g_connections, &ConnectionsPanel::filesRequested, g_connections,
                      [] { showPanel(g_files); });
-    // 连接屏的剪贴板 / 文件传输折叠区只读对应浮板的状态，不另开会话。
-    g_connections->attachPanels(g_clipboard, g_files);
-    // 键位映射折叠区同理：只读键位浮板那张规则表。
-    g_connections->attachKeymap(g_keymap);
+    // 连接屏不再自带剪贴板 / 文件传输 / 键位映射的折叠区（照 mac 的
+    // ConnectionsView 改成「设备列表 + 快捷入口」），那三屏的内容各归各的
+    // 浮板所有，这里也就不需要再往连接屏上挂一份数据源。
     // 托盘那两个徽标同样只读别人的数据：谁变了就推一次，不在托盘里另存一份。
     auto syncTrayCounts = [tray = g_trayPopup, clip = g_clipboard, files = g_files] {
         tray->setCounts(clip->historyCount(), files->activeCount());
@@ -451,8 +460,6 @@ int main(int argc, char *argv[])
     // 文件传输」两个徽标就一直停在占位的「—」，看着像功能没接上。
     // 主动同步一次，之后的变化照旧走信号。
     syncTrayCounts();
-    QObject::connect(g_pairing, &PairingPanel::doneRequested, g_pairing,
-                     [] { showPanel(g_connections); });
     QObject::connect(g_clipboard, &ClipboardPanel::clearHistoryRequested, g_clipboard, [] {
         // 历史目前只活在 ClipboardPanel 进程内，清完就真没了；等接上持久化后
         // 这里要改成删盘上的那份，这里先明确记一笔而不是悄悄无事发生。

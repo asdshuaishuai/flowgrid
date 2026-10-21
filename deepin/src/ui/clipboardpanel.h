@@ -28,7 +28,13 @@ struct ClipEntry {
     // 条目产生的时刻（毫秒）。列表上的「12s」是**算出来的**，不是写死的：
     // 写死一个秒数，条目在历史里躺一小时也还写着「12s」。
     qint64 atMs = 0;
-    bool oversize = false;   // 超 63,240 B 上限，不入库（设计稿的「超限」）
+    bool oversize = false;   // 超 63,240 B 上限（设计稿的「超限」）
+    // 条目体积（字节）。超限的条目**不留载荷**——一次复制可能几百 MB，
+    // 留在历史里就是几十张图的内存——只留体积与小段预览，所以体积要单存。
+    qint64 sizeBytes = 0;
+    // 这条是收到的还是本机自己复制的。mac 端的「来自 X」只在**收到对端**的
+    // 条目上出现，本机复制的那条没有「来自」——这一位就是那盏灯。
+    bool fromPeer = false;
 };
 
 class ClipboardPanel : public Panel {
@@ -82,6 +88,12 @@ private:
     // 标题栏胶囊跟着 sync/clipboard_enabled 走：设置屏关掉同步后，这一屏
     // 顶上不能还写着「同步中」。
     void refreshSyncState();
+    // 段数：协议 §5.3，每帧最多 255 - 7 - len(MIME) 字节（Go 侧
+    // MaxClipboardChunk 同一公式）。
+    int segmentCountOf(const ClipEntry &e) const;
+    // 历史行下面那行小字。mac 端的拼法是「来源 → 本机 · 体积 · MIME」，
+    // 其中「来源 → 本机」只有**收到对端**的条目才有；多帧的再带一句「N 段」。
+    QString historyHint(const ClipEntry &e) const;
 
     proto::ClipboardSession session_;
     QVBoxLayout *historyLayout_ = nullptr;
@@ -93,6 +105,13 @@ private:
     // 头部那颗 MIME 徽章跟着 current_ 走。设计稿上写死了 text/plain（示例数据），
     // 但这一屏是能拿到真实 MIME 的——收到一张图还挂着 text/plain 就是假话。
     Badge *mimeBadge_ = nullptr;
+    // 头部那颗类型图标也跟着 current_ 走：mac 端用条目自己的类别图标
+    // （type / code / link / image），写死成「文本」等于把图片说成文字。
+    QLabel *typeIcon_ = nullptr;
+    // 头部右侧的「来自 …」。mac 端只有收到对端的条目才画这一块，本机复制
+    // 的那条不画——写死一句「来自 本机」在收到对端条目时就是假话。
+    QWidget *fromBox_ = nullptr;
+    QLabel *fromLabel_ = nullptr;
     // 「写入本地」「推送」两个动作按钮。没有剪贴板内容时它们是禁用的——
     // 点了没反应的控件比禁用更糟。
     FgButton *writeBtn_ = nullptr;

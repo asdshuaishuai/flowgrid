@@ -229,6 +229,13 @@ const QHash<QString, QString> &paths()
                         " 0 0-6.36-6.36l-1.38 1.38\"/>"
                         "<path d=\"M13.6 10.4a4.5 4.5 0 0 0-6.8-.45l-2.4 2.4a4.5 4.5"
                         " 0 0 0 6.36 6.36l1.38-1.38\"/>")},
+        // 断开：断链。mac 端连接屏的设备行右侧就是这枚（FGIconButton("unlink")），
+        // DDE 这一侧此前没有对应图标——用 "close" 顶替会把「断开链路」说成
+        // 「关掉设备」，两件事不是一回事。断口 + 一道斜杠，链环不闭合。
+        {QStringLiteral("unlink"),
+         QStringLiteral("<path d=\"M17.4 12.6l1.2-1.2a4.3 4.3 0 0 0-6.1-6.1l-1.2 1.2\"/>"
+                        "<path d=\"M6.6 11.4l-1.2 1.2a4.3 4.3 0 0 0 6.1 6.1l1.2-1.2\"/>"
+                        "<path d=\"M4.4 4.4 19.6 19.6\"/>")},
         {QStringLiteral("grip"),
          QStringLiteral("<circle cx=\"9.6\" cy=\"7\" r=\"1.7\" fill=\"2\"/>"
                         "<circle cx=\"14.4\" cy=\"7\" r=\"1.7\" fill=\"2\"/>"

@@ -10,8 +10,10 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QDragEnterEvent>
+#include <QDragLeaveEvent>
 #include <QDropEvent>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -144,12 +146,14 @@ void DropZone::enterEvent(QEnterEvent *e)
                   QStringLiteral("border:2px dashed %1;border-radius:%2px;background:%3")
                       .arg(css(p.accent), QString::number(tokens::kRadiusCard),
                            css(p.accentSoft)));
+    Q_EMIT hoverChanged(true);
     QWidget::enterEvent(e);
 }
 
 void DropZone::leaveEvent(QEvent *e)
 {
     applyRestingStyle();
+    Q_EMIT hoverChanged(false);
     QWidget::leaveEvent(e);
 }
 
@@ -170,12 +174,21 @@ void DropZone::dragEnterEvent(QDragEnterEvent *e)
                       QStringLiteral("border:2px dashed %1;border-radius:%2px;background:%3")
                           .arg(css(p.accent), QString::number(tokens::kRadiusCard),
                                css(p.accentSoft)));
+        // 拖进来了：标题换成「松开以发送」（mac 端 FGDropZone 的 dropTargeted 态）。
+        Q_EMIT dropTargetedChanged(true);
     }
 }
 
 void DropZone::dragMoveEvent(QDragMoveEvent *e)
 {
     e->acceptProposedAction();
+}
+
+void DropZone::dragLeaveEvent(QDragLeaveEvent *e)
+{
+    // 拖出边界：标题还原成「拖入文件，或点击选择」。
+    Q_EMIT dropTargetedChanged(false);
+    QWidget::dragLeaveEvent(e);
 }
 
 void DropZone::dropEvent(QDropEvent *e)
@@ -193,6 +206,7 @@ void DropZone::dropEvent(QDropEvent *e)
     e->acceptProposedAction();
     // 复位静止态，否则拖拽结束后会一直停在主色样式上。
     applyRestingStyle();
+    Q_EMIT dropTargetedChanged(false);
 }
 
 // ── FilesPanel ────────────────────────────────────────────────────────
@@ -291,11 +305,13 @@ QWidget *FilesPanel::buildDropZone()
     icon->setAlignment(Qt::AlignCenter);
     icon->setPixmap(icons::icon(QStringLiteral("upload"), tokens::kIconLg, p.text3)
                         .pixmap(tokens::kIconLg, tokens::kIconLg));
+    dropIcon_ = icon;
 
     auto *text = new QLabel(tr("拖入文件，或点击选择"), zone);
     text->setAlignment(Qt::AlignCenter);
     text->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
     text->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
+    dropTitle_ = text;
 
     auto *hint = new QLabel(
         tr("单文件 1 B – 16 MiB · 文件名不含路径分隔符"), zone);
@@ -307,6 +323,17 @@ QWidget *FilesPanel::buildDropZone()
     vl->addWidget(text);
     vl->addWidget(hint);
     zone->applyRestingStyle();
+
+    // 悬停 / 拖入时图标与标题转主色，拖入时标题换成「松开以发送」——
+    // mac 端 FGDropZone 就是这么做的（active / dropTargeted 两态）。
+    connect(zone, &DropZone::hoverChanged, this, [this](bool hovered) {
+        dropHovered_ = hovered;
+        updateDropZoneLook(dropHovered_ || dropTargeted_);
+    });
+    connect(zone, &DropZone::dropTargetedChanged, this, [this](bool targeted) {
+        dropTargeted_ = targeted;
+        updateDropZoneLook(dropHovered_ || dropTargeted_);
+    });
 
     connect(zone, &DropZone::clicked, this, [this] {
         Q_EMIT fileChosen();   // 文件选择对话框由 main 统一弹
@@ -320,6 +347,21 @@ QWidget *FilesPanel::buildDropZone()
         offerFile(paths.first());
     });
     return zone;
+}
+
+// 拖放区的图标与标题：悬停或拖入时转主色，拖入时标题换成「松开以发送」。
+void FilesPanel::updateDropZoneLook(bool active)
+{
+    const Palette &p = Theme::instance().palette();
+    if (dropIcon_ != nullptr) {
+        dropIcon_->setPixmap(icons::icon(QStringLiteral("upload"), tokens::kIconLg,
+                                         active ? p.accentText : p.text3)
+                                 .pixmap(tokens::kIconLg, tokens::kIconLg));
+    }
+    if (dropTitle_ != nullptr) {
+        dropTitle_->setText(dropTargeted_ ? tr("松开以发送") : tr("拖入文件，或点击选择"));
+        dropTitle_->setStyleSheet(QStringLiteral("color:%1").arg(css(active ? p.accentText : p.text1)));
+    }
 }
 
 QWidget *FilesPanel::buildRecords()
@@ -353,7 +395,10 @@ QWidget *FilesPanel::buildSettings()
     auto *body = new QWidget(this);
     auto *vl = new QVBoxLayout(body);
     vl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
-    vl->setSpacing(tokens::kS2);
+    // 行距跟 mac 端对齐：FGSection 内容是 VStack(spacing: s3)，设计稿
+    // .section__body 里也是 .col-3（gap 12）。这里原来写的是 s2(8)，整块比
+    // 设计稿挤一档。
+    vl->setSpacing(tokens::kS3);
 
     auto row = [body, &p](const QString &label, QWidget *control, const QString &hint) {
         auto *w = new QWidget(body);
@@ -401,6 +446,7 @@ QWidget *FilesPanel::buildSettings()
     // 这种从中间截断的残句——用户根本看不出目录在哪。改成家目录缩写，
     // 用户手动改完再把 ~ 展开回去。
     const QString defaultDir = QDir::homePath() + QStringLiteral("/Downloads/FlowGrid");
+    receiveDir_ = defaultDir;
     const auto shortenDir = [](const QString &path) {
         const QString home = QDir::homePath();
         return path.startsWith(home) ? QStringLiteral("~") + path.mid(home.size()) : path;
@@ -423,11 +469,13 @@ QWidget *FilesPanel::buildSettings()
     dirEdit->setFont(uiFont(tokens::kFont12));
     applyInputStyle(dirEdit);
     // 失焦即规范化：留着一段没展开的 ~ 会让「当前接收目录」名不副实。
-    connect(dirEdit, &QLineEdit::editingFinished, dirEdit, [dirEdit, expandDir] {
+    connect(dirEdit, &QLineEdit::editingFinished, dirEdit, [this, dirEdit, expandDir] {
         const QString full = expandDir(dirEdit->text());
         if (full != dirEdit->text()) {
             dirEdit->setText(full);
         }
+        // 手改的目录同样算数：页脚那个「接收目录」按钮要开的就是它。
+        receiveDir_ = expandDir(dirEdit->text());
     });
     auto *dirBox = new QWidget(body);
     auto *dirHl = new QHBoxLayout(dirBox);
@@ -436,9 +484,19 @@ QWidget *FilesPanel::buildSettings()
     dirHl->addWidget(dirEdit);
     auto *changeDir = new FgButton(tr("更改"), FgButton::Variant::Secondary, true, dirBox);
     changeDir->setIcon(QStringLiteral("folder"));
-    connect(changeDir, &FgButton::clicked, this, [dirEdit, defaultDir] {
-        dirEdit->setText(defaultDir);
-        qCInfo(lcFiles) << "接收目录已改回默认路径，协议落地前不持久化";
+    // 「更改」要真能改目录。早先这里点一下只是把输入框填回默认路径——按钮写着
+    // 「更改」，按下去却把用户自己挑的目录抹掉，行为与文案对不上。mac 端是
+    // 弹目录选择器，这里也弹一个。
+    connect(changeDir, &FgButton::clicked, this, [this, dirEdit, shortenDir] {
+        const QString chosen = QFileDialog::getExistingDirectory(
+            this, tr("选择接收目录"), receiveDir_);
+        if (chosen.isEmpty()) {
+            return;   // 取消了就什么都不做，不改目录
+        }
+        receiveDir_ = chosen;
+        dirEdit->setText(shortenDir(chosen));
+        qCInfo(lcFiles) << "接收目录已改为" << chosen
+                        << QStringLiteral("，协议落地前不持久化");
     });
     dirHl->addWidget(changeDir);
     vl->addWidget(row(tr("接收目录"), dirBox, QString()));
@@ -460,9 +518,11 @@ QWidget *FilesPanel::buildSettings()
     auto *badgeHost = new QWidget(this);
     auto *bhl = new QHBoxLayout(badgeHost);
     bhl->setContentsMargins(0, 0, 0, 0);
+    // mac 端这个徽章是 neutral 档（写死「自动接收已开」）。这里跟着开关走，
+    // 免得关掉之后还写着「已开」——但档位仍按 mac 端走 neutral，不拿绿色
+    // 冒充状态。
     bhl->addWidget(new Badge(settings.fileTransfer() ? tr("自动接收已开") : tr("自动接收已关"),
-                             settings.fileTransfer() ? Badge::Variant::Ok : Badge::Variant::Neutral,
-                             badgeHost));
+                             Badge::Variant::Neutral, badgeHost));
     return new Collapsible(tr("接收设置"), QStringLiteral("settings"), body, badgeHost, this);
 }
 
@@ -485,8 +545,15 @@ QWidget *FilesPanel::buildFooter()
 
     auto *openDir = new FgButton(tr("接收目录"), FgButton::Variant::Secondary, true, foot);
     openDir->setIcon(QStringLiteral("folder"));
-    connect(openDir, &FgButton::clicked, this, [foot] {
-        const QString dir = QDir::homePath();
+    connect(openDir, &FgButton::clicked, this, [this] {
+        // 开的要是**设置里那个接收目录**，不是家目录：按钮写着「接收目录」，
+        // 打开的却是 ~ 的话，用户得到的信息是错的。
+        const QString dir = receiveDir_.isEmpty() ? QDir::homePath() : receiveDir_;
+        if (!QDir(dir).exists() && !QDir().mkpath(dir)) {
+            qCInfo(lcFiles) << "无法创建接收目录" << dir;
+            toast(tr("无法打开接收目录"), ToastKind::Danger);
+            return;
+        }
         if (QDesktopServices::openUrl(QUrl::fromLocalFile(dir))) {
             toast(tr("已打开接收目录"), ToastKind::Ok);
         } else {
@@ -766,26 +833,25 @@ void FilesPanel::rebuildTransfers()
         bar->setProgress(pct);
         vl->addWidget(bar);
 
-        // .xfer__meta：大小 · 方向 · 速率 · 剩余。入站方向没有速率可算——
-        // FileReceiver 只导出 takeOffer / takeComplete，没有 FileSender::poll
-        // 那样的进度口，拿不到已收字节数（已开 issue #3），所以如实显示「—」。
-        // .xfer__meta：大小 · 方向 · 速率 · 剩余，合成一个可省略的单行。
-        // 拆成七八个 QLabel 的话，每个的 minimumSizeHint 都按全文算，加起来的
-        // 最小宽度会顶穿定宽浮板；ElidedLabel 的横向最小宽度是 0，超长时
-        // 整行统一截断而不是把右侧挤出去。
+        // .xfer__meta：方向 · 对端 · 大小 · 速率 · 剩余。mac 端是
+        // 「→ peer · size · speed · eta」，方向在前；这里原来把大小写在最前，
+        // 与设计稿/mac 端那一行对不上。整行合成一个可省略的单行：拆成七八个
+        // QLabel 的话，每个的 minimumSizeHint 都按全文算，加起来的最小宽度
+        // 会顶穿定宽浮板；ElidedLabel 的横向最小宽度是 0，超长时整行统一
+        // 截断而不是把右侧挤出去。
         QStringList parts;
-        parts << humanSize(e.totalBytes);
         const qint64 elapsed = e.startedAtMs > 0 ? QDateTime::currentMSecsSinceEpoch()
                                                    - e.startedAtMs
                                                   : 0;
         if (e.inbound) {
             // 入站没有速率可算：FileReceiver 只导出 takeOffer / takeComplete，
             // 没有 FileSender::poll 那样的进度口，拿不到已收字节数（已开 issue）。
-            parts << tr("来自 %1").arg(e.peer) << tr("接收中 · 进度不可见");
+            parts << QStringLiteral("← %1").arg(e.peer) << humanSize(e.totalBytes)
+                  << tr("接收中 · 进度不可见");
         } else {
             // 设计稿这里是一个 arrowRight 图标；这里用同形的「→」字符，
             // 免得整行拆成七八个控件后又在宽度上打架。
-            parts << QStringLiteral("→ %1").arg(e.peer);
+            parts << QStringLiteral("→ %1").arg(e.peer) << humanSize(e.totalBytes);
             const double bps =
                 elapsed > 0 && e.sentBytes > 0 ? double(e.sentBytes) * 1000.0 / double(elapsed) : 0;
             if (bps > 0) {
@@ -815,10 +881,11 @@ void FilesPanel::rebuildTransfers()
 
     if (active == 0) {
         // 卡片留白来自 .xfer / .list__row 自己的 padding，空列表没有行，
-        // 不给的话文字会贴着卡片边框。
-        transferRows_->addWidget(new EmptyState(QStringLiteral("upload"),
-                                                tr("没有正在传的文件"),
-                                                tr("从下面的拖放区选一个文件开始"), host));
+        // 不给的话文字会贴着卡片边框。空态文案跟 mac 端对齐。
+        transferRows_->addWidget(new EmptyState(QStringLiteral("check"),
+                                                tr("没有进行中的传输"),
+                                                tr("拖入文件即可发送（单文件 1 B – 16 MiB）"),
+                                                host));
     }
 }
 
@@ -846,10 +913,16 @@ void FilesPanel::rebuildRecords()
         // 也一律写成「SHA-256 不符，未交付」，是在替文件喊冤。
         const bool checksumFail =
             e.failed && e.errCode == proto::errorcode::kInvalidPayload;
+        // 超时（0x15）单独一档：mac 端有 timedOut 这一态，徽章「超时」+
+        // warn 配色，跟「传输失败」不是一回事。
+        const bool timedOut =
+            e.failed && e.errCode == proto::errorcode::kTransferTimeout;
         // 三种失败各有各的图标与配色：拒绝是对端的决定、校验失败是数据损坏、
         // 超限是根本没上线。对不上号只会让用户以为是同一种问题。
         const StatusColor tone =
-            ok ? p.ok : (e.oversize ? p.danger : (e.rejected ? p.warn : p.danger));
+            ok ? p.ok
+               : (e.oversize ? p.danger
+                             : (e.rejected || timedOut ? p.warn : p.danger));
         const QString iconName =
             ok ? QStringLiteral("check")
                : (e.oversize ? QStringLiteral("warn")
@@ -871,6 +944,8 @@ void FilesPanel::rebuildRecords()
                 hint += tr(" · 对端已拒绝");
             } else if (checksumFail) {
                 hint += tr(" · SHA-256 不符，未交付");
+            } else if (timedOut) {
+                hint += tr(" · 超时未完成，未交付");
             } else {
                 hint += tr(" · 传输中断，未交付");
             }
@@ -888,10 +963,11 @@ void FilesPanel::rebuildRecords()
             ok ? tr("完成")
                : (e.oversize ? tr("超限")
                              : (e.rejected ? tr("已拒绝")
-                                           : (checksumFail ? tr("校验失败")
-                                                           : tr("传输失败")))),
-            ok ? Badge::Variant::Ok : (e.rejected ? Badge::Variant::Warn
-                                                  : Badge::Variant::Danger),
+                                           : (timedOut ? tr("超时")
+                                                       : (checksumFail ? tr("校验失败")
+                                                                       : tr("传输失败"))))),
+            ok ? Badge::Variant::Ok
+               : (e.rejected || timedOut ? Badge::Variant::Warn : Badge::Variant::Danger),
             trailing);
         tl->addWidget(badge, 0, Qt::AlignVCenter);
         auto *ago = new QLabel(agoText(now - e.finishedAtMs), trailing);
@@ -910,8 +986,8 @@ void FilesPanel::rebuildRecords()
     }
 
     if (shown == 0) {
-        recordRows_->addWidget(new EmptyState(QStringLiteral("file"), tr("还没有传输记录"),
-                                              tr("传完或失败的文件会留在这里"), host));
+        recordRows_->addWidget(new EmptyState(QStringLiteral("file"), tr("暂无传输记录"),
+                                              tr("完成的发送与接收会保留在这里"), host));
     }
 }
 

@@ -1,23 +1,28 @@
+// 设备与连接浮板（对齐 mac 端 ConnectionsView.swift）。
+//
+// 这一屏照 mac 的结构重排：头部状态胶囊 + 「连接设备」按钮 →（有对端且已连接
+// 时）接管键鼠行 → 设备列表 → 快捷入口行 → 页脚。
+//
+// 之前这一屏是五个可折叠区（键位映射 / 网络延迟 / 剪贴板同步 / 文件传输 /
+// 设备布局）竖着堆着，照的是 design/unified/screens/connections.html 那版原型。
+// mac 实现时换成了现在这套「设备列表 + 快捷入口」，细节留给各自的浮板——
+// 折叠区里的内容并没有丢，它们本来就各有各的浮板，入口从托盘和这里的快捷
+// 入口两处都能进。
 #include "connectionspanel.h"
+
 #include "core/designtokens.h"
 #include "core/devicemanager.h"
+#include "core/laniddiscovery.h"
 #include "core/theme.h"
-#include "core/settings.h"
 #include "icons.h"
-#include "clipboardpanel.h"
-#include "filespanel.h"
-#include "keymappanel.h"
 #include "widgets.h"
 
-#include <QApplication>
 #include <QDateTime>
-#include <QGridLayout>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLoggingCategory>
 #include <QVBoxLayout>
-
-#include <functional>
 
 Q_LOGGING_CATEGORY(lcConnections, "flowgrid.connections")
 
@@ -31,74 +36,54 @@ QString css(const QColor &c)
     return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
 }
 
-// 与文件传输屏同一套单位，换算规则不重复写。
-QString humanSize(qint64 bytes)
-{
-    if (bytes < 1024) {
-        return QStringLiteral("%1 B").arg(bytes);
-    }
-    if (bytes < 1024 * 1024) {
-        return QStringLiteral("%1 KB").arg(bytes / 1024.0, 0, 'f', 0);
-    }
-    if (bytes < 1024LL * 1024 * 1024) {
-        return QStringLiteral("%1 MB").arg(bytes / (1024.0 * 1024.0), 0, 'f', 1);
-    }
-    return QStringLiteral("%1 GB").arg(bytes / (1024.0 * 1024.0 * 1024.0), 0, 'f', 1);
-}
-
+// 「3 分钟前」这类相对时间。设备行的副标题用它说明离线对端上次是什么时候
+// 见到的——mac 那边写的是设备自带的 lastSeen 字符串（同样是这个意思）。
 QString agoText(qint64 secs)
 {
     if (secs < 60) {
-        return QStringLiteral("%1s").arg(secs);
+        return QObject::tr("%1 秒前").arg(secs);
     }
     if (secs < 3600) {
-        return QStringLiteral("%1m").arg(secs / 60);
+        return QObject::tr("%1 分钟前").arg(secs / 60);
     }
-    return QStringLiteral("%1h").arg(secs / 3600);
+    if (secs < 86400) {
+        return QObject::tr("%1 小时前").arg(secs / 3600);
+    }
+    return QObject::tr("%1 天前").arg(secs / 86400);
 }
 
-// 设计稿折叠区末尾的「说明 + 小按钮」一行：
-// <div class="row between" style="padding:0 var(--s-3) var(--s-3)">
-//   <span class="t-11 c-3">…</span><a class="btn btn--sm btn--secondary">…</a>
-// 三个折叠区共用，抽出来免得各写一遍 padding 又各漂一点。
-QWidget *makeSectionFooter(const QString &hint, const QString &buttonText, QWidget *parent,
-                           const std::function<void(FgButton *)> &onClick)
+// 设备行的副标题（对齐 mac ConnectionsView.meta(for:)）。
+//
+// 本机写「本机 · <系统版本>」，在线的对端写「<系统版本> · DirectLink · 已连接」，
+// 离线的对端写上次见到的时刻。
+QString metaFor(const Device &d)
 {
-    const Palette &p = Theme::instance().palette();
-    auto *row = new QWidget(parent);
-    auto *hl = new QHBoxLayout(row);
-    hl->setContentsMargins(tokens::kS3, 0, tokens::kS3, tokens::kS3);
-    hl->setSpacing(tokens::kS2);
-
-    auto *label = new QLabel(hint, row);
-    label->setFont(uiFont(tokens::kFont11));
-    label->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-    hl->addWidget(label);
-    hl->addStretch(1);
-
-    auto *btn = new FgButton(buttonText, FgButton::Variant::Secondary, true, row);
-    // 自由函数里没有 QObject 派生带来的 connect 重载，必须写全 QObject::connect。
-    QObject::connect(btn, &FgButton::clicked, row, [onClick, btn] { onClick(btn); });
-    hl->addWidget(btn);
-    return row;
+    if (d.isLocal) {
+        return QObject::tr("本机 · %1").arg(d.platformLabel);
+    }
+    if (!d.online) {
+        if (d.lastSeenMs <= 0) {
+            return QObject::tr("已断开");
+        }
+        const qint64 secs = (QDateTime::currentMSecsSinceEpoch() - d.lastSeenMs) / 1000;
+        return agoText(qMax<qint64>(0, secs));
+    }
+    return QObject::tr("%1 · DirectLink · 已连接").arg(d.platformLabel);
 }
 
-// 一行页脚：左侧说明 + 右侧若干按钮。设计稿里 .section__body 的页脚都是这个
-// 形状，只是按钮个数从 1 个到 2 个不等，早先是按个数各写一遍。
-QWidget *makeSectionFooterRow(QWidget *hint, const QList<QWidget *> &buttons, QWidget *parent)
+// 本机有没有接管键鼠所需的权限。
+//
+// mac 上这一步是「辅助功能权限」，Linux 这边对应的是 uinput：
+// 捕获端要能打开 /dev/input/event*，注入端要能写 /dev/uinput。
+// deepin 侧靠 /etc/udev/rules.d/99-flowgrid-input.rules 授予（见 deepin/
+// install.sh），规则装完需要重新登录才生效。
+bool inputCapturePermitted()
 {
-    auto *row = new QWidget(parent);
-    auto *hl = new QHBoxLayout(row);
-    hl->setContentsMargins(tokens::kS3, 0, tokens::kS3, tokens::kS3);
-    hl->setSpacing(tokens::kS2);
-    if (hint != nullptr) {
-        hl->addWidget(hint);
-    }
-    hl->addStretch(1);
-    for (QWidget *b : buttons) {
-        hl->addWidget(b);
-    }
-    return row;
+    // 只看「能不能写 /dev/uinput」：注入端权限是硬门槛，没它连自测都做不了。
+    // 捕获端（读 event*）的规则由同一条 udev 规则一并授予，这里不重复判断，
+    // 免得两处规则不同步时界面上给出互相矛盾的结论。
+    return QFileInfo::exists(QStringLiteral("/dev/uinput"))
+           && QFileInfo(QStringLiteral("/dev/uinput")).isWritable();
 }
 
 } // namespace
@@ -107,56 +92,119 @@ ConnectionsPanel::ConnectionsPanel(QWidget *parent) : Panel(tr("设备与连接"
 {
     contentLayout_ = qobject_cast<QVBoxLayout *>(content()->layout());
 
-    // ── 顶部一行：状态胶囊 + 添加设备 ──
-    {
-        auto *row = new QWidget(this);
-        auto *hl = new QHBoxLayout(row);
-        hl->setContentsMargins(0, 0, 0, 0);
-        hl->setSpacing(tokens::kS3);
-
-        auto *pill = new QWidget(row);
-        pill->setFixedHeight(tokens::kStatusPillHeight);  // 圆角取高的一半
-        auto *pl = new QHBoxLayout(pill);
-        pl->setContentsMargins(8, 0, 8, 0);
-        pl->setSpacing(6);
-        statusDot_ = new StatusDot(pill);
-        statusLabel_ = new QLabel(tr("已连接"), pill);
-        statusLabel_->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-        pl->addWidget(statusDot_);
-        pl->addWidget(statusLabel_);
-        pill->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
-                                .arg(css(Theme::instance().palette().ok.soft),
-                                     QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
-        hl->addWidget(pill);
-        hl->addStretch(1);
-
-        auto *addBtn = new FgButton(tr("添加设备"), FgButton::Variant::Accent, false, row);
-        connect(addBtn, &FgButton::clicked, this, [this] { Q_EMIT addRequested(); });
-        hl->addWidget(addBtn);
-
-        contentLayout_->addWidget(row);
-    }
-
+    contentLayout_->addWidget(buildHeader());
     contentLayout_->addWidget(buildDeviceList());
-    contentLayout_->addWidget(buildKeymapSection());
-    contentLayout_->addWidget(buildLatencySection());
-    contentLayout_->addWidget(buildClipboardSection());
-    contentLayout_->addWidget(buildFileSection());
-    contentLayout_->addWidget(buildLayoutSection());
+    contentLayout_->addWidget(buildQuickLinks());
     setFooterWidget(buildFooter());
-    rebuildFileRows();
+
+    // 接管行只在「有已连接的对端」时才有意义（mac 同款条件）。这一行是按需
+    // 插入的：平时不占位，出现时插在头部之后。
+    captureRow_ = buildCaptureRow();
+    captureRow_->setVisible(false);
+    contentLayout_->insertWidget(1, captureRow_);
 
     auto &manager = DeviceManager::instance();
     connect(&manager, &DeviceManager::devicesChanged, this, &ConnectionsPanel::refresh);
     connect(&manager, &DeviceManager::sampled, this, &ConnectionsPanel::onSampled);
+    // 发现器起来了 / 起了新的对端，状态胶囊上「监听 24801」那句要跟着变。
+    connect(&LanIdDiscovery::instance(), &LanIdDiscovery::peersChanged, this,
+            &ConnectionsPanel::refresh);
 
     refresh();
-    // 图表**不从假数据起手**。早先这里调 prime()，用当前读数加一段随机抖动
-    // 铺满 12 根柱子，好让折叠区一展开不是空白——可那 12 根柱子是从没量过
-    // 的数，整片图表都是假的。现在它从空开始，随真实采样一根根长出来
-    // （每 2 秒一根，24 秒填满）；空的时候画布上写「等待采样」。
 }
 
+// ── 头部：状态胶囊 + 「连接设备」 ──────────────────────────────────────
+QWidget *ConnectionsPanel::buildHeader()
+{
+    auto *row = new QWidget(this);
+    auto *hl = new QHBoxLayout(row);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->setSpacing(tokens::kS3);
+
+    // 胶囊：20px 高、左右 8px 内边距、圆角取高的一半。
+    statusPill_ = new QWidget(row);
+    statusPill_->setFixedHeight(tokens::kStatusPillHeight);
+    auto *pl = new QHBoxLayout(statusPill_);
+    pl->setContentsMargins(tokens::kStatusPillHoriPad, 0, tokens::kStatusPillHoriPad, 0);
+    pl->setSpacing(6);
+    statusDot_ = new StatusDot(statusPill_);
+    statusLabel_ = new QLabel(statusPill_);
+    statusLabel_->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
+    pl->addWidget(statusDot_);
+    pl->addWidget(statusLabel_);
+    hl->addWidget(statusPill_);
+    hl->addStretch(1);
+
+    auto *addBtn = new FgButton(tr("连接设备"), FgButton::Variant::Accent, false, row);
+    addBtn->setIcon(QStringLiteral("plus"));
+    connect(addBtn, &FgButton::clicked, this, [this] { Q_EMIT addRequested(); });
+    hl->addWidget(addBtn);
+
+    return row;
+}
+
+// ── 接管对端键鼠（仅在有已连接的对端时出现） ───────────────────────────
+QWidget *ConnectionsPanel::buildCaptureRow()
+{
+    const Palette &p = Theme::instance().palette();
+    auto *card = new QWidget(this);
+    auto *vl = new QVBoxLayout(card);
+    vl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
+    vl->setSpacing(tokens::kS2);
+    // mac 端这块是 surface2 底 + 1px line2 描边 + 卡片圆角。
+    applyBoxStyle(card, QStringLiteral("background:%1;border:1px solid %2;border-radius:%3px")
+                                .arg(css(p.surface2), css(p.line2),
+                                     QString::number(tokens::kRadiusCard)));
+
+    auto *row = new QWidget(card);
+    auto *hl = new QHBoxLayout(row);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->setSpacing(tokens::kS3);
+
+    auto *textCol = new QVBoxLayout;
+    textCol->setContentsMargins(0, 0, 0, 0);
+    textCol->setSpacing(2);
+    auto *title = new QLabel(tr("接管对端键鼠"), row);
+    title->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
+    title->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
+    captureHint_ = new QLabel(row);
+    captureHint_->setFont(uiFont(tokens::kFont11));
+    captureHint_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    textCol->addWidget(title);
+    textCol->addWidget(captureHint_);
+    hl->addLayout(textCol, 1);
+
+    captureSwitch_ = new ToggleSwitch(row);
+    captureSwitch_->setToolTip(tr("把本机的键鼠事件发送到对端"));
+    hl->addWidget(captureSwitch_, 0, Qt::AlignVCenter);
+    connect(captureSwitch_, &ToggleSwitch::toggled, this,
+            [this](bool on) { setCaptureEnabled(on); });
+    vl->addWidget(row);
+
+    // 权限提示。mac 是「辅助功能权限」，Linux 这边是 uinput 权限——同形不同事，
+    // 说明文字按本平台的实际做法写，不能照抄成「辅助功能」。
+    auto *permRow = new QWidget(card);
+    auto *permHl = new QHBoxLayout(permRow);
+    permHl->setContentsMargins(0, 0, 0, 0);
+    permHl->setSpacing(tokens::kS2);
+    permHl->addWidget(banner(tr("需要 uinput 权限才能接管键鼠（安装 99-flowgrid-input.rules "
+                                "后重新登录）。"),
+                             permRow, BannerVariant::Warn),
+                       1);
+    auto *fixBtn = new FgButton(tr("去处理"), FgButton::Variant::Secondary, true, permRow);
+    connect(fixBtn, &FgButton::clicked, this, [this] {
+        // 系统里没有对应 uinput 的图形开关（它是一条 udev 规则 + 重新登录），
+        // 所以这里给的是可直接照做的命令，而不是一个点开什么都没有的面板。
+        qCInfo(lcConnections) << "接管键鼠缺少 uinput 权限，提示用户安装 udev 规则";
+        toast(tr("请安装 99-flowgrid-input.rules 后重新登录"), ToastKind::Info);
+    });
+    permHl->addWidget(fixBtn, 0, Qt::AlignVCenter);
+    vl->addWidget(permRow);
+
+    return card;
+}
+
+// ── 设备列表 ───────────────────────────────────────────────────────────
 QWidget *ConnectionsPanel::buildDeviceList()
 {
     deviceList_ = new QWidget(this);
@@ -166,539 +214,37 @@ QWidget *ConnectionsPanel::buildDeviceList()
     return deviceList_;
 }
 
-QWidget *ConnectionsPanel::buildKeymapSection()
+// ── 快捷入口 ───────────────────────────────────────────────────────────
+QWidget *ConnectionsPanel::buildQuickLinks()
 {
-    auto *body = new QWidget(this);
-    auto *vl = new QVBoxLayout(body);
-    vl->setContentsMargins(0, 0, 0, 0);
-    vl->setSpacing(0);
+    auto *row = new QWidget(this);
+    auto *hl = new QHBoxLayout(row);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->setSpacing(tokens::kS2);
 
-    // 设计稿 ui.css .mapping：3 列网格，gap 8，padding 12；每格是 .keypair
-    // （竖排，gap 5，padding 8）= [源键]→[目标键] + 下方一行说明。
-    // 早先这里摆的是「2 列 × 3 行裸键帽」，既丢了箭头也丢了说明文字，
-    // 而且 QLabel 在网格里会被拉伸到整格宽，键帽变成横贯屏幕的长条。
-    auto *grid = new QWidget(body);
-    keymapGrid_ = new QGridLayout(grid);
-    keymapGrid_->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
-    keymapGrid_->setHorizontalSpacing(tokens::kS2);
-    keymapGrid_->setVerticalSpacing(tokens::kS2);
-    vl->addWidget(grid);
-
-    // 设计稿：映射网格下面还有一行「按应用切换映射，游戏内自动停用」+「编辑」。
-    vl->addWidget(makeSectionFooter(tr("按应用切换映射，游戏内自动停用"), tr("编辑"), body,
-                                    [this](FgButton *) { Q_EMIT keymapRequested(); }));
-
-    keymapBadge_ = new Badge(QStringLiteral("—"), Badge::Variant::Neutral);
-    rebuildKeymapGrid();   // 挂上规则表前是空的，attachKeymap 会再补一次
-    return new Collapsible(tr("键位映射"), QStringLiteral("keyboard"), body, keymapBadge_);
-}
-
-// 摘要区只列前三条生效规则（设计稿这一区就是 3 列），顺序与键位浮板一致——两边
-// 读同一张表，不再各摆一份示例：早先这里写死「3 条生效」+ 三条示例，而键位浮板
-// 里生效的是 5 条，同一个应用里两块屏各说各话。
-void ConnectionsPanel::rebuildKeymapGrid()
-{
-    if (keymapGrid_ == nullptr) {
-        return;
-    }
-    clearLayout(keymapGrid_);
-    if (keymap_ == nullptr) {
-        return;
-    }
-
-    const Palette &p = Theme::instance().palette();
-    QWidget *host = keymapGrid_->parentWidget();
-    int shown = 0;
-    for (const KeyRule &rule : keymap_->rules()) {
-        if (shown >= 3) {
-            break;
-        }
-        if (!isEffectiveKeyRule(rule)) {
-            continue;
-        }
-        auto *cell = new QWidget(host);
-        auto *cl = new QVBoxLayout(cell);
-        cl->setContentsMargins(tokens::kS2, tokens::kS2, tokens::kS2, tokens::kS2);
-        cl->setSpacing(5);   // ui.css .keypair gap
-
-        auto *keys = new QWidget(cell);
-        auto *kl = new QHBoxLayout(keys);
-        kl->setContentsMargins(0, 0, 0, 0);
-        kl->setSpacing(5);   // ui.css .keys gap
-        kl->addWidget(new FgKeycap(rule.from, false, keys));
-        auto *arrow = new QLabel(keys);
-        arrow->setFixedSize(tokens::kIconXs, tokens::kIconXs);
-        arrow->setPixmap(icons::icon(QStringLiteral("arrowRight"), tokens::kIconXs, p.text3).pixmap(tokens::kIconXs, tokens::kIconXs));
-        kl->addWidget(arrow, 0, Qt::AlignVCenter);
-        kl->addWidget(new FgKeycap(rule.to, false, keys));
-        kl->addStretch(1);
-        cl->addWidget(keys);
-
-        auto *ctx = new QLabel(rule.context, cell);
-        ctx->setFont(uiFont(tokens::kFont11));
-        ctx->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-        cl->addWidget(ctx);
-
-        keymapGrid_->addWidget(cell, 0, shown);
-        ++shown;
-    }
-
-    if (keymapBadge_ != nullptr) {
-        keymapBadge_->setText(tr("%1 条生效").arg(keymap_->effectiveRuleCount()));
-    }
-}
-
-void ConnectionsPanel::attachKeymap(KeymapPanel *keymap)
-{
-    keymap_ = keymap;
-    if (keymap_ != nullptr) {
-        // 规则表将来由 YAML 加载：换了表这块摘要要跟着变，不能停在首次渲染。
-        connect(keymap_, &KeymapPanel::rulesChanged, this, &ConnectionsPanel::rebuildKeymapGrid);
-    }
-    rebuildKeymapGrid();
-}
-
-QWidget *ConnectionsPanel::buildLatencySection()
-{
-    auto *body = new QWidget(this);
-    auto *vl = new QVBoxLayout(body);
-    vl->setContentsMargins(0, 0, 0, 0);
-    vl->setSpacing(0);
-
-    chart_ = new BarChart(body);
-    vl->addWidget(chart_);
-
-    auto *axis = new QWidget(body);
-    auto *al = new QHBoxLayout(axis);
-    al->setContentsMargins(tokens::kS3, 0, tokens::kS3, tokens::kS3);
-    // 设计稿 ui.css .chart__axis：两端各一个时间标记（connections 是 24s 窗口，
-    // latency 浮板是 60s 窗口）。采样节奏那句话归下面的页脚行，别在这儿重复。
-    auto *left = new QLabel(tr("-24s"), axis);
-    auto *right = new QLabel(tr("现在"), axis);
-    for (QLabel *l : {left, right}) {
-        l->setFont(uiFont(tokens::kFont11));
-        l->setStyleSheet(
-            QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
-    }
-    al->addWidget(left);
-    al->addStretch(1);
-    al->addWidget(right);
-    vl->addWidget(axis);
-
-    // 设计稿：图表区下面一行「每 2 秒采样一次」+「详情」。这里左侧文案和上面
-    // 的轴行是同一句，保留轴行放「采样历史 / 现在」，把采样节奏交给这行。
-    vl->addWidget(makeSectionFooter(tr("每 2 秒采样一次"), tr("详情"), body,
-                                    [this](FgButton *) { Q_EMIT latencyRequested(); }));
-
-    latencyBadge_ = new Badge(tr("均值 --"), Badge::Variant::Ok);
-    return new Collapsible(tr("网络延迟"), QStringLiteral("activity"), body, latencyBadge_);
-}
-
-QWidget *ConnectionsPanel::buildClipboardSection()
-{
-    auto *body = new QWidget(this);
-    auto *vl = new QVBoxLayout(body);
-    vl->setContentsMargins(0, tokens::kS2, 0, tokens::kS2);
-    vl->setSpacing(tokens::kS1);
-
-    // 设计稿这一区列的是最近几条已同步的剪贴板条目。Go 侧 ClipboardSession 只
-    // 提供一次性出队的 takePending，没有历史留存；剪贴板浮板已经把那批条目收走
-    // 并展示了，所以这里不再重复列一遍，也不再挂「cgo 桥尚未导出」这种早就过时
-    // 的说明——保留一个入口指向剪贴板浮板即可。
-    const Palette &p = Theme::instance().palette();
-    auto *note = new QLabel(tr("最近同步的条目在剪贴板浮板内查看"), body);
-    note->setWordWrap(true);
-    note->setFont(uiFont(tokens::kFont11));
-    note->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-    // 设计稿 .section__body 里的内容左右各留 12px。这块的 vl 是 0 左右边距的
-    // （下面的 makeSectionFooter 自带 12px，两处一叠就成了 24px），所以正文得
-    // 自己套一层带边距的壳，否则这句话会直接贴着卡片描边，比同屏其它折叠区
-    // 的内缩明显窄一截。
-    auto *noteRow = new QWidget(body);
-    auto *noteHl = new QHBoxLayout(noteRow);
-    noteHl->setContentsMargins(tokens::kS3, 0, tokens::kS3, 0);
-    noteHl->setSpacing(0);
-    noteHl->addWidget(note);
-    vl->addWidget(noteRow);
-
-    // 设计稿这一区的页脚是「跨端同步已加密，历史保留 N 条」+ 详情 + 清空。
-    // 保留条数跟着设置走（sync/clipboard_history），别写死 50。
-    clipboardFootHint_ = new QLabel(body);
-    clipboardFootHint_->setFont(uiFont(tokens::kFont11));
-    clipboardFootHint_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-    auto *open = new FgButton(tr("打开剪贴板"), FgButton::Variant::Secondary, true, body);
-    connect(open, &FgButton::clicked, this, [this] { Q_EMIT clipboardRequested(); });
-    auto *clear = new FgButton(tr("清空"), FgButton::Variant::Ghost, true, body);
-    connect(clear, &FgButton::clicked, this, [this] {
-        // 历史归剪贴板浮板所有，这里只调它的公开入口，不另存一份计数。
-        if (clipboard_ != nullptr) {
-            clipboard_->clearHistory();
-            toast(tr("已清空同步历史"), ToastKind::Ok);
-        } else {
-            qCInfo(lcConnections) << "剪贴板浮板未挂上，清空按钮暂时无处可去";
-        }
-    });
-    vl->addWidget(makeSectionFooterRow(clipboardFootHint_, {open, clear}, body));
-
-    clipboardBadge_ = new Badge(QStringLiteral("—"), Badge::Variant::Neutral);
-    refreshClipboardBadge();
-    refreshClipboardFootHint();
-    return new Collapsible(tr("剪贴板同步"), QStringLiteral("clipboard"), body,
-                           clipboardBadge_);
-}
-
-// ── 文件传输折叠区 ────────────────────────────────────────────────────
-//
-// 传输本身归 FilesPanel 所有（FileSender / FileReceiver 只有一个活动事务，
-// 两个面板各开一份会话只会互相抢）。这里只读它导出的快照，源一变就重建。
-QWidget *ConnectionsPanel::buildFileSection()
-{
-    fileBody_ = new QWidget(this);
-    fileRows_ = new QVBoxLayout(fileBody_);
-    fileRows_->setContentsMargins(0, 0, 0, 0);
-    fileRows_->setSpacing(0);
-
-    fileRows_->addWidget(
-        makeSectionFooter(tr("单文件上限 16 MiB · SHA-256 校验后交付"), tr("详情"), fileBody_,
-                          [this](FgButton *) { Q_EMIT filesRequested(); }));
-
-    fileBadge_ = new Badge(tr("空闲"), Badge::Variant::Neutral);
-    return new Collapsible(tr("文件传输"), QStringLiteral("file"), fileBody_, fileBadge_);
-}
-
-void ConnectionsPanel::rebuildFileRows()
-{
-    if (fileRows_ == nullptr) {
-        return;
-    }
-    clearLayout(fileRows_);
-    const Palette &p = Theme::instance().palette();
-
-    QList<XferSummary> list;
-    if (files_ != nullptr) {
-        list = files_->transferSummary();
-    }
-
-    // 徽章讲的是进行中的路数：设计稿给的是 ok 档的「1 项进行中」。
-    int active = 0;
-    for (const XferSummary &s : list) {
-        if (s.state == XferSummary::State::Active) {
-            ++active;
-        }
-    }
-    if (fileBadge_ != nullptr) {
-        fileBadge_->setText(active > 0 ? tr("%1 项进行中").arg(active) : tr("空闲"));
-        fileBadge_->setVariant(active > 0 ? Badge::Variant::Ok : Badge::Variant::Neutral);
-    }
-
-    // 设计稿 .xfer 列表只给两条：一条进行中、一条已完成。多余的终态条目让
-    // 这一屏去文件传输浮板看，这里只负责「现在有没有东西在跑」。
-    QList<XferSummary> shown;
-    for (const XferSummary &s : list) {
-        if (s.state == XferSummary::State::Active) {
-            shown.append(s);
-        }
-    }
-    // 终态按「最新在前」挑：transferSummary() 给的是追加序（由旧到新），
-    // 跟文件浮板「最新的在最上面」相反，两屏的行序就会自相矛盾
-    // （41 分钟前 排在 3 分钟前 上面）。倒着取。
-    for (int i = list.size() - 1; i >= 0; --i) {
-        const XferSummary &s = list.at(i);
-        if (s.state != XferSummary::State::Active && shown.size() < 2) {
-            shown.append(s);
-        }
-    }
-
-    if (shown.isEmpty()) {
-        fileRows_->addWidget(new EmptyState(QStringLiteral("file"), tr("暂无传输"),
-                                            QString(), fileBody_));
-        return;
-    }
-
-    for (const XferSummary &e : shown) {
-        const bool activeRow = e.state == XferSummary::State::Active;
-        auto *row = new QWidget(fileBody_);
-        auto *hl = new QHBoxLayout(row);
-        hl->setContentsMargins(tokens::kS3, 9, tokens::kS3, 9);
-        hl->setSpacing(tokens::kS3);
-
-        // ui.css .xfer__icon：28×28 / r-ctl / 按状态取 soft 底 + text 字色。
-        auto *iconBox = new QLabel(row);
-        iconBox->setFixedSize(tokens::kXferIconSize, tokens::kXferIconSize);
-        iconBox->setAlignment(Qt::AlignCenter);
-        // 与文件浮板同一套三档配色：拒绝是对端的决定（warn）、校验失败是数据
-        // 损坏（danger）、超限是根本没上线。全涂成红色只会让人以为是同一种问题。
-        const StatusColor tone =
-            activeRow ? StatusColor{p.surface3, p.surface3, p.text2}
-                      : (e.state == XferSummary::State::Done       ? p.ok
-                         : e.state == XferSummary::State::Rejected ? p.warn
-                                                                   : p.danger);
-        iconBox->setPixmap(
-            icons::icon(activeRow ? (e.inbound ? QStringLiteral("download")
-                                               : QStringLiteral("upload"))
-                                  : (e.state == XferSummary::State::Done
-                                         ? QStringLiteral("check")
-                                     : e.state == XferSummary::State::Rejected
-                                         ? QStringLiteral("close")
-                                         : QStringLiteral("warn")),
-                      14, tone.text)
-                .pixmap(tokens::kIconSm, tokens::kIconSm));
-        applyBoxStyle(iconBox,
-                      QStringLiteral("border-radius:%1px;background:%2")
-                          .arg(QString::number(tokens::kRadiusCtl), css(tone.soft)));
-        hl->addWidget(iconBox, 0, Qt::AlignTop);
-
-        auto *body = new QWidget(row);
-        auto *vl = new QVBoxLayout(body);
-        vl->setContentsMargins(0, 0, 0, 0);
-        vl->setSpacing(4);
-
-        auto *top = new QHBoxLayout;
-        top->setSpacing(tokens::kS2);
-        auto *name = new ElidedLabel(e.name, body);
-        name->setFont(uiFont(tokens::kFont12, QFont::Medium));
-        name->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
-        top->addWidget(name, 1);
-        // 终态不能一律写「完成」：这一支里还坐着「已拒绝 / 校验失败 / 超限」，
-        // 配着红色图标却写「完成」，等于把失败说成成功。文案与文件浮板的徽章对齐。
-        const QString stateLabel =
-            e.state == XferSummary::State::Done       ? tr("完成")
-            : e.state == XferSummary::State::Rejected ? tr("已拒绝")
-            : e.state == XferSummary::State::Oversize ? tr("超限")
-                                                      : tr("失败");
-        auto *pct = new QLabel(activeRow ? tr("%1%").arg(e.pct) : stateLabel, body);
-        // .xfer__pct 指定 font-mono + tabular-nums：进度每 500ms 跳一次。
-        pct->setFont(uiMonoFont(tokens::kFont11, QFont::DemiBold));
-        pct->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text2)));
-        pct->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        pct->setFixedWidth(tokens::kXferPctWidth);
-        top->addWidget(pct, 0, Qt::AlignTop);
-        vl->addLayout(top);
-
-        if (activeRow) {
-            auto *bar = new ProgressTrack(body);
-            bar->setProgress(e.pct);
-            vl->addWidget(bar);
-        }
-
-        QString meta;
-        if (activeRow) {
-            meta = tr("%1 · → %2").arg(humanSize(e.totalBytes), e.peer);
-        } else if (e.state == XferSummary::State::Oversize) {
-            // 超限的文件压根没上线，写「已发送」是替它喊冤（同文件浮板的措辞）。
-            meta = tr("%1 · 超出单文件上限，未在链路上传输").arg(humanSize(e.totalBytes));
-        } else {
-            // 设计稿这一行是「2.1 MB · 收到 · Linux Workstation · 3m」：对端名
-            // 不能省，否则「收到 / 已发送」是在跟谁传全靠猜。
-            meta = tr("%1 · %2 · %3 · %4")
-                       .arg(humanSize(e.totalBytes), e.inbound ? tr("收到") : tr("已发送"),
-                            e.peer, tr("%1 前").arg(agoText(e.agoSecs)));
-        }
-        auto *metaLabel = new ElidedLabel(meta, body);
-        metaLabel->setFont(uiFont(tokens::kFont11));
-        metaLabel->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-        vl->addWidget(metaLabel);
-
-        hl->addWidget(body, 1);
-        applyBoxStyle(row, QStringLiteral("border-bottom:1px solid %1").arg(css(p.hairline)));
-        fileRows_->addWidget(row);
-    }
-}
-
-// ── 设备布局折叠区 ────────────────────────────────────────────────────
-//
-// 设计稿的格子可拖动改屏幕相对位置。那需要一份可持久化的屏幕布局，目前没有
-// 存储也没有对应的协议帧；这里按设计把 3×3 网格与图例摆出来，点格子记一条
-// 日志说明尚未接通，而不是做成拖得动、退出就没了的假交互。
-void ConnectionsPanel::attachPanels(ClipboardPanel *clip, FilesPanel *files)
-{
-    // 两个折叠区的数据源。传输与剪贴板都只归各自浮板所有，这里只订阅变化
-    // 重建本屏，绝不另开一份会话或另存一份计数——两处各记一份必然会漂。
-    clipboard_ = clip;
-    files_ = files;
-    if (clipboard_ != nullptr) {
-        connect(clipboard_, &ClipboardPanel::transfersChanged, this,
-                &ConnectionsPanel::refreshClipboardBadge);
-    }
-    if (files_ != nullptr) {
-        connect(files_, &FilesPanel::transfersChanged, this,
-                &ConnectionsPanel::rebuildFileRows);
-    }
-    refreshClipboardBadge();
-    rebuildFileRows();
-}
-
-void ConnectionsPanel::refreshClipboardBadge()
-{
-    if (clipboardBadge_ == nullptr) {
-        return;
-    }
-    const int n = clipboard_ != nullptr ? clipboard_->historyCount() : 0;
-    clipboardBadge_->setText(n > 0 ? tr("%1 项").arg(n) : tr("空闲"));
-    clipboardBadge_->setVariant(n > 0 ? Badge::Variant::Neutral : Badge::Variant::Idle);
-}
-
-void ConnectionsPanel::rebuildLayoutGrid()
-{
-    if (layoutGrid_ == nullptr) {
-        return;
-    }
-    clearLayout(layoutGrid_);
-    // 格子随设备状态重建，不能只在构造时填一次：设备上下线、切换控制端
-    // 都会改「当前」标记和实色档位，网格留在旧状态就和同屏的设备卡自相矛盾。
-    const Palette &p = Theme::instance().palette();
-    QWidget *host = layoutGrid_->parentWidget();
-    // 只有在线设备占格：离线设备没有屏幕可摆。排到前九个槽的是在线的那些，
-    // 剩下的槽留给空位，设计稿里的「+」就是等新设备上线后落进去的。
-    QList<Device> placeable;
-    for (const Device &d : DeviceManager::instance().devices()) {
-        if (d.online) {
-            placeable.append(d);
-        }
-    }
-    for (int i = 0; i < 9; ++i) {
-        if (i < placeable.size()) {
-            const Device &d = placeable.at(i);
-            // 设计稿三个格子分别是 accent / ok-solid / warn-solid；这里按设备
-            // 当前的延迟档取实色，规则一致且随实时读数变化。
-            const StatusColor tone =
-                Theme::instance().color(Theme::instance().qualityOf(d.latencyMs, true));
-            auto *cell = new QWidget(host);
-            auto *cl = new QVBoxLayout(cell);
-            cl->setContentsMargins(0, 0, 0, 0);
-            cl->setSpacing(tokens::kS1);
-            cl->setAlignment(Qt::AlignCenter);
-            auto *iconBox = new QLabel(cell);
-            iconBox->setFixedSize(tokens::kCellIconSize, tokens::kCellIconSize);
-            iconBox->setAlignment(Qt::AlignCenter);
-            iconBox->setText(d.abbrev.isEmpty() ? d.name.left(2).toUpper() : d.abbrev);
-            iconBox->setFont(uiFont(tokens::kFont15, QFont::Bold));
-            // 42px 的色块有足够面积，柔底 + 同族字色读得清档位。原先用实色
-            // 块压白字，一屏三个饱和色块（绿/绿/橙）比整块面板都跳，deepin
-            // 那种克制的调子里完全站不住。状态语义不变：底色仍是这个设备的
-            // 延迟档（绿=好、橙=慢），只是把实心换成同族的淡底。
-            iconBox->setStyleSheet(
-                QStringLiteral("background:%1;border-radius:%2px;color:%3")
-                    .arg(css(tone.soft))
-                    .arg(QString::number(tokens::kRadiusCard))
-                    .arg(css(tone.text)));
-            cl->addWidget(iconBox);
-            auto *label = new QLabel(d.name.section(QLatin1Char(' '), 0, 0), cell);
-            label->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-            label->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
-            label->setAlignment(Qt::AlignCenter);
-            cl->addWidget(label);
-            if (d.isActive) {
-                auto *hint = new QLabel(tr("当前"), cell);
-                hint->setFont(uiFont(tokens::kFont11, QFont::Medium));
-                hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.ok.text)));
-                hint->setAlignment(Qt::AlignCenter);
-                cl->addWidget(hint);
-            }
-            cell->setCursor(Qt::PointingHandCursor);
-            // 悬停就能看到「还没接通」，不用非点一下才知道。
-            cell->setToolTip(tr("屏幕布局尚无持久化，暂不可拖动"));
-            // customContextMenuRequested 只在显式开了 CustomContextMenu 策略时才
-            // 发出。此前漏了这一句，下面这个 lambda 一次也不会跑——所谓「点格子
-            // 记一条日志说明尚未接通」，其实从来没有日志。
-            cell->setContextMenuPolicy(Qt::CustomContextMenu);
-            QObject::connect(cell, &QWidget::customContextMenuRequested, this, [d] {
-                qCInfo(lcConnections)
-                    << "调整设备布局：" << d.name << QStringLiteral("屏幕布局尚无持久化，暂不可拖动");
-            });
-            layoutGrid_->addWidget(cell, i / 3, i % 3);
-            continue;
-        }
-        // .cell__empty：surface-3 底 + 2px 虚线 line-3 + 加号
-        auto *empty = new QLabel(QStringLiteral("+"), host);
-        empty->setFixedSize(tokens::kCellIconSize, tokens::kCellIconSize);
-        empty->setAlignment(Qt::AlignCenter);
-        empty->setFont(uiFont(tokens::kFont13, QFont::Bold));
-        empty->setStyleSheet(
-            QStringLiteral("background:%1;color:%2;border:2px dashed %3;border-radius:%4px")
-                .arg(css(p.surface3), css(p.text3), css(p.line3))
-                .arg(QString::number(tokens::kRadiusCard)));
-        // 那个「+」看着像个能点的按钮，说清楚它是空位。
-        empty->setToolTip(tr("空位：设备上线后落在这里（布局拖动与持久化尚未接通）"));
-        layoutGrid_->addWidget(empty, i / 3, i % 3, Qt::AlignCenter);
-    }
-}
-
-QWidget *ConnectionsPanel::buildLayoutSection()
-{
-    const Palette &p = Theme::instance().palette();
-    auto *body = new QWidget(this);
-    auto *vl = new QVBoxLayout(body);
-    vl->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3, tokens::kS3);
-    vl->setSpacing(tokens::kS3);
-
-    // ui.css .layout：2px 虚线 line-2 / r-card / surface-2 底 / 3×3 / gap 8 /
-    // min-height 200。格子用 QGridLayout，三个空槽也要占位，网格才不会塌成两列。
-    auto *gridBox = new QWidget(body);
-    applyBoxStyle(gridBox,
-                  QStringLiteral("border:2px dashed %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2))
-                      .arg(QString::number(tokens::kRadiusCard))
-                      .arg(css(p.well)));
-    layoutGrid_ = new QGridLayout(gridBox);
-    layoutGrid_->setContentsMargins(tokens::kS4, tokens::kS4, tokens::kS4, tokens::kS4);
-    layoutGrid_->setHorizontalSpacing(tokens::kS2);
-    layoutGrid_->setVerticalSpacing(tokens::kS2);
-
-    vl->addWidget(gridBox);
-    rebuildLayoutGrid();
-
-    // .legend：三条说明，每条一个图标
-    auto *legend = new QWidget(body);
-    auto *lh = new QHBoxLayout(legend);
-    lh->setContentsMargins(0, 0, 0, 0);
-    lh->setSpacing(tokens::kS3);
-    struct LegendItem {
-        const char *icon;   // 空串表示这一条用圆点，不用图标
+    struct QuickLink {
+        const char *icon;
         QString text;
-        QColor color;
+        void (ConnectionsPanel::*sig)();   // 不能叫 emit：那是 Qt 的宏
     };
-    const LegendItem items[] = {
-        {"grip", tr("拖动调整屏幕相对位置"), p.text3},
-        {"", tr("当前控制端"), p.ok.text},
-        {"info", tr("边缘触发切换"), p.text3},
+    // 顺序与 mac 一致：键位映射 / 网络延迟 / 剪贴板 / 文件传输。
+    const QuickLink links[] = {
+        {"keyboard", tr("键位映射"), &ConnectionsPanel::keymapRequested},
+        {"activity", tr("网络延迟"), &ConnectionsPanel::latencyRequested},
+        {"clipboard", tr("剪贴板"), &ConnectionsPanel::clipboardRequested},
+        {"file", tr("文件传输"), &ConnectionsPanel::filesRequested},
     };
-    for (const LegendItem &it : items) {
-        if (*it.icon == '\0') {
-            auto *dot = new StatusDot(legend);
-            dot->setFixedSize(tokens::kStatusDotSize, tokens::kStatusDotSize);
-            dot->setQuality(Quality::Good);
-            lh->addWidget(dot, 0, Qt::AlignVCenter);
-        } else {
-            auto *icon = new QLabel(legend);
-            icon->setFixedSize(tokens::kIconXs, tokens::kIconXs);
-            icon->setPixmap(
-                icons::icon(QString::fromLatin1(it.icon), tokens::kIconXs, it.color).pixmap(tokens::kIconXs, tokens::kIconXs));
-            lh->addWidget(icon);
-        }
-        auto *label = new QLabel(it.text, legend);
-        label->setFont(uiFont(tokens::kFont11));
-        label->setStyleSheet(QStringLiteral("color:%1").arg(css(it.color)));
-        lh->addWidget(label);
+    for (const QuickLink &link : links) {
+        auto *btn = new FgButton(link.text, FgButton::Variant::Secondary, true, row);
+        btn->setIcon(QString::fromLatin1(link.icon));
+        connect(btn, &FgButton::clicked, this, [this, link] { Q_EMIT (this->*link.sig)(); });
+        hl->addWidget(btn);
     }
-    lh->addStretch(1);
-    vl->addWidget(legend);
-
-    // 这一整块是**示意**：拖动与持久化都还没接通，界面上必须写明白。
-    //
-    // 空槽画的是「+」，看上去就是个「添加设备」的按钮；在线设备那几格又能
-    // 悬停出「暂不可拖动」的提示。唯独空槽什么提示都没有——用户点下去什么
-    // 也不会发生，却以为这是能用的布局编辑器。按「未接通的功能要在界面上说
-    // 清楚」的要求，这里补一句。
-    auto *note = new QLabel(tr("布局拖动与持久化尚未接通，当前仅作示意"), body);
-    note->setFont(uiFont(tokens::kFont11));
-    note->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-    vl->addWidget(note);
-
-    auto *badge = new Badge(tr("拖动排布"), Badge::Variant::Neutral);
-    return new Collapsible(tr("设备布局"), QStringLiteral("grid"), body, badge);
+    hl->addStretch(1);
+    return row;
 }
 
+// ── 页脚 ───────────────────────────────────────────────────────────────
 QWidget *ConnectionsPanel::buildFooter()
 {
     const Palette &p = Theme::instance().palette();
@@ -709,8 +255,10 @@ QWidget *ConnectionsPanel::buildFooter()
 
     auto *icon = new QLabel(foot);
     icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
-    icon->setPixmap(icons::icon(QStringLiteral("shield"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
-    auto *hint = new QLabel(tr("端到端加密 · IntelligentLink 优先"), foot);
+    icon->setPixmap(
+        icons::icon(QStringLiteral("shield"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm,
+                                                                               tokens::kIconSm));
+    auto *hint = new QLabel(tr("DirectLink · 帧级 HMAC 校验"), foot);
     hint->setFont(uiFont(tokens::kFont11));
     hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
     hl->addWidget(icon);
@@ -728,109 +276,217 @@ QWidget *ConnectionsPanel::buildFooter()
     return foot;
 }
 
+// ── 对端判定 ───────────────────────────────────────────────────────────
+
+const Device *ConnectionsPanel::activePeer() const
+{
+    // 「对端」= 在线且不是本机的设备。mac 那边对端恒为 AppModel.peerDevice；
+    // DDE 侧设备清单由 DeviceManager 给，目前只有本机——传输层落地后对端会
+    // 从这里冒出来。
+    for (const Device &d : DeviceManager::instance().devices()) {
+        if (!d.isLocal && d.online) {
+            return &d;
+        }
+    }
+    return nullptr;
+}
+
+QString ConnectionsPanel::statusText() const
+{
+    const Device *peer = activePeer();
+    if (peer != nullptr) {
+        return tr("已连接 %1").arg(peer->name);
+    }
+    // 没连上，但局域网通告在监听：把端口写出来，让人知道这一侧是醒着的。
+    // mac 的 ConnectionStatus.listening(port:) 也是这么写的。
+    if (LanIdDiscovery::instance().isRunning()) {
+        return tr("未连接 · 监听 24801");
+    }
+    return tr("未连接");
+}
+
+// ── 接管键鼠 ───────────────────────────────────────────────────────────
+
+void ConnectionsPanel::setCaptureEnabled(bool on)
+{
+    if (captureSwitch_ == nullptr) {
+        return;
+    }
+    if (!on) {
+        captureEnabled_ = false;
+        captureSwitch_->setChecked(false);
+        if (captureHint_ != nullptr) {
+            captureHint_->setText(tr("键鼠仍在本机"));
+        }
+        return;
+    }
+
+    // 打开接管要过三关：先有已连接的对端，再有 uinput 权限，最后还得有能把它
+    // 发过去的通道。任何一关不过就把开关拨回去，并把原因说清楚——留一个
+    // 「显示为开、实际没接管」的开关比不做还糟。
+    const Device *peer = activePeer();
+    if (peer == nullptr) {
+        qCInfo(lcConnections) << "接管键鼠被拒：没有已连接的对端";
+        toast(tr("未连接对端，无法接管键鼠"), ToastKind::Info);
+        captureSwitch_->setChecked(false);
+        return;
+    }
+    if (!inputCapturePermitted()) {
+        qCInfo(lcConnections) << "接管键鼠被拒：缺少 uinput 权限";
+        toast(tr("接管键鼠需要 uinput 权限"), ToastKind::Danger);
+        captureSwitch_->setChecked(false);
+        return;
+    }
+    // 权限与对端都齐了，但 DirectLink 的传输层尚未落地：捕获到的键鼠事件
+    // 没有可投递的链路。这时**不能**开捕获——开了会把本机的键鼠 grab 住，
+    // 事件却哪儿也去不了，本机直接失去输入。所以这里明确拒绝。
+    qCInfo(lcConnections) << "接管键鼠被拒：DirectLink 传输层尚未落地";
+    toast(tr("键鼠接管尚未接通"), ToastKind::Info);
+    captureSwitch_->setChecked(false);
+}
+
+// ── 设备卡 ─────────────────────────────────────────────────────────────
+
+// 设备卡按「是不是当前控制端」上主色底（DeviceCard 的 active_）。
+//
+// 但模型里**本机**恒为 active（延迟采样、切换热键都以它为锚），照搬过去
+// 本机那行就是一块蓝底——在这屏里它什么也没说明：当前控制的是本机自己。
+// mac 的口径是「isCurrent = 当前被控制的那台设备」，本机不是被控端，
+// 所以本机那行是普通底色，只有接上了对端、正在控制它时才上主色。
+//
+// 这里出一份给界面用的副本：只有在线的对端才标 active。
+Device ConnectionsPanel::displayDevice(const Device &d) const
+{
+    Device out = d;
+    out.isActive = !d.isLocal && d.online;
+    return out;
+}
+
 void ConnectionsPanel::rebuildDeviceCards()
 {
     if (deviceListLayout_ == nullptr) {
         return;
     }
     clearLayout(deviceListLayout_);
+    const Palette &p = Theme::instance().palette();
     const QList<Device> &devices = DeviceManager::instance().devices();
-    if (devices.isEmpty()) {
-        auto *empty = new QLabel(tr("尚未发现设备"), deviceList_);
-        empty->setFont(uiFont(tokens::kFont12));
-        empty->setStyleSheet(
-            QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
-        deviceListLayout_->addWidget(empty);
-        return;
-    }
-    for (const Device &d : devices) {
+
+    for (const Device &raw : devices) {
+        const Device d = displayDevice(raw);
         auto *card = new DeviceCard(d, deviceList_);
         connect(card, &DeviceCard::switchRequested, this, [](const QString &id) {
             DeviceManager::instance().setActive(id);
         });
-        connect(card, &DeviceCard::actionRequested, this,
-                [](const QString &id, const QString &kind) {
-                    // 这张卡右侧的按钮：离线设备是「重连」，当前设备是「更多信息」，
-                    // 两者都要等传输层。以前这里挂的是个空 lambda ——点下去既没有
-                    // 动作也没有日志，用户只能猜。按项目惯例如实记一条。
-                    qCInfo(lcConnections)
-                        << "设备动作" << kind << id << QStringLiteral("尚未接通");
-                });
+
+        // 尾部插槽（对应 mac FGDeviceRow 的 trailing 闭包）：本机、对端、
+        // 离线对端三者的右侧完全不是一回事，摊开写只能散在各处各写一遍。
+        auto *trailing = new QWidget(deviceList_);
+        auto *tl = new QHBoxLayout(trailing);
+        tl->setContentsMargins(0, 0, 0, 0);
+        tl->setSpacing(tokens::kS2);
+
+        if (d.isLocal) {
+            tl->addWidget(new Badge(tr("本机"), Badge::Variant::Neutral, trailing));
+        } else {
+            if (d.online && captureEnabled_) {
+                tl->addWidget(new Badge(tr("控制中"), Badge::Variant::Ok, trailing));
+            }
+            auto *lat = new LatencyChip(trailing);
+            lat->setLatency(d.latencyMs, d.online && d.latencyMs >= 0.0);
+            tl->addWidget(lat);
+
+            auto *btn = new IconButton(d.online ? QStringLiteral("unlink")
+                                                 : QStringLiteral("close"),
+                                       d.online ? tr("断开连接") : tr("移除离线设备"),
+                                       trailing);
+            connect(btn, &IconButton::clicked, this, [d]() {
+                // 断开 / 移除对端都要走传输层。DDE 侧传输层尚未落地，这里如实
+                // 记一条，不做点下去毫无反应的事。
+                qCInfo(lcConnections)
+                    << "对端操作" << d.name << QStringLiteral("尚未接通（传输层未落地）");
+                toast(tr("传输层尚未落地，暂不能断开对端"), ToastKind::Info);
+            });
+            tl->addWidget(btn);
+        }
+        tl->addStretch(1);
+        card->setTrailingWidget(trailing);
+
+        // 副标题走 mac 的 meta(for:) 口径，不走 DeviceCard 自带的那套
+        // 「系统 · 链路 · 地址 · 当前控制端」——那一套是给设备列表用的，
+        // 与 mac 这一屏的行文不一致。
+        card->setMetaText(metaFor(d));
+
         deviceListLayout_->addWidget(card);
     }
+
+    // 没有对端时补一句轻量空态提示（mac 的 FGEmptyHint）。
+    if (activePeer() == nullptr) {
+        auto *hint = new QWidget(deviceList_);
+        auto *hl = new QHBoxLayout(hint);
+        hl->setContentsMargins(0, tokens::kS2, 0, tokens::kS2);
+        hl->setSpacing(tokens::kS1);
+        auto *icon = new QLabel(hint);
+        icon->setFixedSize(tokens::kIconXs, tokens::kIconXs);
+        icon->setPixmap(icons::icon(QStringLiteral("info"), tokens::kIconXs, p.text3)
+                            .pixmap(tokens::kIconXs, tokens::kIconXs));
+        auto *text = new QLabel(tr("连接设备后，对端会出现在这里"), hint);
+        text->setFont(uiFont(tokens::kFont11));
+        text->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        hl->addWidget(icon);
+        hl->addWidget(text);
+        hl->addStretch(1);
+        deviceListLayout_->addWidget(hint);
+    }
 }
+
+// ── 刷新 ───────────────────────────────────────────────────────────────
 
 void ConnectionsPanel::refresh()
 {
-    auto &manager = DeviceManager::instance();
-    const Device *active = manager.activeDevice();
-    const bool online = active != nullptr && active->online;
-    // 对端数：能连上的、且不是本机的设备。传输层没落地时这个数是 0。
-    int peers = 0;
-    for (const Device &d : manager.devices()) {
-        if (d.online && !d.isLocal) {
-            ++peers;
-        }
-    }
+    const Palette &p = Theme::instance().palette();
+    const Device *peer = activePeer();
+    const bool connected = peer != nullptr;
 
     if (statusLabel_ != nullptr) {
-        // 这一句必须说真话。早先写的是「已连接 <设备名>」——设备名是设计稿里
-        // 那台 fake 的「deepin 工作站」，于是这一屏顶上一上来就宣称连着一台
-        // 不存在的机器。现在：本机在线但没有对端，就写「本机在线 · 无对端」。
-        if (peers > 0) {
-            statusLabel_->setText(tr("已连接 %1").arg(active != nullptr ? active->name : ""));
-        } else if (online) {
-            statusLabel_->setText(tr("本机在线 · 无对端"));
-        } else {
-            statusLabel_->setText(tr("未联网"));
-        }
-        const StatusColor sc = Theme::instance().color(
-            Theme::qualityOf(manager.activeLatencyMs(), online));
+        statusLabel_->setText(statusText());
+        // 颜色跟着状态走：连上了是绿的，没连上是中性灰。mac 那边是「胶囊恒为
+        // ok 底、靠圆点区分状态」，DDE 这里让胶囊跟着状态走，跟同屏其它
+        // 状态色（徽章、延迟胶囊）的读法一致。
+        const StatusColor sc = connected ? p.ok : p.idle;
         statusLabel_->setStyleSheet(QStringLiteral("color:%1").arg(css(sc.text)));
-        statusDot_->setQuality(Theme::qualityOf(manager.activeLatencyMs(), online));
-        statusDot_->setPulsing(online);
+        statusPill_->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
+                                       .arg(css(sc.soft),
+                                            QString::number(tokens::pillRadius(
+                                                tokens::kStatusPillHeight))));
+        statusDot_->setQuality(connected ? Quality::Good : Quality::Idle);
+        statusDot_->setPulsing(connected);
+    }
+
+    // 接管行：有已连接的对端才出现（mac 同款条件）。
+    if (captureRow_ != nullptr) {
+        captureRow_->setVisible(connected);
+        if (captureHint_ != nullptr) {
+            captureHint_->setText(captureEnabled_ ? tr("键鼠事件正发送到对端")
+                                                   : tr("键鼠仍在本机"));
+        }
     }
 
     rebuildDeviceCards();
-    rebuildLayoutGrid();
-    updateLatencyBadge();
-    refreshClipboardFootHint();
-}
-
-void ConnectionsPanel::refreshClipboardFootHint()
-{
-    if (clipboardFootHint_ == nullptr) {
-        return;
-    }
-    const int keep = Settings::instance().clipboardHistory();
-    clipboardFootHint_->setText(tr("跨端同步已加密，历史保留 %1 条").arg(keep));
-}
-
-void ConnectionsPanel::updateLatencyBadge()
-{
-    if (latencyBadge_ == nullptr) {
-        return;
-    }
-    // 与延迟浮板取同一个数（设计稿两屏都写 2.3ms）：本区画的是**当前控制端**的
-    // 采样曲线。早先这里按「所有在线设备求瞬时值平均」，会把一条 12ms 的局域网
-    // 设备和 2ms 的直连设备平均成 6ms——一个不属于任何链路的数，还跟同屏顶部
-    // 胶囊上的读数对不上。均值来自 Go 的 LatencyMonitor，本层略过采样。
-    const double avg = DeviceManager::instance().activeLatencyAvgMs();
-    latencyBadge_->setText(avg >= 0.0 ? tr("均值 %1ms").arg(avg, 0, 'f', 1) : tr("无数据"));
-    latencyBadge_->setVariant(Badge::Variant::Ok);
 }
 
 void ConnectionsPanel::onSampled()
 {
-    const double ms = DeviceManager::instance().activeLatencyMs();
-    if (chart_ == nullptr) {
+    // 采样结束后只更新延迟读数，不重建整张卡——每 2 秒重建一次列表会在
+    // 事件循环里制造一批待销毁控件，那正是「残影」最容易冒出来的地方。
+    if (deviceList_ == nullptr) {
         return;
     }
-    if (ms < 0.0) {
-        return;   // 离线：图表保留最后形状，不塞 0 假装有链路
+    for (DeviceCard *card : deviceList_->findChildren<DeviceCard *>()) {
+        const Device *d = DeviceManager::instance().deviceById(card->deviceId());
+        if (d != nullptr) {
+            card->setDevice(displayDevice(*d));
+        }
     }
-    chart_->pushSample(ms);
-    updateLatencyBadge();
 }
 
 } // namespace fg

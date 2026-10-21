@@ -24,6 +24,11 @@
 
 - [x] 4.1 Windows fgcore：UDP 多播适配器（`internal/lanid/lanid.go`，Go 直引协议层）——本机编译 + vet 验证
 - [x] 4.2 deepin：RAII 封装（`protocolapi.h/cpp`）+ UDP 多播适配器（`lanidlink.h/cpp`，QUdpSocket）
+  - deepin 侧再加一层 `src/core/laniddiscovery.{h,cpp}`：进程级单例，把 Identity /
+    Announcer / Listener / TrustChain / LanIDLink 的生命周期收在一起（LanIDLink
+    按引用持有前两者，散在各面板里各 new 一份会析构顺序错乱），身份私钥持久化
+    到 `~/.config/flowgrid/identity.key`（0600，临时文件 + rename 原子写），并把
+    对端整理成 UI 能直接渲染的 Peer 列表。添加设备屏的「附近的设备」读它。
 - [x] 4.3 各自开发机验证（Windows 模块整包构建 / deepin DTK 构建 + CMakeLists 加入新文件）
   - Windows：`GOOS=windows CGO_ENABLED=0 go build ./...` 与 `go test -exec /bin/true ./...`
     全绿（7 个包，含测试二进制编译）。该模块整体是 Win32-only

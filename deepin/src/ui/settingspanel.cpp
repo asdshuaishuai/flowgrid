@@ -12,6 +12,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QLoggingCategory>
+#include <QShowEvent>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 
 Q_LOGGING_CATEGORY(lcSettingsPanel, "flowgrid.settings.panel")
@@ -99,6 +101,29 @@ QWidget *groupBox(const QString &title, const QList<QWidget *> &rows, QWidget *p
     return box;
 }
 
+// 一个 tab 页的容器：纵向排若干块（通常是分组卡片，安全页另加一条横幅）。
+//
+// 块间距 kS3 = 12，与 mac 端 FGPanel 内容区（FGSpacing.s3）以及 mac 端
+// securityList 与那条 warn 横幅之间的间距一致——两边量的是同一把尺子。
+//
+// 末尾那一条 stretch 是必须的：浮板的高度按**最高的那一页**算（页数不同时
+// 面板高度是固定的），于是当前页比最高页矮时，多出来的高度会被布局平均分给
+// 卡片里的每一行——行与行之间被撑出一道缝，看着像多了一行空白。加一条
+// stretch 把余量归到卡片下面，卡片就还是设计稿里那个高度（mac 端内容区是
+// .frame(alignment: .top)，也是这个意思：卡片贴顶，余量留在下面）。
+QWidget *tabPage(QWidget *parent, const QList<QWidget *> &blocks)
+{
+    auto *page = new QWidget(parent);
+    auto *vl = new QVBoxLayout(page);
+    vl->setContentsMargins(0, 0, 0, 0);
+    vl->setSpacing(tokens::kS3);
+    for (QWidget *block : blocks) {
+        vl->addWidget(block);
+    }
+    vl->addStretch(1);
+    return page;
+}
+
 // ListRow 的 trailing 是单个控件，但有两行的右侧是「输入 + 单位」或
 // 「键帽 + 输入」这种组合，ListRow 装不下整个行，只能另包一层当控件用。
 QWidget *makeControlRow(QWidget *parent, const QList<QWidget *> &parts)
@@ -138,21 +163,84 @@ SettingsPanel::SettingsPanel(QWidget *parent) : Panel(tr("设置"), parent)
     auto *body = qobject_cast<QVBoxLayout *>(content()->layout());
     auto &settings = Settings::instance();
 
+    // 说明横幅在**所有 tab 之上**：它讲的是「设置怎么生效」，与当前看的是哪
+    // 一页无关（mac 端同样是 FGPanel 内容区的第一个子视图）。
     body->addWidget(
         banner(tr("设置即时生效并同步到全部已配对设备，无需重启。"), this,
                BannerVariant::Info));
-    body->addWidget(buildConnectionGroup());
-    body->addWidget(buildInputGroup());
-    body->addWidget(buildSyncGroup());
-    body->addWidget(buildSecurityGroup());
-    // 设计稿把这条警告放在安全组之后：它解释的正是上一行开关的后果。
-    body->addWidget(banner(tr("关闭「新设备需确认」会让同一网络内的任意设备发起配对请求，"
-                              "仅在可信网络中临时使用。"),
-                           this, BannerVariant::Warn));
+
+    // 分段控件切 tab：与 mac 端 FGSegmented 同一套控件、同一组选项。
+    tabs_ = new SegmentedControl({tr("连接"), tr("输入"), tr("剪贴板"), tr("安全")}, this);
+    QObject::connect(tabs_, &SegmentedControl::currentIndexChanged, this,
+                     &SettingsPanel::switchTab);
+    // 分段控件是 Fixed 尺寸（与剪贴板屏的类型过滤同款）：不铺满整行，按内容
+    // 宽度靠左，跟 mac 端 FGSegmented 的量法一致——铺满的话轨道拉长、档位挤
+    // 在左边，看着就不像一组 tab 了。
+    body->addWidget(tabs_, 0, Qt::AlignLeft | Qt::AlignVCenter);
+
+    // 四个页一次建好：切 tab 只换可见页，页里已填的输入框内容不丢
+    // （重建的话用户填到一半的阈值会被清掉）。
+    pages_ = new QStackedWidget(this);
+    pages_->addWidget(buildConnectionPage());
+    pages_->addWidget(buildInputPage());
+    pages_->addWidget(buildClipboardPage());
+    pages_->addWidget(buildSecurityPage());
+    body->addWidget(pages_);
+
     setFooterWidget(buildFooter());
 
     QObject::connect(&settings, &Settings::changed, this, &SettingsPanel::reload);
     reload();
+}
+
+// ── 四个 tab 页 ────────────────────────────────────────────────────────
+//
+// 每页一张分组卡片，与 mac 端 connectionList / inputList / clipboardList /
+// securityList 一一对应。行的内容与顺序都没动，只是从「四组纵向堆叠」改成
+// 「按 tab 分组」。
+QWidget *SettingsPanel::buildConnectionPage()
+{
+    return tabPage(this, {buildConnectionGroup()});
+}
+
+QWidget *SettingsPanel::buildInputPage()
+{
+    return tabPage(this, {buildInputGroup()});
+}
+
+QWidget *SettingsPanel::buildClipboardPage()
+{
+    return tabPage(this, {buildSyncGroup()});
+}
+
+QWidget *SettingsPanel::buildSecurityPage()
+{
+    // 这条警告属于**安全这一页**：它解释的正是上面那个「新设备需确认」开关的
+    // 后果。放在整块面板底部就成了「不管在看哪一页都在说安全的事」——
+    // 跟 mac 端把它放进 securityList 那一步的做法不一样。
+    return tabPage(this, {buildSecurityGroup(),
+                          banner(tr("关闭「新设备需确认」会让同一网络内的任意设备发起配对请求，"
+                                    "仅在可信网络中临时使用。"),
+                                 this, BannerVariant::Warn)});
+}
+
+void SettingsPanel::switchTab(int index)
+{
+    if (pages_ == nullptr) {
+        return;
+    }
+    pages_->setCurrentIndex(index);
+}
+
+void SettingsPanel::showEvent(QShowEvent *event)
+{
+    Panel::showEvent(event);
+    // 每次打开回到「连接」页：mac 端每开一次就是新建一个 SettingsView，
+    // @State 的 tab 默认 .connection。这边浮板是常驻实例，不重置的话上次停
+    // 在哪页就接着从哪页看。
+    if (tabs_ != nullptr && tabs_->currentIndex() != 0) {
+        tabs_->setCurrentIndex(0);
+    }
 }
 
 QWidget *SettingsPanel::buildConnectionGroup()
@@ -288,12 +376,10 @@ QWidget *SettingsPanel::buildSyncGroup()
         }
     });
 
-    confirm_ = new ToggleSwitch(this);
-    confirm_->setChecked(s.requireConfirmation());
-    QObject::connect(confirm_, &ToggleSwitch::clicked, this, [this] {
-        Settings::instance().setRequireConfirmation(confirm_->isChecked());
-    });
-
+    // 「新设备需确认」这个开关归**安全**那页管：它先前是在这里（剪贴板组）
+    // 建的，只是拿给安全组用。四个页一次建好之后，这种「A 组建、B 组用」
+    // 就成了隐患——谁先建谁说了算，页的顺序一换，开关就成了空的。现在由
+    // 用它的安全组自己建。
     return groupBox(tr("剪贴板"),
            {new ListRow(tr("跨端同步"), tr("文本与图片，单条上限 63,240 B"), clipSync_, this),
             new ListRow(tr("历史条数"), tr("超出后按时间淘汰"), clipHistory_, this),
@@ -304,10 +390,20 @@ QWidget *SettingsPanel::buildSyncGroup()
 
 QWidget *SettingsPanel::buildSecurityGroup()
 {
+    auto &s = Settings::instance();
+
     // 端到端加密是协议层的硬约束（PROTOCOL.md §3），不是用户能关的开关。
     // 早先这里摆的是一个禁用开关，视觉上像"可以改但改不了"；设计稿给的是
     // 徽章，直接说清状态。徽章自己跟着 Theme::changed 重取颜色，这里不再转发。
     auto *e2eBadge = new Badge(tr("已启用"), Badge::Variant::Ok, this);
+
+    // 「新设备需确认」是本页的行，开关就建在本组里（原先建在剪贴板组、拿过来
+    // 用，见 buildSyncGroup 里的说明）。
+    confirm_ = new ToggleSwitch(this);
+    confirm_->setChecked(s.requireConfirmation());
+    QObject::connect(confirm_, &ToggleSwitch::clicked, this, [this] {
+        Settings::instance().setRequireConfirmation(confirm_->isChecked());
+    });
 
     return groupBox(tr("安全"),
            {new ListRow(tr("端到端加密"), tr("XChaCha20-Poly1305"), e2eBadge, this),

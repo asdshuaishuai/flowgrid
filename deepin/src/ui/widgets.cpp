@@ -1103,14 +1103,14 @@ void IconButton::focusOutEvent(QFocusEvent *e)
 // ── DeviceCard ────────────────────────────────────────────────────────
 DeviceCard::DeviceCard(const Device &device, QWidget *parent) : QFrame(parent)
 {
-    auto *grid = new QGridLayout(this);
+    grid_ = new QGridLayout(this);
     // 底部 margin 多让出 kShadowLiftBand：控件底部那条空带属于悬停投影，内容
     // 要居中于上方的卡片本体而不是整个控件矩形。
-    grid->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3,
+    grid_->setContentsMargins(tokens::kS3, tokens::kS3, tokens::kS3,
                               tokens::kS3 + tokens::kShadowLiftBand);
-    grid->setHorizontalSpacing(tokens::kS3);
-    grid->setVerticalSpacing(0);
-    grid->setColumnStretch(1, 1);
+    grid_->setHorizontalSpacing(tokens::kS3);
+    grid_->setVerticalSpacing(0);
+    grid_->setColumnStretch(1, 1);
 
     icon_ = new QLabel(this);
     icon_->setFixedSize(tokens::kDeviceIconSize, tokens::kDeviceIconSize);
@@ -1138,12 +1138,33 @@ DeviceCard::DeviceCard(const Device &device, QWidget *parent) : QFrame(parent)
         }
     });
 
-    grid->addWidget(icon_, 0, 0);
-    grid->addLayout(textCol, 0, 1);
-    grid->addWidget(latency_, 0, 2, Qt::AlignVCenter);
-    grid->addWidget(action_, 0, 3);
+    grid_->addWidget(icon_, 0, 0);
+    grid_->addLayout(textCol, 0, 1);
+    grid_->addWidget(latency_, 0, 2, Qt::AlignVCenter);
+    grid_->addWidget(action_, 0, 3);
 
     rebuild(device);
+}
+
+void DeviceCard::setTrailingWidget(QWidget *widget)
+{
+    if (trailing_ != nullptr) {
+        grid_->removeWidget(trailing_);
+        trailing_->deleteLater();
+        trailing_ = nullptr;
+    }
+    if (widget == nullptr) {
+        // 交回默认：延迟芯片 + 动作按钮重新露出来。
+        latency_->setVisible(true);
+        action_->setVisible(actionKind_ != QLatin1String("none"));
+        return;
+    }
+
+    trailing_ = widget;
+    // 默认那两件收起来，位置让给自定义尾部（对应 mac FGDeviceRow 的 trailing）。
+    latency_->setVisible(false);
+    action_->setVisible(false);
+    grid_->addWidget(trailing_, 0, 2, 1, 2, Qt::AlignVCenter);
 }
 
 void DeviceCard::rebuild(const Device &device)
@@ -1188,7 +1209,7 @@ void DeviceCard::rebuild(const Device &device)
             meta += tr(" · 当前控制端");
         }
     }
-    meta_->setText(meta);
+    meta_->setText(metaOverride_.isEmpty() ? meta : metaOverride_);
     // 芯片显示的是延迟读数：没有真实读数就是「—」，不是 0.0ms。
     latency_->setLatency(device.latencyMs, device.latencyMs >= 0.0);
 
@@ -1212,10 +1233,25 @@ void DeviceCard::setDevice(const Device &device)
     rebuild(device);
 }
 
+void DeviceCard::setMetaText(const QString &text)
+{
+    metaOverride_ = text;
+    if (text.isEmpty()) {
+        // 交回默认：直接按当前设备重算一遍，别把副标题留成空白。
+        rebuild(device_);
+        return;
+    }
+    if (meta_ != nullptr) {
+        meta_->setText(text);
+    }
+}
+
 void DeviceCard::setAction(const QString &kind)
 {
     actionKind_ = kind;
-    action_->setVisible(kind != QLatin1String("none"));
+    // 有自定义尾部时，默认那个动作按钮要让位——否则 setDevice() 一刷新，
+    // 它又冒出来，跟调用方摆的徽章/断开按钮挤在一格里。
+    action_->setVisible(kind != QLatin1String("none") && trailing_ == nullptr);
     if (kind == QLatin1String("switch")) {
         action_->setIcon(QStringLiteral("arrowRight"));
     } else if (kind == QLatin1String("reconnect")) {
@@ -1658,8 +1694,17 @@ void ListRow::paintEvent(QPaintEvent *)
         p.drawRect(rect());
     }
     // 列表行之间用 hairline 分隔：设计稿是「分隔线 + 留白」而非整块描边。
+    //
+    // 线画在行的**下沿**（.list__row 的 border-bottom、mac 端 FGListRow 的
+    // .overlay(alignment: .bottom)）。此前画在上沿，于是每一组的第一行头顶
+    // 都凭空多出一道线，整组看着像被切了一刀——而组与组之间又没有线，
+    // 分隔的归属整个反了。
+    //
+    // 每行都画（含组内最后一行）：mac 端 FGListRow 是无条件 overlay，
+    // FGList 卡片自己带一条描边，最后一行下面那根 hairline 紧贴卡片描边，
+    // 就是 mac 上的样子。
     p.setPen(pal.hairline);
-    p.drawLine(0, 0, width(), 0);
+    p.drawLine(0, height() - 1, width(), height() - 1);
 }
 
 // ── applyInputStyle ───────────────────────────────────────────────────
@@ -2199,6 +2244,55 @@ void SegmentedControl::leaveEvent(QEvent *event)
 }
 
 // ── buildMappingGrid ──────────────────────────────────────────────────
+
+// 网格里的占位格（「未设置 → 未设置 / 点击添加」）。
+//
+// mac 端那是一枚**按钮**：hover 时铺一层 surface-hi，点了就加一条规则。
+// 这一侧此前只是一个普通容器，「点击添加」四个字没有任何可点的样子——
+// 要么补上这层反馈，要么就别写这句话。
+//
+// WA_Hover 是关键：格子里有键帽和说明两个子控件，鼠标停在它们上面时父控件
+// 收不到 Enter（Qt 只把 hover 事件发给指针底下那个控件），底色会一闪一闪地灭。
+class MappingGhostCell : public QFrame {
+public:
+    explicit MappingGhostCell(QWidget *parent = nullptr) : QFrame(parent)
+    {
+        setAttribute(Qt::WA_Hover, true);
+        setCursor(Qt::PointingHandCursor);
+    }
+
+protected:
+    void enterEvent(QEnterEvent *e) override
+    {
+        hovered_ = true;
+        update();
+        QFrame::enterEvent(e);
+    }
+
+    void leaveEvent(QEvent *e) override
+    {
+        hovered_ = false;
+        update();
+        QFrame::leaveEvent(e);
+    }
+
+    void paintEvent(QPaintEvent *e) override
+    {
+        if (hovered_) {
+            QPainter p(this);
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setPen(Qt::NoPen);
+            p.setBrush(Theme::instance().palette().surfaceHi);
+            p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+                              tokens::kRadiusCtl, tokens::kRadiusCtl);
+        }
+        QFrame::paintEvent(e);
+    }
+
+private:
+    bool hovered_ = false;
+};
+
 QWidget *buildMappingGrid(const QList<KeyPair> &pairs, QWidget *parent)
 {
     // ui.css .mapping：repeat(3, 1fr) / gap 8 / padding 12。
@@ -2214,7 +2308,9 @@ QWidget *buildMappingGrid(const QList<KeyPair> &pairs, QWidget *parent)
 
     for (int i = 0; i < pairs.size(); ++i) {
         const KeyPair &pair = pairs.at(i);
-        auto *cell = new QWidget(grid);
+        // 占位格用带 hover 反馈的那一种，其余是普通格。
+        QWidget *cell = pair.ghost ? static_cast<QWidget *>(new MappingGhostCell(grid))
+                                   : static_cast<QWidget *>(new QWidget(grid));
         auto *cl = new QVBoxLayout(cell);
         cl->setContentsMargins(tokens::kS2, tokens::kS2, tokens::kS2, tokens::kS2);
         cl->setSpacing(5);

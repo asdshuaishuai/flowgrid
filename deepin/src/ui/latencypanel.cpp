@@ -102,12 +102,17 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         lrl->setSpacing(tokens::kS1);
         linkLabel_ = new QLabel(QStringLiteral("—"), linkRow);
         linkLabel_->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
-        auto *wifi = new QLabel(linkRow);
-        wifi->setFixedSize(tokens::kIconXs, tokens::kIconXs);
-        wifi->setPixmap(icons::icon(QStringLiteral("wifi"), tokens::kIconXs,
-                                    Theme::instance().palette().text3).pixmap(tokens::kIconXs, tokens::kIconXs));
+        linkLabel_->setStyleSheet(
+            QStringLiteral("color:%1").arg(css(Theme::instance().palette().text1)));
+        // mac 端：连上了是 lan，没连上是 wifi，尺寸 16（设计稿 .ic 默认档）、
+        // 字色 text1。这里原来固定画一个 12px 的 wifi，跟「链路已通」对不上。
+        linkIcon_ = new QLabel(linkRow);
+        linkIcon_->setFixedSize(tokens::kIconMd, tokens::kIconMd);
+        linkIcon_->setPixmap(icons::icon(QStringLiteral("wifi"), tokens::kIconMd,
+                                         Theme::instance().palette().text1)
+                                 .pixmap(tokens::kIconMd, tokens::kIconMd));
         lrl->addStretch(1);
-        lrl->addWidget(wifi);
+        lrl->addWidget(linkIcon_);
         lrl->addWidget(linkLabel_);
         linkCol->addWidget(linkCaption);
         linkCol->addWidget(linkRow);
@@ -148,7 +153,29 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         al->addWidget(right);
         vl->addWidget(axis);
 
-        chartBadge_ = new Badge(tr("均值 --"), Badge::Variant::Ok);
+        // 没有可采样的设备时，图表下面补一行提示（mac 端是 FGEmptyHint
+        // 「连接设备后开始采样」）。早先这里只有一块空画布，用户不知道
+        // 该连设备还是该等——图上写「等待采样」也没说清楚在等什么。
+        auto *hintBox = new QWidget(body);
+        auto *hbl = new QHBoxLayout(hintBox);
+        hbl->setContentsMargins(tokens::kS3, tokens::kS2, tokens::kS3, tokens::kS2);
+        hbl->setSpacing(tokens::kS1);
+        auto *hintIcon = new QLabel(hintBox);
+        hintIcon->setFixedSize(tokens::kIconXs, tokens::kIconXs);
+        hintIcon->setPixmap(icons::icon(QStringLiteral("info"), tokens::kIconXs,
+                                        Theme::instance().palette().text3)
+                                .pixmap(tokens::kIconXs, tokens::kIconXs));
+        auto *hintText = new QLabel(tr("连接设备后开始采样"), hintBox);
+        hintText->setFont(uiFont(tokens::kFont11));
+        hintText->setStyleSheet(
+            QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+        hbl->addWidget(hintIcon);
+        hbl->addWidget(hintText);
+        hbl->addStretch(1);
+        vl->addWidget(hintBox);
+        chartHint_ = hintBox;
+
+        chartBadge_ = new Badge(tr("均值 —"), Badge::Variant::Ok);
         auto *section = new Collapsible(tr("近 60 秒采样"), QStringLiteral("activity"), body,
                                         chartBadge_);
         contentLayout_->addWidget(section);
@@ -225,7 +252,7 @@ QWidget *LatencyPanel::buildThresholdSection()
     auto *threshold = new QLineEdit(QStringLiteral("20"), body);
     threshold->setFixedWidth(64);
     QObject::connect(threshold, &QLineEdit::textChanged, badge, [badge](const QString &t) {
-        badge->setText(t.isEmpty() ? QStringLiteral("--") : tr("%1ms").arg(t));
+        badge->setText(t.isEmpty() ? QStringLiteral("—") : tr("%1ms").arg(t));
     });
     auto *times = new QLineEdit(QStringLiteral("3"), body);
     times->setFixedWidth(64);
@@ -312,12 +339,26 @@ void LatencyPanel::refresh()
 
     if (bigValue_ != nullptr) {
         bigValue_->setText(hasReading ? QStringLiteral("%1ms").arg(ms, 0, 'f', 1)
-                                      : QStringLiteral("--"));
+                                      : QStringLiteral("—"));
         bigValue_->setStyleSheet(
             QStringLiteral("color:%1").arg(css(Theme::instance().color(q).text)));
     }
     if (linkLabel_ != nullptr) {
-        linkLabel_->setText(active != nullptr ? linkName(active->link) : QStringLiteral("—"));
+        // mac 端：连上了显示链路名，没连上写「未连接」。
+        linkLabel_->setText(active != nullptr && active->online ? linkName(active->link)
+                                                                : tr("未连接"));
+    }
+    if (linkIcon_ != nullptr) {
+        const bool connected = active != nullptr && active->online;
+        linkIcon_->setPixmap(icons::icon(connected ? QStringLiteral("lan")
+                                                   : QStringLiteral("wifi"),
+                                         tokens::kIconMd,
+                                         Theme::instance().palette().text1)
+                                 .pixmap(tokens::kIconMd, tokens::kIconMd));
+    }
+    if (chartHint_ != nullptr) {
+        // 没有可采样的设备才提示；有设备时这行字是多余的。
+        chartHint_->setVisible(active == nullptr);
     }
     if (measureNote_ != nullptr) {
         // 这一行必须说清「量的是谁」。传输层落地前没有对端，测的是本机到
@@ -354,17 +395,15 @@ void LatencyPanel::refresh()
         }
 
         for (const Device &d : devices) {
+            // mac 端那一行是「本机」/「离线」/「系统 · 链路 · 已连接」三选一。
+            // 这里原来还给本机行也缀上链路与 IP，一行挤四段字；地址与丢包率
+            // 归连接屏的设备卡管，这一行按 mac 端说清楚状态就够。
             QString hint = tr("离线");
-            if (d.online) {
-                hint = (d.isLocal ? tr("本机") : d.platformLabel) +
-                       QStringLiteral(" · ") + linkName(d.link);
-                if (!d.address.isEmpty()) {
-                    hint += QStringLiteral(" · ") + d.address;
-                }
-                // 丢包率 -1 = 还没统计到样本，写「丢包 0.0%」是编的。
-                if (d.packetLoss >= 0.0) {
-                    hint += tr(" · 丢包 %1%").arg(d.packetLoss, 0, 'f', 1);
-                }
+            if (d.isLocal) {
+                hint = tr("本机");
+            } else if (d.online) {
+                hint = d.platformLabel + QStringLiteral(" · ") + linkName(d.link)
+                       + tr(" · 已连接");
             }
             auto *lat = new LatencyChip();
             lat->setLatency(d.latencyMs, d.latencyMs >= 0.0);
@@ -375,11 +414,14 @@ void LatencyPanel::refresh()
             tl->setContentsMargins(0, 0, 0, 0);
             tl->setSpacing(tokens::kS2);
             auto *icon = new QLabel(title);
-            icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
-            icon->setPixmap(icons::icon(d.icon, tokens::kIconSm, d.online ? p.text2 : p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
+            icon->setFixedSize(tokens::kIconMd, tokens::kIconMd);
+            icon->setPixmap(icons::icon(d.icon, tokens::kIconMd, d.online ? p.text2 : p.text3)
+                                .pixmap(tokens::kIconMd, tokens::kIconMd));
             tl->addWidget(icon);
             auto *name = new QLabel(d.name, title);
-            name->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
+            // mac 端设备名是 12px 常规字重（不是半粗），字重重一档会显得
+            // 比 mac 端更抢眼。
+            name->setFont(uiFont(tokens::kFont12));
             name->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
             tl->addWidget(name);
 
@@ -408,7 +450,7 @@ void LatencyPanel::refreshChartBadge()
         return;
     }
     const double avg = DeviceManager::instance().activeLatencyAvgMs();
-    chartBadge_->setText(avg >= 0.0 ? tr("均值 %1ms").arg(avg, 0, 'f', 1) : tr("均值 --"));
+    chartBadge_->setText(avg >= 0.0 ? tr("均值 %1ms").arg(avg, 0, 'f', 1) : tr("均值 —"));
 }
 
 } // namespace fg

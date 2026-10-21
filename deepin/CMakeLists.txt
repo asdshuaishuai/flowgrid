@@ -141,6 +141,7 @@ set(FLOWGRID_SOURCES
     src/core/linkprobe.h          src/core/linkprobe.cpp
     src/core/protocolapi.h        src/core/protocolapi.cpp
     src/core/lanidlink.h          src/core/lanidlink.cpp
+    src/core/laniddiscovery.h     src/core/laniddiscovery.cpp
     src/core/devicemanager.h      src/core/devicemanager.cpp
     src/core/input/input_keymap.h
     src/core/input/input_engine.h src/core/input/input_engine.cpp
