@@ -24,7 +24,13 @@
 
 - [x] 4.1 Windows fgcore：UDP 多播适配器（`internal/lanid/lanid.go`，Go 直引协议层）——本机编译 + vet 验证
 - [x] 4.2 deepin：RAII 封装（`protocolapi.h/cpp`）+ UDP 多播适配器（`lanidlink.h/cpp`，QUdpSocket）
-- [ ] 4.3 各自开发机验证（Windows 模块整包构建 / deepin DTK 构建 + CMakeLists 加入新文件）
+- [x] 4.3 各自开发机验证（Windows 模块整包构建 / deepin DTK 构建 + CMakeLists 加入新文件）
+  - Windows：`GOOS=windows CGO_ENABLED=0 go build ./...` 与 `go test -exec /bin/true ./...`
+    全绿（7 个包，含测试二进制编译）。该模块整体是 Win32-only
+    （`internal/wininput` 走 SendInput / WH_KEYBOARD_LL），Linux 上原生
+    `go build ./...` 本就不通，验证按目标平台交叉编译做。
+  - deepin：`src/core/lanidlink.{h,cpp}` 已进 `FLOWGRID_SOURCES`，
+    链接补 `Qt6::Network`；`deepin/dev.sh --check` 全绿。
 
 ## 5. 验证
 

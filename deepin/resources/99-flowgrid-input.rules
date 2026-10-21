@@ -5,7 +5,8 @@
 # 加进 input 组范围小：input 组能看到整台机器的所有输入设备，uaccess 只覆盖
 # 活跃会话。
 #
-# 安装（发行版不该由应用自己改 /etc，所以留给用户/打包脚本）：
+# 安装：deepin/install.sh 会随 cmake --install 把它落到 /etc/udev/rules.d/，
+# 装完自动 udevadm control --reload-rules + trigger。手工装的话：
 #   sudo install -m 0644 deepin/resources/99-flowgrid-input.rules /etc/udev/rules.d/
 #   sudo udevadm control --reload-rules
 #   sudo udevadm trigger --subsystem-match=input

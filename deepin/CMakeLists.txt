@@ -56,7 +56,9 @@ endif()
 set(CMAKE_BUILD_RPATH "${FLOWGRID_DTK_SYSROOT}/lib/x86_64-linux-gnu")
 set(CMAKE_INSTALL_RPATH "${FLOWGRID_DTK_SYSROOT}/lib/x86_64-linux-gnu")
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets DBus)
+# Network 是智能连接（LAN 私有链发现）的 UDP 多播适配器要的：QUdpSocket /
+# QHostAddress / QNetworkDatagram 都在 Qt6::Network 里，不在 Core 里。
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets DBus Network)
 
 find_package(Dtk6Core QUIET)
 find_package(Dtk6Gui QUIET)
@@ -138,6 +140,7 @@ set(FLOWGRID_SOURCES
     src/core/hostinfo.h           src/core/hostinfo.cpp
     src/core/linkprobe.h          src/core/linkprobe.cpp
     src/core/protocolapi.h        src/core/protocolapi.cpp
+    src/core/lanidlink.h          src/core/lanidlink.cpp
     src/core/devicemanager.h      src/core/devicemanager.cpp
     src/core/input/input_keymap.h
     src/core/input/input_engine.h src/core/input/input_engine.cpp
@@ -203,7 +206,7 @@ function(flowgrid_configure_target target)
         ${GO_PROTOCOL_DIR}/cgo)
     target_link_libraries(${target} PRIVATE
         ${FLOWGRID_DTK_LIBS}
-        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::DBus
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::DBus Qt6::Network
         ${GO_PROTOCOL_A}
         Threads::Threads)
     target_compile_options(${target} PRIVATE -Wall -Wextra)
@@ -265,6 +268,15 @@ install(FILES resources/flowgrid-deepin.desktop
 # 文件 Hidden=true 覆盖它（见 settingspanel.cpp）。
 install(FILES resources/flowgrid-deepin-autostart.desktop
         DESTINATION /etc/xdg/autostart)
+# uinput 权限规则：键鼠软模拟要写 /dev/uinput，普通用户默认没这个权限，
+# 引擎的 setupUinput() 会直接失败（lastError 里写着原因）。规则把
+# /dev/uinput 交给 input 组，用户加入该组后即可注入。
+#
+# 同样是绝对路径（DESTINATION 相对会被拼到 CMAKE_INSTALL_PREFIX 下），
+# 落在 udev 只认的那一个目录：/etc/udev/rules.d。
+# 装完要 udevadm control --reload-rules 才生效——install.sh 里那一步跟着做。
+install(FILES resources/99-flowgrid-input.rules
+        DESTINATION /etc/udev/rules.d)
 install(FILES resources/icons/flowgrid.svg
         DESTINATION ${FLOWGRID_ICON_INSTALL_DIR})
 # DConfig（DSG）按固定约定定位 meta 文件：

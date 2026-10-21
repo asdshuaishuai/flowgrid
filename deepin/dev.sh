@@ -28,6 +28,10 @@ SRC_DIR="${REPO_ROOT}/deepin"
 BUILD_DIR="${SRC_DIR}/build-dev"
 BIN_NAME="flowgrid-deepin"
 TEST_NAME="flowgrid-uitest"
+# 键鼠映射表单测：纯头文件，不依赖 Qt/DTK，也不需要 /dev/uinput，
+# 所以在容器/CI 里也能跑。跟界面自检一起进体检——不然这份单测只存在于
+# 仓库里，永远没人跑它，映射表错了也没人知道。
+INPUT_TEST_NAME="flowgrid-inputtest"
 
 BUILD=1
 BUILD_TYPE="Debug"
@@ -111,6 +115,9 @@ fi
 if [ "${MODE}" = "check" ] && [ ! -x "${BUILD_DIR}/${TEST_NAME}" ]; then
     die "--check 需要 ${BUILD_DIR}/${TEST_NAME}，但它不存在（先不带 --skip-build 跑一次）"
 fi
+if [ "${MODE}" = "check" ] && [ ! -x "${BUILD_DIR}/${INPUT_TEST_NAME}" ]; then
+    die "--check 需要 ${BUILD_DIR}/${INPUT_TEST_NAME}，但它不存在（先不带 --skip-build 跑一次）"
+fi
 
 # ── 2. 快照 ────────────────────────────────────────────────────────────
 # 无头渲染八屏 + 焦点样张 + 图标总览，落到 PNG 供人眼比对。
@@ -177,6 +184,9 @@ case "${MODE}" in
         # docs/PROTOCOL-INTEGRATION.md，不在 UI 这条线上改。
         ok "界面自检（真实控件 + 真实事件路径）"
         "${BUILD_DIR}/${TEST_NAME}"
+
+        ok "键鼠映射表单测（HID↔evdev 映射表）"
+        "${BUILD_DIR}/${INPUT_TEST_NAME}"
 
         ok "无头快照"
         snapshot "${THEME}" "${SNAPSHOT_DIR}"

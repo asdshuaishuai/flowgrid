@@ -135,8 +135,26 @@ fi
 #   /usr/local/share/icons/hicolor/scalable/apps/flowgrid.svg
 #   ${DCONFIG_META}              ← 绝对路径，dconfig 守护进程只扫它所在的根
 #   /etc/xdg/autostart/flowgrid-deepin-autostart.desktop   ← 绝对路径，自启项只能在这
+#   /etc/udev/rules.d/99-flowgrid-input.rules              ← 绝对路径，udev 只认这一处
 ok "安装到系统位置（会提示输入 sudo 密码）"
 ${SUDO} "${CMAKE}" --install "${BUILD_DIR}"
+
+# udev 规则装上不等于生效：udev 已经在跑的实例不会自动重读规则目录。
+# 不 reload 的话 /dev/uinput 的 ACL 不会下发，键鼠注入仍然失败——
+# 而失败的报错只说「打不开 /dev/uinput」，没人会想到是规则没重载。
+#
+# reload 与 trigger 分开：前者让 udev 重新读规则，后者让规则作用到
+# **已经存在**的设备节点上（uinput 那个 static_node 设备）。
+# 两步都要 sudo。
+if [ -f "/etc/udev/rules.d/99-flowgrid-input.rules" ]; then
+    if command -v udevadm >/dev/null; then
+        ${SUDO} udevadm control --reload-rules >/dev/null 2>&1 \
+            && ${SUDO} udevadm trigger --subsystem-match=input >/dev/null 2>&1 \
+            && ok "udev 规则已重载（键鼠注入权限）"
+    else
+        note "PATH 里找不到 udevadm，udev 规则要手动重载：sudo udevadm control --reload-rules"
+    fi
+fi
 
 # ── 3. 清掉此前装到 ~/.local 的那份 ───────────────────────────────────
 # 这些副本都是「dconfig 看不见」的位置，留着只会让人误以为 meta 装好了
@@ -299,6 +317,22 @@ fi
 [ -f "/etc/xdg/autostart/${BIN_NAME}-autostart.desktop" ] \
     && ok "自启项：/etc/xdg/autostart/${BIN_NAME}-autostart.desktop" \
     || note "自启项没装上，设置屏的「开机自启」开关将无处可写"
+
+# udev 规则装了不等于生效：ACL 在**登录时**下发，且要 udevadm 重载过规则。
+# 只看文件在不在是不够的——这里查规则是否真的被 udev 读进去了。
+if [ -f "/etc/udev/rules.d/99-flowgrid-input.rules" ]; then
+    ok "udev 规则：/etc/udev/rules.d/99-flowgrid-input.rules"
+    if command -v udevadm >/dev/null; then
+        if udevadm info --query=all --name=/dev/uinput >/dev/null 2>&1; then
+            ok "/dev/uinput 已存在（键鼠注入可用）"
+        else
+            note "/dev/uinput 还不存在：sudo modprobe uinput"
+        fi
+    fi
+    note "uaccess 的 ACL 在登录时下发，改完规则要重新登录才生效。"
+else
+    note "udev 规则没装上，键鼠软模拟注入会因打不开 /dev/uinput 失败。"
+fi
 
 printf '\n'
 ok "装好了。从应用菜单搜「FlowGrid」启动，或："
