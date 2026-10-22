@@ -45,16 +45,17 @@
 <body>
 <header>
   <h1>FlowGrid 协议层 Demo</h1>
-  <p>只调 <code>protocol</code> 包（编解码 / 会话状态机 / 发现逻辑），不含 transport、HAL、GUI。
-     两个「设备」是进程内字节交换——正是协议层该负责的部分。</p>
+  <p>设备发现走真实 UDP 组播，但「发现协议」全在 <code>protocol</code> ／ lanid.go
+     （ECDSA 身份 / 签名通告 / 验签聚合 / 信任链）；demo 只额外加一个 ~30 行 UDP 字节泵，
+     不含 HAL（输入注入）、GUI。同网段跑两个实例即可互相发现、握手。</p>
 </header>
 <main>
   <section class="card">
-    <h2>① 设备发现</h2>
-    <p class="sub">两个 mDNS 实例（Mac / Linux）互相 Announce → Feed → Peers，含查询/应答路径。</p>
-    <div class="row"><button onclick="runDiscover()">开始发现</button></div>
-    <ul class="steps" id="discover-steps"></ul>
-    <pre id="discover-out">点击「开始发现」…</pre>
+    <h2>① 设备发现 <span class="tag" id="disc-live">● 组播监听中</span></h2>
+    <p class="sub">IntelligentLink 私有链：本节点 ECDSA 身份 + 签名组播通告；同网段同协议设备自动出现（验签通过 + 指纹 + 握手）。</p>
+    <pre id="identity-out">本节点身份加载中…</pre>
+    <pre id="peers-out">扫描局域网同协议设备中…（同网段再跑一个 demo 实例即可出现）</pre>
+    <ul class="steps" id="discover-events"></ul>
   </section>
 
   <section class="card">
@@ -102,13 +103,30 @@ function showSteps(id, steps) {
     (steps || []).map(s => `<li>${s}</li>`).join("");
 }
 
-async function runDiscover() {
-  const d = await getJSON("/api/discover");
-  showSteps("discover-steps", d.steps);
-  const linux = d.onLinux.map(p => `${p.name}  ${p.addr}:${p.port}  [${p.platform}]`).join("\n");
-  const mac = d.onMac.map(p => `${p.name}  ${p.addr}:${p.port}  [${p.platform}]`).join("\n");
-  show("discover-out", `Linux 侧发现：\n${linux}\n\nMac 侧发现：\n${mac}`);
+async function refreshDiscovery() {
+  let id;
+  try { id = await getJSON("/api/identity"); } catch (e) { return; }
+  show("identity-out",
+    `本节点：${id.name}\n平台：${id.platform}\n指纹：${id.fingerprint}\n组播：${id.group}:${id.port}\n信任链记录：${id.trustCount} 条`);
+  showSteps("discover-events", (id.events || []).slice(-6).reverse());
+
+  const d = await getJSON("/api/peers");
+  if (!d.peers || d.peers.length === 0) {
+    show("peers-out", "尚未发现同协议设备…（同网段再跑一个 demo 实例即可自动出现）");
+  } else {
+    let out = `发现 ${d.peers.length} 台同协议设备：`;
+    for (const p of d.peers) {
+      out += `\n\n● ${p.name}  [${p.platform}]  ${p.addr}:${p.port}`;
+      out += `\n   指纹 ${p.fingerprint}`;
+      out += `\n   caps ${p.caps} · 首见 ${p.firstSeen} · 握手 ${p.handshake ? "已发起 ✔" : "待"}`;
+    }
+    show("peers-out", out);
+  }
 }
+
+// 自动发现：页面加载即开始，每 2s 轮询（与 LanIDAnnouncePeriod 一致）
+refreshDiscovery();
+setInterval(refreshDiscovery, 2000);
 
 async function runLink() {
   const d = await getJSON("/api/link");

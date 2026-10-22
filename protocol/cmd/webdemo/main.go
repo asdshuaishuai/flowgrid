@@ -1,21 +1,26 @@
-// Command webdemo 是一个纯协议层的 web 演示：用浏览器页面驱动 Go 协议库，
-// 在进程内演示四个能力——设备发现（mDNS 两实例互发现）、链接（identify 握手 +
-// 链路规划）、剪切板（两 ClipboardSession 经真实帧往返）、命令识别（键鼠 payload
-// 编解码 + 跨平台键位重映射）。
+// Command webdemo 是一个协议层 web 演示：用浏览器页面驱动 Go 协议库，演示四个
+// 能力——设备发现（IntelligentLink 私有链：ECDSA 身份 + 组播签名通告 + 验签聚合
+// + 指纹）、链接（identify 握手 + 链路规划）、剪切板（两 ClipboardSession 经真实
+// 帧往返）、命令识别（键鼠 payload 编解码 + 跨平台键位重映射）。
 //
-// 注意：只调 protocol 包，不含 transport（UDP socket）、HAL（输入注入）、GUI。
-// 两实例的「网络」是进程内字节交换（Advertiser.Announce → Browser.Feed 等），
-// 正是协议层该负责的部分（AGENTS.md #28）。
+// 设备发现走真实 UDP 组播（LanIDGroup:LanIDPort），但「发现协议」全在 protocol 包
+// （lanid.go：签名/验签/聚合/信任链）；本文件只额外提供一个 ~30 行 UDP 字节泵
+// （radio adapter）把字节搬进搬出，不含 HAL（输入注入）、GUI（AGENTS.md #28）。
 package main
 
 import (
+	"crypto/ecdsa"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
+	"runtime"
+	"sync"
+	"time"
 
 	"github.com/flowgrid/protocol"
 )
@@ -31,8 +36,10 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+	startDiscovery() // IntelligentLink 私有链发现：ECDSA 身份 + UDP 组播 radio
 	http.HandleFunc("/", serveIndex)
-	http.HandleFunc("/api/discover", handleDiscover)
+	http.HandleFunc("/api/identity", handleIdentity)
+	http.HandleFunc("/api/peers", handlePeers)
 	http.HandleFunc("/api/link", handleLink)
 	http.HandleFunc("/api/clipboard", handleClipboard)
 	http.HandleFunc("/api/command", handleCommand)
@@ -75,65 +82,219 @@ func encodeFrame(ft uint8, seq uint16, payload []byte) []byte {
 	return wire
 }
 
-// ── ① 设备发现：两个 mDNS 实例（Mac + Linux）互相发现 ──────────────────
+// ── ① 设备发现：IntelligentLink 私有链（lanid.go）+ 最小 UDP 组播 radio ─────
 
-func handleDiscover(w http.ResponseWriter, r *http.Request) {
-	macIP := net.ParseIP("192.168.1.10")
-	linuxIP := net.ParseIP("192.168.1.20")
+// discNode 是本节点在私有链上的身份与发现状态。发现「协议」全在 protocol 包
+// （lanid.go：ECDSA 签名/验签/聚合/信任链）；这里只持有 Announcer/Listener/
+// TrustChain，并驱动一个 UDP 字节泵把字节搬进搬出。
+type discNode struct {
+	identity        *ecdsa.PrivateKey
+	announcer       *protocol.LanIDAnnouncer
+	listener        *protocol.LanIDListener
+	trust           *protocol.TrustChain
+	selfName        string
+	selfPlatform    protocol.Platform
+	selfFingerprint string
 
-	advMac, err := protocol.NewMdnsAdvertisor("Mac-mini._flowgrid._tcp.local", "macmini.local", macIP, 24801,
-		protocol.MdnsTXTRecord{Version: "1", Platform: "macos", Name: "Kelthas的Mac mini",
-			Caps: "intelligentlink,directlink,dtls,clipboard,file", Port: "24801", Encryption: "dtls13", HWAddr: "a1:b2:c3:d4:e5:f6"})
+	mu        sync.Mutex
+	connected map[string]bool // 对端 fingerprint → 已发起 identify 握手
+	events    []string        // 发现/握手事件流水（供前端展示）
+}
+
+var node *discNode
+
+func platformFromGOOS() protocol.Platform {
+	switch runtime.GOOS {
+	case "darwin":
+		return protocol.PlatformMacOS
+	case "windows":
+		return protocol.PlatformWindows
+	default:
+		return protocol.PlatformLinux
+	}
+}
+
+// startDiscovery 生成本节点 ECDSA 身份，建 Announcer/Listener/TrustChain，起
+// 后台 UDP 组播 radio：周期 Announce→sendto、recvfrom→Feed（验签+聚合）。
+func startDiscovery() {
+	ident, err := protocol.GenerateIdentityKeyPair()
 	if err != nil {
-		fail(w, err)
+		log.Printf("discovery: 生成身份失败: %v", err)
 		return
 	}
-	advLinux, err := protocol.NewMdnsAdvertisor("deepin-PC._flowgrid._tcp.local", "deepin.local", linuxIP, 24801,
-		protocol.MdnsTXTRecord{Version: "1", Platform: "linux", Name: "deepin 工作站",
-			Caps: "intelligentlink,directlink,dtls,clipboard,file", Port: "24801", Encryption: "dtls13", HWAddr: "b2:c3:d4:e5:f6:a1"})
+	host, _ := os.Hostname()
+	fp := protocol.PublicKeyFingerprintFromBytes(protocol.IdentityPublicKeyBytes(ident))
+	// 名字带指纹短码：同主机跑多个实例时可区分，且一眼看出哪个不是自己
+	name := fmt.Sprintf("%s · %s", host, fp[:8])
+	platform := platformFromGOOS()
+	caps := protocol.CapIntelligentLink | protocol.CapDirectLink | protocol.CapDTLS13 |
+		protocol.CapClipboard | protocol.CapFileTransfer
+	ann, err := protocol.NewLanIDAnnouncer(ident, platform, caps, protocol.LanIDPort, name)
 	if err != nil {
-		fail(w, err)
+		log.Printf("discovery: 建 Announcer 失败: %v", err)
 		return
 	}
-	brMac := protocol.NewMdnsBrowser()
-	brLinux := protocol.NewMdnsBrowser()
-
-	steps := []string{}
-	// 主动公告：A.Announce → B.Feed
-	macAdv := advMac.Announce()
-	brLinux.Feed(macAdv, macIP)
-	steps = append(steps, fmt.Sprintf("Mac 公告 %d B → Linux 浏览器 Feed", len(macAdv)))
-	linuxAdv := advLinux.Announce()
-	brMac.Feed(linuxAdv, linuxIP)
-	steps = append(steps, fmt.Sprintf("Linux 公告 %d B → Mac 浏览器 Feed", len(linuxAdv)))
-	// 查询/应答：Linux 发查询 → Mac 应答 → Linux 浏览器 Feed
-	query := protocol.BuildQueryPacket()
-	if resp := advMac.HandleQuery(query); resp != nil {
-		brLinux.Feed(resp, macIP)
-		steps = append(steps, fmt.Sprintf("Linux 查询 %d B → Mac 应答 %d B → Linux 浏览器", len(query), len(resp)))
+	node = &discNode{
+		identity:        ident,
+		announcer:       ann,
+		listener:        protocol.NewLanIDListener(),
+		trust:           protocol.NewTrustChain(ident),
+		selfName:        name,
+		selfPlatform:    platform,
+		selfFingerprint: fp,
+		connected:       map[string]bool{},
 	}
+	node.addEvent(fmt.Sprintf("本节点就绪：%s [%s] 指纹 %s（组播 %s:%d，每 %s 通告）",
+		name, platform, node.selfFingerprint, protocol.LanIDGroup, protocol.LanIDPort, protocol.LanIDAnnouncePeriod))
+	log.Printf("discovery: %s [%s] 指纹 %s @ %s:%d", name, platform, node.selfFingerprint, protocol.LanIDGroup, protocol.LanIDPort)
+	go radioLoop()
+}
 
+func (n *discNode) addEvent(s string) {
+	n.mu.Lock()
+	n.events = append(n.events, s)
+	if len(n.events) > 50 {
+		n.events = n.events[len(n.events)-50:]
+	}
+	n.mu.Unlock()
+}
+
+// radioLoop 是唯一的「radio adapter」：一个 UDP 组播 socket，把 lanid.go 的
+// Announcer/Listener 接到空气里。协议逻辑（签名/验签/聚合）不在这里。
+func radioLoop() {
+	gaddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", protocol.LanIDGroup, protocol.LanIDPort))
+	if err != nil {
+		log.Printf("discovery radio: %v", err)
+		return
+	}
+	// 发送：连接到组播组
+	sendConn, err := net.DialUDP("udp", nil, gaddr)
+	if err != nil {
+		log.Printf("discovery radio: dial: %v", err)
+		node.addEvent("UDP 组播发送失败：" + err.Error())
+		return
+	}
+	defer sendConn.Close()
+	// 接收：绑定端口并加入组播组（gaddr 必须含组 IP，否则 macOS 报 missing address）
+	recvConn, err := net.ListenMulticastUDP("udp", nil, gaddr)
+	if err != nil {
+		log.Printf("discovery radio: 绑定组播失败: %v", err)
+		node.addEvent("UDP 组播绑定失败：" + err.Error())
+		return
+	}
+	defer recvConn.Close()
+
+	// 周期通告（带 ECDSA 签名）
+	go func() {
+		t := time.NewTicker(protocol.LanIDAnnouncePeriod)
+		defer t.Stop()
+		for {
+			if wire, err := node.announcer.Announce(); err == nil {
+				_, _ = sendConn.Write(wire)
+			}
+			<-t.C
+		}
+	}()
+
+	// 周期清理失联对端：超过 3 个通告周期没再见到的 peer 移除（死实例不留幽灵）
+	go func() {
+		t := time.NewTicker(protocol.LanIDAnnouncePeriod)
+		defer t.Stop()
+		for {
+			<-t.C
+			node.listener.Prune(3 * protocol.LanIDAnnouncePeriod)
+		}
+	}()
+
+	// 接收 → Feed（验签 + 聚合）→ Poll 到新对端 → 握手
+	buf := make([]byte, 4096)
+	for {
+		nread, from, err := recvConn.ReadFromUDP(buf)
+		if err != nil {
+			continue
+		}
+		node.listener.Feed(buf[:nread], from.IP)
+		for _, p := range node.listener.Poll() {
+			if p.Fingerprint == node.selfFingerprint {
+				continue // 组播回环：收到自己的通告
+			}
+			node.onPeerDiscovered(p)
+		}
+	}
+}
+
+// onPeerDiscovered：协议层验签通过、聚合成 LanIDPeer 后「告诉客户端」——记录事件、
+// 并入信任链、发起 identify 握手（§4.2）。
+func (n *discNode) onPeerDiscovered(p protocol.LanIDPeer) {
+	n.mu.Lock()
+	already := n.connected[p.Fingerprint]
+	n.connected[p.Fingerprint] = true
+	n.mu.Unlock()
+
+	n.addEvent(fmt.Sprintf("发现对端 %s [%s] %s:%d 指纹 %s（验签通过）",
+		p.Name, p.Platform, p.Addr, p.Port, p.Fingerprint))
+	if already {
+		return
+	}
+	_ = n.trust.Append(p.PubKey, 1) // 信任链记录：本节点见过该对端
+	idPayload := &protocol.IdentifyPayload{
+		Version: protocol.ProtocolVersion, Platform: n.selfPlatform, Role: protocol.RoleBoth,
+		Caps: protocol.CapIntelligentLink | protocol.CapDirectLink | protocol.CapDTLS13 | protocol.CapClipboard,
+		SeqInit: 0x5A5A5A5A, Name: n.selfName,
+	}
+	_ = idPayload.Validate()
+	n.addEvent(fmt.Sprintf("→ 向 %s 发起 identify 握手（%d B；真实场景经 TCP 到 %s:%d）",
+		p.Name, len(idPayload.Marshal()), p.Addr, p.Port))
+}
+
+// GET /api/identity — 本节点身份（名称/平台/指纹/组播地址/信任链长度/事件流水）
+func handleIdentity(w http.ResponseWriter, r *http.Request) {
+	if node == nil {
+		fail(w, fmt.Errorf("发现未启动"))
+		return
+	}
+	node.mu.Lock()
+	events := append([]string(nil), node.events...)
+	node.mu.Unlock()
 	writeJSON(w, map[string]any{
-		"steps":    steps,
-		"onLinux":  peersToJSON(brLinux.Peers()),
-		"onMac":    peersToJSON(brMac.Peers()),
+		"name":        node.selfName,
+		"platform":    node.selfPlatform.String(),
+		"fingerprint": node.selfFingerprint,
+		"group":       protocol.LanIDGroup,
+		"port":        protocol.LanIDPort,
+		"trustCount":  len(node.trust.Records()),
+		"events":      events,
 	})
 }
 
-func peersToJSON(peers []protocol.DiscoveredPeer) []map[string]any {
+// GET /api/peers — 实时发现的局域网同协议对端（验签通过 + 指纹 + 握手状态）
+func handlePeers(w http.ResponseWriter, r *http.Request) {
+	if node == nil {
+		fail(w, fmt.Errorf("发现未启动"))
+		return
+	}
+	node.mu.Lock()
+	events := append([]string(nil), node.events...)
+	connected := node.connected
+	node.mu.Unlock()
+
 	out := []map[string]any{}
-	for _, p := range peers {
+	for _, p := range node.listener.Peers() {
+		if p.Fingerprint == node.selfFingerprint {
+			continue
+		}
 		out = append(out, map[string]any{
-			"name":       p.Name,
-			"instance":   p.Instance,
-			"addr":       p.Addr.String(),
-			"port":       p.Port,
-			"platform":   p.Platform,
-			"caps":       p.Caps,
-			"encryption": p.Encryption,
+			"name":        p.Name,
+			"platform":    p.Platform.String(),
+			"fingerprint": p.Fingerprint,
+			"addr":        p.Addr.String(),
+			"port":        p.Port,
+			"caps":        fmt.Sprintf("0x%02x", uint8(p.Caps)),
+			"firstSeen":   p.FirstSeen.Format("15:04:05"),
+			"handshake":   connected[p.Fingerprint],
 		})
 	}
-	return out
+	writeJSON(w, map[string]any{"peers": out, "events": events})
 }
 
 // ── ② 链接：identify 握手（§4.2）+ 链路规划（PlanLinks）───────────────────
