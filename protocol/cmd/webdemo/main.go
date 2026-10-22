@@ -493,7 +493,9 @@ func (n *discNode) connectTo(fp string) error {
 
 	go func() {
 		defer conn.Close()
-		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		// 等对端「接受/拒绝」要留足人类反应时间（切到对端页面再点），给 5 分钟；
+		// 超时只是放弃等待并关闭本条 conn，对端若稍后接受会写失败、不会误标已连接。
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 		wire, err := readFrame(conn)
 		if err != nil {
 			n.mu.Lock()

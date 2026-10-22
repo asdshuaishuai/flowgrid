@@ -175,6 +175,18 @@ async function refreshDiscovery() {
   renderInvites(inv.invites);
 }
 
+async function connectTo(fp) {
+  const d = await getJSON("/api/connect?fp=" + encodeURIComponent(fp));
+  if (d.error) alert(d.error);
+  refreshDiscovery();
+}
+
+async function respond(name, accept) {
+  const d = await getJSON("/api/respond?name=" + name + "&accept=" + accept);
+  if (d.error) alert(d.error);
+  refreshDiscovery();
+}
+
 // 自动发现：页面加载即开始，每 2s 轮询（与 LanIDAnnouncePeriod 一致）
 refreshDiscovery();
 setInterval(refreshDiscovery, 2000);
