@@ -5,6 +5,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QFileInfo>
 #include <QLoggingCategory>
 #include <QNetworkDatagram>
@@ -126,21 +127,30 @@ bool LanIdDiscovery::saveIdentityKey(const QByteArray &key) const
     const QString path = identityKeyPath();
     QDir().mkpath(QFileInfo(path).absolutePath());
 
-    // 先写临时文件再改名：写到一半掉电不会留下一个半截的密钥文件，
-    // 下次启动读它会当成损坏、生成一把新身份——对端就认不出本机了。
-    const QString tmp = path + QStringLiteral(".tmp");
-    QFile f(tmp);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        qCWarning(lcLanId) << "身份私钥写入失败" << tmp << f.errorString();
-        return false;
-    }
-    f.write(key);
-    f.close();
+    // 用 QSaveFile 而不是「自己写 .tmp 再 QFile::rename」：
+    //
+    //  1. 原子替换——写到一半掉电不会留下一个半截的密钥文件，下次启动读它会
+    //     当成损坏、生成一把新身份，对端就认不出本机了。
+    //  2. **能覆盖已存在的目标文件**。Qt 的 QFile::rename 不覆盖（POSIX 的
+    //     rename() 覆盖，Qt 在这上面做了保护，实测 rename 到已存在文件返回
+    //     false 且原文件原样不动）。原先那个写法于是只在「文件还不存在」时
+    //     成功：一旦 identity.key 存在却坏了（空文件、被截断），这一轮生成
+    //     的新身份存不下去，下次启动又重来一遍——本机对端永远认不出来，
+    //     而日志上只有一句「未能落盘」。
+    QSaveFile f(path);
     // 私钥必须是 0600：同机其它用户读到就能冒充本机发通告。
     f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    if (!QFile::rename(tmp, path)) {
-        qCWarning(lcLanId) << "身份私钥改名失败" << tmp << "->" << path;
-        QFile::remove(tmp);
+    if (!f.open(QIODevice::WriteOnly)) {
+        qCWarning(lcLanId) << "身份私钥写入失败" << path << f.errorString();
+        return false;
+    }
+    if (f.write(key) != key.size()) {
+        qCWarning(lcLanId) << "身份私钥写入不完整" << path << f.errorString();
+        f.cancelWriting();
+        return false;
+    }
+    if (!f.commit()) {
+        qCWarning(lcLanId) << "身份私钥落盘失败" << path << f.errorString();
         return false;
     }
     return true;

@@ -2,10 +2,13 @@
 
 #include "core/designtokens.h"
 #include "core/laniddiscovery.h"
+#include "core/settings.h"
 #include "core/theme.h"
 #include "icons.h"
 #include "widgets.h"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -51,22 +54,6 @@ QWidget *labeledField(const QString &label, QLineEdit *edit, QWidget *parent)
     vl->addWidget(text);
     vl->addWidget(edit);
     return box;
-}
-
-// 「复制」「刷新」这类还没接通的按钮：点了给一条明确日志 + 一个明确提示，
-// 而不是静悄悄地什么都不发生。
-FgButton *unwiredButton(const QString &text, const QString &iconName, const QString &what,
-                         QWidget *parent, bool small)
-{
-    auto *btn = new FgButton(text, FgButton::Variant::Secondary, small, parent);
-    if (!iconName.isEmpty()) {
-        btn->setIcon(iconName);
-    }
-    QObject::connect(btn, &FgButton::clicked, parent, [what] {
-        qCInfo(lcPairing) << what << QStringLiteral("尚未接通");
-        toast(QObject::tr("%1 尚未接通").arg(what), ToastKind::Info);
-    });
-    return btn;
 }
 
 } // namespace
@@ -277,7 +264,11 @@ QWidget *PairingPanel::buildConnectCard()
 
     auto *connect = new FgButton(tr("连接"), FgButton::Variant::Accent, false, row);
     QObject::connect(connect, &FgButton::clicked, this, [this] {
-        qCInfo(lcPairing) << "手动连接" << addressEdit_->text() << "尚未接通";
+        // 记地址，不记码：配对码是凭据，明文进日志等于把它抄进日志文件。
+        const QString typed = codeEdit_->text().trimmed();
+        qCInfo(lcPairing) << "手动连接" << addressEdit_->text() << "尚未接通（配对码来源："
+                          << (typed.isEmpty() ? QStringLiteral("本机码") : QStringLiteral("用户输入"))
+                          << "）";
         toast(tr("传输层尚未落地，连接暂不可用"), ToastKind::Info);
     });
     hl->addWidget(connect);
@@ -323,10 +314,14 @@ QWidget *PairingPanel::buildLocalCodeCard()
 
     // 配对码槽：四个 34×42 的数字槽（设计稿 .paircode）。
     //
-    // 槽里画的是「·」而不是具体数字：配对码要真生成得靠传输层的密钥协商，
-    // 传输层还没落地。摆一个具体的「8421」会让人真去输一个根本不存在的码，
-    // 连不上还找不到原因。mac 那边摆的是 DemoData 的演示值——那是 mac 端的
-    // 现状，不是我们要抄的东西。
+    // 槽里放的是**本机真正在用的那组数字**：Settings::pairingCode() 读
+    // ~/.config/flowgrid/paircode，读不到就现生成一组落盘。
+    //
+    // 早先这里摆的是「·」占位，理由写的是「配对码要真生成得靠传输层的密钥
+    // 协商，传输层还没落地」——那个因果是反的：码是**本机生成、本机保存**
+    // 的（mac 端就是 Int.random 出 4 位数字存进自己的设置文件，protocol/
+    // 与 PROTOCOL.md 里根本没有配对码这个字段），产生它不依赖传输层。
+    // 传输层只负责后半截：对端拿这组数字去校验并建链。
     auto *codeBox = new QWidget(card);
     auto *ch = new QHBoxLayout(codeBox);
     ch->setContentsMargins(0, 0, 0, 0);
@@ -337,13 +332,13 @@ QWidget *PairingPanel::buildLocalCodeCard()
         slot->setFixedSize(tokens::kPairSlotW, tokens::kPairSlotH);
         slot->setAlignment(Qt::AlignCenter);
         slot->setFont(uiFont(tokens::kFont20, QFont::Bold));
-        slot->setText(QStringLiteral("·"));
         slot->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px;color:%3;"
                                           "border-bottom:1px solid %4")
                                 .arg(css(p.card))
                                 .arg(tokens::kRadiusCtl)
-                                .arg(css(p.text3))
+                                .arg(css(p.text1))
                                 .arg(css(p.line1)));
+        codeSlots_ << slot;
         ch->addWidget(slot);
     }
     ch->addStretch(1);
@@ -355,36 +350,62 @@ QWidget *PairingPanel::buildLocalCodeCard()
     rh->setContentsMargins(0, 0, 0, 0);
     rh->setSpacing(tokens::kS2);
 
-    // 没有真码可复制，按钮就该是禁用的——做成能点的「复制」，点了复制到空
-    // 字符串，用户会以为码被复制走了。
     auto *copy = new FgButton(tr("复制"), FgButton::Variant::Secondary, true, row);
     copy->setIcon(QStringLiteral("copy"));
-    copy->setEnabled(false);
-    copy->setToolTip(tr("配对码尚未生成，暂时没有可复制的内容"));
+    connect(copy, &FgButton::clicked, this, [this] {
+        if (pairCode_.isEmpty()) {
+            return;
+        }
+        if (QClipboard *clip = QApplication::clipboard()) {
+            clip->setText(pairCode_);
+            toast(tr("配对码已复制"), ToastKind::Ok);
+        }
+    });
     rh->addWidget(copy);
 
-    rh->addWidget(unwiredButton(tr("刷新"), QStringLiteral("refresh"), tr("刷新配对码"), row, true));
+    auto *refresh = new FgButton(tr("刷新"), FgButton::Variant::Secondary, true, row);
+    refresh->setIcon(QStringLiteral("refresh"));
+    connect(refresh, &FgButton::clicked, this, [this] {
+        setPairCode(Settings::instance().refreshPairingCode());
+        toast(tr("配对码已刷新"), ToastKind::Ok);
+    });
+    rh->addWidget(refresh);
     rh->addStretch(1);
     vl->addWidget(row);
 
-    // 把边界说清楚：码从哪来、为什么现在是空的。
+    // 把边界说清楚：码是哪来的、还差什么。
     auto *warn = new QWidget(card);
     auto *wl = new QHBoxLayout(warn);
     wl->setContentsMargins(0, tokens::kS1, 0, 0);
     wl->setSpacing(tokens::kS2);
     auto *icon = new QLabel(warn);
     icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
-    icon->setPixmap(icons::icon(QStringLiteral("warn"), tokens::kIconSm, p.warn.solid)
+    icon->setPixmap(icons::icon(QStringLiteral("info"), tokens::kIconSm, p.text3)
                         .pixmap(tokens::kIconSm, tokens::kIconSm));
-    auto *text = new QLabel(tr("配对码由传输层密钥协商生成，传输层尚未实现，当前为占位"), warn);
+    auto *text = new QLabel(tr("这组数字由本机生成并保存，对端在「连接到对端」的配对码里输入它；"
+                               "建立链路的传输层尚未落地"),
+                            warn);
     text->setWordWrap(true);
     text->setFont(uiFont(tokens::kFont11));
-    text->setStyleSheet(QStringLiteral("color:%1").arg(css(p.warn.text)));
+    text->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
     wl->addWidget(icon, 0, Qt::AlignTop);
     wl->addWidget(text, 1);
     vl->addWidget(warn);
 
+    // 首屏就把本机正在用的那组数字填进去。
+    setPairCode(Settings::instance().pairingCode());
+
     return card;
+}
+
+// 把一组配对码填进四个槽。位数对不上就只填能填的，剩下的留空——
+// 宁可少显示一位，也不要显示一个错的数字。
+void PairingPanel::setPairCode(const QString &code)
+{
+    pairCode_ = code;
+    for (int i = 0; i < codeSlots_.size(); ++i) {
+        codeSlots_.at(i)->setText(i < code.size() ? code.mid(i, 1) : QString());
+    }
 }
 
 // ── 页脚 ────────────────────────────────────────────────────────────────

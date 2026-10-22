@@ -59,6 +59,9 @@ private:
 
     void rebuildPeers();
 
+    // 把一组配对码填进四个数字槽（首屏与「刷新」都走它）。
+    void setPairCode(const QString &code);
+
     QVBoxLayout *peerLayout_ = nullptr;
     QLabel *peerEmptyLabel_ = nullptr;
     QLabel *peerStatusLabel_ = nullptr;
@@ -66,6 +69,8 @@ private:
     QLineEdit *codeEdit_ = nullptr;
     QLabel *connectStatusLabel_ = nullptr;
     Badge *nearbyBadge_ = nullptr;
+    QList<QLabel *> codeSlots_;
+    QString pairCode_;
 };
 
 } // namespace fg

@@ -2,12 +2,63 @@
 
 #include <DConfig>
 
+#include <QDir>
+#include <QFile>
+#include <QSaveFile>
+#include <QFileInfo>
 #include <QLoggingCategory>
+#include <QRandomGenerator>
+#include <QStandardPaths>
 
 Q_LOGGING_CATEGORY(lcSettings, "flowgrid.settings")
 
 namespace fg {
 namespace {
+
+// 本机配对码的位数与落盘位置。
+//
+// 放在 ~/.config/flowgrid/ 而不是 DConfig，理由见 settings.h 里那段注释：
+// DConfig 的 meta 装在系统目录，没跟着新版本重装就没有这个键，写入会被
+// 静默丢弃，码就会每次开面板都换一个。
+constexpr int kPairCodeDigits = 4;
+
+QString pairCodePath()
+{
+    const QString dir =
+        QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
+        + QStringLiteral("/flowgrid");
+    return dir + QStringLiteral("/paircode");
+}
+
+// 只收 4 位 ASCII 数字：文件是人能编辑的，别的内容一律当损坏处理。
+bool isPairCode(const QString &s)
+{
+    if (s.size() != kPairCodeDigits) {
+        return false;
+    }
+    for (const QChar c : s) {
+        if (c < QLatin1Char('0') || c > QLatin1Char('9')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// 新生成一组随机数字。
+//
+// 用随机数而不是从身份公钥派生：公钥是跟着 LAN 通告广播出去的，谁拿到
+// 都能推算出「你的配对码」，那「必须有人站在机器旁边」这条就没了。随机
+// 落盘才保得住「这组数字只有本机知道」。
+QString newPairCode()
+{
+    QRandomGenerator *rng = QRandomGenerator::global();
+    QString code;
+    code.reserve(kPairCodeDigits);
+    for (int i = 0; i < kPairCodeDigits; ++i) {
+        code += QLatin1Char('0' + static_cast<char>(rng->bounded(10)));
+    }
+    return code;
+}
 
 // DConfig 的键名与 meta 文件（resources/flowgrid-deepin.json）里的 key 一一
 // 对应。改这里必须同步改那个 json，否则写入会被 DConfig 拒掉并静默失效。
@@ -274,9 +325,58 @@ void Settings::resetToDefaults()
     }
 }
 
+// ── 本机配对码 ────────────────────────────────────────────────────────
+
+QString Settings::pairingCode()
+{
+    QFile f(pairCodePath());
+    if (f.open(QIODevice::ReadOnly)) {
+        const QString stored = QString::fromLatin1(f.readAll()).trimmed();
+        f.close();
+        if (isPairCode(stored)) {
+            return stored;
+        }
+    }
+    // 读不到 / 读坏了（首次运行、被人手改过）：现生成一组并落盘。
+    return refreshPairingCode();
+}
+
+QString Settings::refreshPairingCode()
+{
+    const QString code = newPairCode();
+    const QString path = pairCodePath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+
+    // 用 QSaveFile 而不是「自己写 .tmp 再 QFile::rename」。
+    //
+    // Qt 的 QFile::rename **不覆盖已存在的文件**（POSIX 的 rename() 覆盖，
+    // Qt 在这上面做了保护：实测 rename 到已存在的目标返回 false，原文件原样
+    // 不动）。原先那个写法于是只在「文件还不存在」时成功——第一次写入 OK，
+    // 之后每次「刷新」都改名失败：界面上码变了，盘上还是旧的，用户对着
+    // 屏幕念的码跟对端拿到的对不上。
+    //
+    // QSaveFile 一次解决两件事：写临时文件再原子替换（写到一半掉电不会留下
+    // 半截的码，下次启动读它会当成损坏又换一个，用户正对着屏幕输的码就白输了），
+    // 以及**能覆盖已存在的目标文件**。
+    QSaveFile f(path);
+    // 配对码是凭据：同机其它用户读到就能直接拿着它去跟本机配对。
+    f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    if (!f.open(QIODevice::WriteOnly)) {
+        qCWarning(lcSettings) << "配对码写入失败" << path << f.errorString();
+        return code;   // 落盘失败也要给调用方一个本次会话内一致的码
+    }
+    f.write(code.toLatin1());
+    if (!f.commit()) {
+        qCWarning(lcSettings) << "配对码落盘失败" << path << f.errorString();
+    }
+    return code;
+}
+
 QStringList Settings::managedKeys()
 {
     // 就是上面那组常量，一处定义两处用：读写走它，自检拿它跟 meta 对表。
+    //
+    // 本机配对码不在表里：它不走 DConfig，落在 ~/.config/flowgrid/paircode。
     return {
         QLatin1String(kKeyPreferredLink), QLatin1String(kKeyAutoRouting),
         QLatin1String(kKeyAutoStart),    QLatin1String(kKeyKeymap),
