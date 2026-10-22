@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlowGrid 协议层 Demo</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #1a1d24; --line: #2a2e38; --text: #e6e8ec;
+    --muted: #9aa3b2; --accent: #4f8cff; --ok: #35c46b; --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 -apple-system, "PingFang SC", system-ui, sans-serif; }
+  header { padding: 28px 24px 8px; max-width: 920px; margin: 0 auto; }
+  header h1 { margin: 0 0 6px; font-size: 22px; }
+  header p { margin: 0; color: var(--muted); font-size: 13px; }
+  header code { font-family: var(--mono); color: var(--accent); }
+  main { max-width: 920px; margin: 0 auto; padding: 20px 24px 60px;
+         display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 720px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line);
+          border-radius: 12px; padding: 16px 18px; }
+  .card h2 { margin: 0 0 4px; font-size: 16px; }
+  .card .sub { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+           padding: 7px 14px; font-size: 13px; cursor: pointer; }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--text); }
+  button:hover { filter: brightness(1.08); }
+  input[type=text] { flex: 1; min-width: 180px; background: #12141a; border: 1px solid var(--line);
+                     color: var(--text); border-radius: 8px; padding: 7px 10px; font-size: 13px; }
+  pre { background: #0b0d11; border: 1px solid var(--line); border-radius: 8px;
+        padding: 10px 12px; margin: 12px 0 0; font-family: var(--mono); font-size: 12px;
+        line-height: 1.55; white-space: pre-wrap; word-break: break-all; color: #c9d3e6;
+        max-height: 320px; overflow: auto; }
+  .tag { display: inline-block; font-size: 11px; color: var(--ok); border: 1px solid var(--ok);
+         border-radius: 20px; padding: 1px 9px; margin-top: 8px; }
+  .steps { color: var(--muted); font-family: var(--mono); font-size: 12px; margin: 10px 0 0;
+           padding-left: 18px; }
+  .steps li { margin: 2px 0; }
+  b { color: var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <h1>FlowGrid 协议层 Demo</h1>
+  <p>只调 <code>protocol</code> 包（编解码 / 会话状态机 / 发现逻辑），不含 transport、HAL、GUI。
+     两个「设备」是进程内字节交换——正是协议层该负责的部分。</p>
+</header>
+<main>
+  <section class="card">
+    <h2>① 设备发现</h2>
+    <p class="sub">两个 mDNS 实例（Mac / Linux）互相 Announce → Feed → Peers，含查询/应答路径。</p>
+    <div class="row"><button onclick="runDiscover()">开始发现</button></div>
+    <ul class="steps" id="discover-steps"></ul>
+    <pre id="discover-out">点击「开始发现」…</pre>
+  </section>
+
+  <section class="card">
+    <h2>② 链接</h2>
+    <p class="sub">identify 握手（§4.2）：载荷 → 帧（含 HMAC）→ 对端校验 → IDENTIFY_RESPONSE；再 PlanLinks 规划链路。</p>
+    <div class="row"><button onclick="runLink()">建立链接</button></div>
+    <ul class="steps" id="link-steps"></ul>
+    <pre id="link-out">点击「建立链接」…</pre>
+  </section>
+
+  <section class="card">
+    <h2>③ 剪切板</h2>
+    <p class="sub">两个 ClipboardSession 经真实帧往返（§5.3 分段 / 重组）。</p>
+    <div class="row">
+      <input id="clip-text" type="text" value="Hello from FlowGrid 协议层 🚀">
+      <button onclick="runClipboard()">发送</button>
+    </div>
+    <pre id="clip-out">点击「发送」…</pre>
+  </section>
+
+  <section class="card">
+    <h2>④ 命令识别</h2>
+    <p class="sub">键鼠 payload 编解码往返 + 跨平台键位重映射（Cmd → Ctrl）。</p>
+    <div class="row">
+      <button class="ghost" onclick="runCommand('cmd+c')">Cmd+C</button>
+      <button class="ghost" onclick="runCommand('move')">鼠标移动</button>
+      <button class="ghost" onclick="runCommand('click')">左键点击</button>
+      <button class="ghost" onclick="runCommand('scroll')">滚轮</button>
+    </div>
+    <pre id="cmd-out">点击任一命令…</pre>
+  </section>
+</main>
+
+<script>
+async function getJSON(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+function show(id, obj) {
+  document.getElementById(id).textContent =
+    typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+}
+function showSteps(id, steps) {
+  document.getElementById(id).innerHTML =
+    (steps || []).map(s => `<li>${s}</li>`).join("");
+}
+
+async function runDiscover() {
+  const d = await getJSON("/api/discover");
+  showSteps("discover-steps", d.steps);
+  const linux = d.onLinux.map(p => `${p.name}  ${p.addr}:${p.port}  [${p.platform}]`).join("\n");
+  const mac = d.onMac.map(p => `${p.name}  ${p.addr}:${p.port}  [${p.platform}]`).join("\n");
+  show("discover-out", `Linux 侧发现：\n${linux}\n\nMac 侧发现：\n${mac}`);
+}
+
+async function runLink() {
+  const d = await getJSON("/api/link");
+  showSteps("link-steps", d.steps);
+  show("link-out", d);
+}
+
+async function runClipboard() {
+  const text = encodeURIComponent(document.getElementById("clip-text").value);
+  const d = await getJSON("/api/clipboard?text=" + text);
+  let out = `发送：${d.sent}\n帧数：${d.frameCount}\n线上字节（前两帧 HEX）：\n${(d.wireSamples||[]).join("\n")}\n\n对端重组：`;
+  if (d.received) out += `\n  mime = ${d.received.mime}\n  data = ${d.received.data}\n  一致 = ${d.match}`;
+  else out += "\n  " + (d.error || "失败");
+  show("clip-out", out);
+}
+
+async function runCommand(cmd) {
+  const d = await getJSON("/api/command?cmd=" + cmd);
+  let out = `命令：${d.desc}\n线上帧（${d.wireLen} B，含 8B HMAC）：\n  ${d.wireHex}\n\n对端识别：\n`;
+  for (const [k, v] of Object.entries(d.recognized)) out += `  ${k} = ${v}\n`;
+  out += `\n跨平台重映射：\n  ${d.remap["修饰掩码"]}\n  ${d.remap["修饰键码"]}`;
+  show("cmd-out", out);
+}
+</script>
+</body>
+</html>
