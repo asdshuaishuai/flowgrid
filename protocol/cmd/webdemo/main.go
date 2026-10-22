@@ -11,14 +11,17 @@ package main
 import (
 	"crypto/ecdsa"
 	"embed"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -42,14 +45,23 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	startDiscovery() // IntelligentLink 私有链发现：ECDSA 身份 + UDP 组播 radio
+	httpPort := 8080
+	if p, err := strconv.Atoi(port); err == nil {
+		httpPort = p
+	}
+	tcpPort := httpPort + 20000 // 连接通道 TCP 端口，从 HTTP 端口派生，避免同主机多实例冲突
+	startDiscovery(tcpPort)     // IntelligentLink 私有链：ECDSA 身份 + UDP 组播 radio + TCP 连接通道
 	http.HandleFunc("/", serveIndex)
 	http.HandleFunc("/api/identity", handleIdentity)
 	http.HandleFunc("/api/peers", handlePeers)
+	http.HandleFunc("/api/connect", handleConnect)
+	http.HandleFunc("/api/invites", handleInvites)
+	http.HandleFunc("/api/respond", handleRespond)
 	http.HandleFunc("/api/link", handleLink)
 	http.HandleFunc("/api/clipboard", handleClipboard)
 	http.HandleFunc("/api/command", handleCommand)
-	fmt.Printf("FlowGrid 协议层 web demo → http://localhost:%s\n", port)
+	fmt.Printf("FlowGrid 协议层 web demo → http://localhost:%s（连接通道 TCP :%d，组播 %s:%d）\n",
+		port, tcpPort, protocol.LanIDGroup, protocol.LanIDPort)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		fmt.Fprintln(os.Stderr, "server:", err)
 		os.Exit(1)
@@ -88,11 +100,72 @@ func encodeFrame(ft uint8, seq uint16, payload []byte) []byte {
 	return wire
 }
 
+// writeFrame / readFrame 是 demo 的 TCP 传输framing：4 字节大端长度前缀 + 线上字节。
+func writeFrame(conn net.Conn, wire []byte) error {
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], uint32(len(wire)))
+	if _, err := conn.Write(hdr[:]); err != nil {
+		return err
+	}
+	_, err := conn.Write(wire)
+	return err
+}
+
+func readFrame(conn net.Conn) ([]byte, error) {
+	var hdr [4]byte
+	if _, err := io.ReadFull(conn, hdr[:]); err != nil {
+		return nil, err
+	}
+	n := binary.BigEndian.Uint32(hdr[:])
+	if n == 0 || n > 1<<20 {
+		return nil, fmt.Errorf("bad frame length %d", n)
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+// identifyFrame / identifyResponseFrame 构造 §4.2 握手帧（带本节点身份）。
+func (n *discNode) identifyFrame() []byte {
+	id := &protocol.IdentifyPayload{
+		Version:  protocol.ProtocolVersion,
+		Platform: n.selfPlatform,
+		Role:     protocol.RoleBoth,
+		Caps:     protocol.CapIntelligentLink | protocol.CapDirectLink | protocol.CapDTLS13 | protocol.CapClipboard,
+		SeqInit:  uint32(time.Now().Unix()),
+		Name:     n.selfName,
+	}
+	_ = id.Validate()
+	return encodeFrame(protocol.FrameIdentify, 1, id.Marshal())
+}
+
+func (n *discNode) identifyResponseFrame(status uint8) []byte {
+	resp := &protocol.IdentifyResponsePayload{
+		Status:   status,
+		Platform: n.selfPlatform,
+		Caps:     protocol.CapIntelligentLink | protocol.CapDirectLink | protocol.CapDTLS13 | protocol.CapClipboard,
+		Name:     n.selfName,
+	}
+	return encodeFrame(protocol.FrameIdentifyRes, 2, resp.Marshal())
+}
+
 // ── ① 设备发现：IntelligentLink 私有链（lanid.go）+ 最小 UDP 组播 radio ─────
+
+// invite 是一条收到的待接受连接请求（B 侧）：持有对方 TCP conn，接受/拒绝时
+// 在这条 conn 上回 IDENTIFY_RESPONSE。
+type invite struct {
+	fromName string
+	fromFp   string
+	fromAddr string
+	conn     net.Conn
+	at       time.Time
+}
 
 // discNode 是本节点在私有链上的身份与发现状态。发现「协议」全在 protocol 包
 // （lanid.go：ECDSA 签名/验签/聚合/信任链）；这里只持有 Announcer/Listener/
-// TrustChain，并驱动一个 UDP 字节泵把字节搬进搬出。
+// TrustChain，并驱动 UDP 组播 + 一个 TCP 连接通道（demo 传输）。
 type discNode struct {
 	identity        *ecdsa.PrivateKey
 	announcer       *protocol.LanIDAnnouncer
@@ -101,10 +174,13 @@ type discNode struct {
 	selfName        string
 	selfPlatform    protocol.Platform
 	selfFingerprint string
+	tcpPort         int // demo TCP 连接通道端口（lanid 通告里 announce，对端据此 dial）
 
 	mu        sync.Mutex
-	connected map[string]bool // 对端 fingerprint → 已发起 identify 握手
-	events    []string        // 发现/握手事件流水（供前端展示）
+	connected map[string]bool    // 对端 fingerprint → 已建立连接
+	connState map[string]string  // 对端 fingerprint → connecting/connected/rejected/failed
+	invites   map[string]*invite // 收到的待接受连接邀请（key = 对端 name，含指纹短码故唯一）
+	events    []string           // 发现/连接事件流水（供前端展示）
 
 	// 本机接口地址集合（判「同机另一实例」用），带 TTL 缓存。
 	ipMu    sync.Mutex
@@ -129,8 +205,8 @@ func platformFromGOOS() protocol.Platform {
 }
 
 // startDiscovery 生成本节点 ECDSA 身份，建 Announcer/Listener/TrustChain，起
-// 后台 UDP 组播 radio：周期 Announce→sendto、recvfrom→Feed（验签+聚合）。
-func startDiscovery() {
+// 后台 UDP 组播 radio（周期 Announce→sendto、recvfrom→Feed）+ TCP 连接通道监听。
+func startDiscovery(tcpPort int) {
 	ident, err := protocol.GenerateIdentityKeyPair()
 	if err != nil {
 		log.Printf("discovery: 生成身份失败: %v", err)
@@ -143,7 +219,8 @@ func startDiscovery() {
 	platform := platformFromGOOS()
 	caps := protocol.CapIntelligentLink | protocol.CapDirectLink | protocol.CapDTLS13 |
 		protocol.CapClipboard | protocol.CapFileTransfer
-	ann, err := protocol.NewLanIDAnnouncer(ident, platform, caps, protocol.LanIDPort, name)
+	// 通告里 announce 的是 TCP 连接通道端口（对端据此 dial 建连接），非组播端口
+	ann, err := protocol.NewLanIDAnnouncer(ident, platform, caps, uint16(tcpPort), name)
 	if err != nil {
 		log.Printf("discovery: 建 Announcer 失败: %v", err)
 		return
@@ -156,18 +233,22 @@ func startDiscovery() {
 		selfName:        name,
 		selfPlatform:    platform,
 		selfFingerprint: fp,
+		tcpPort:         tcpPort,
 		connected:       map[string]bool{},
+		connState:       map[string]string{},
+		invites:         map[string]*invite{},
 		skippedLocal:    map[string]bool{},
 	}
-	node.addEvent(fmt.Sprintf("本节点就绪：%s [%s] 指纹 %s（组播 %s:%d，每 %s 通告）",
-		name, platform, node.selfFingerprint, protocol.LanIDGroup, protocol.LanIDPort, protocol.LanIDAnnouncePeriod))
+	node.addEvent(fmt.Sprintf("本节点就绪：%s [%s] 指纹 %s（组播 %s:%d，连接通道 TCP :%d，每 %s 通告）",
+		name, platform, node.selfFingerprint, protocol.LanIDGroup, protocol.LanIDPort, tcpPort, protocol.LanIDAnnouncePeriod))
 	if allowLocalPeers {
 		node.addEvent("同机实例计入周围设备（FLOWGRID_DEMO_ALLOW_LOCAL=1）")
 	} else {
 		node.addEvent("周围设备不含本机：同机另一实例的通告按源 IP 排除")
 	}
-	log.Printf("discovery: %s [%s] 指纹 %s @ %s:%d", name, platform, node.selfFingerprint, protocol.LanIDGroup, protocol.LanIDPort)
+	log.Printf("discovery: %s [%s] 指纹 %s @ %s:%d，TCP :%d", name, platform, node.selfFingerprint, protocol.LanIDGroup, protocol.LanIDPort, tcpPort)
 	go radioLoop()
+	go tcpListenLoop()
 }
 
 func (n *discNode) addEvent(s string) {
@@ -304,27 +385,185 @@ func radioLoop() {
 }
 
 // onPeerDiscovered：协议层验签通过、聚合成 LanIDPeer 后「告诉客户端」——记录事件、
-// 并入信任链、发起 identify 握手（§4.2）。
+// 并入信任链。真正的连接由用户点「连接」触发（见 connectTo），对端可接受/拒绝。
 func (n *discNode) onPeerDiscovered(p protocol.LanIDPeer) {
-	n.mu.Lock()
-	already := n.connected[p.Fingerprint]
-	n.connected[p.Fingerprint] = true
-	n.mu.Unlock()
-
-	n.addEvent(fmt.Sprintf("发现对端 %s [%s] %s:%d 指纹 %s（验签通过）",
+	n.addEvent(fmt.Sprintf("发现对端 %s [%s] %s:%d 指纹 %s（验签通过，可发起连接）",
 		p.Name, p.Platform, p.Addr, p.Port, p.Fingerprint))
-	if already {
+	_ = n.trust.Append(p.PubKey, 1) // 信任链记录：本节点见过该对端
+}
+
+// ── ② 连接：真实 TCP 通道 + identify 握手，对端可接受/拒绝 ────────────────
+
+// tcpListenLoop 监听连接通道端口；每条入站连接先收一条 IDENTIFY 帧，转成待接受
+// 邀请（前端「接受/拒绝」）。TCP 传输归 demo，握手协议走 protocol 包。
+func tcpListenLoop() {
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", node.tcpPort))
+	if err != nil {
+		log.Printf("tcp listen: %v", err)
+		node.addEvent("TCP 连接通道监听失败：" + err.Error())
 		return
 	}
-	_ = n.trust.Append(p.PubKey, 1) // 信任链记录：本节点见过该对端
-	idPayload := &protocol.IdentifyPayload{
-		Version: protocol.ProtocolVersion, Platform: n.selfPlatform, Role: protocol.RoleBoth,
-		Caps: protocol.CapIntelligentLink | protocol.CapDirectLink | protocol.CapDTLS13 | protocol.CapClipboard,
-		SeqInit: 0x5A5A5A5A, Name: n.selfName,
+	node.addEvent(fmt.Sprintf("连接通道就绪：TCP :%d（等待对端连接）", node.tcpPort))
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			continue
+		}
+		go handleInbound(conn)
 	}
-	_ = idPayload.Validate()
-	n.addEvent(fmt.Sprintf("→ 向 %s 发起 identify 握手（%d B；真实场景经 TCP 到 %s:%d）",
-		p.Name, len(idPayload.Marshal()), p.Addr, p.Port))
+}
+
+// handleInbound：B 侧收到 A 的连接——读 IDENTIFY 帧，登记为待接受邀请。
+func handleInbound(conn net.Conn) {
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	wire, err := readFrame(conn)
+	if err != nil {
+		conn.Close()
+		return
+	}
+	frame, _, err := protocol.DecodeFrameBytesWithHMAC(wire, demoHMACKey)
+	if err != nil || frame.Header.FrameType != protocol.FrameIdentify {
+		conn.Close()
+		return
+	}
+	id, err := protocol.UnmarshalIdentify(frame.Payload)
+	if err != nil {
+		conn.Close()
+		return
+	}
+	_ = conn.SetReadDeadline(time.Time{}) // 清读超时，等用户接受/拒绝
+	inv := &invite{
+		fromName: id.Name,
+		fromFp:   node.matchPeerFingerprintByName(id.Name),
+		fromAddr: conn.RemoteAddr().String(),
+		conn:     conn,
+		at:       time.Now(),
+	}
+	node.mu.Lock()
+	node.invites[id.Name] = inv
+	node.mu.Unlock()
+	node.addEvent(fmt.Sprintf("收到来自 %s 的连接请求（IDENTIFY 校验通过），等待接受…", id.Name))
+}
+
+// matchPeerFingerprintByName 用对端 name（含指纹短码）在已发现列表里找完整指纹。
+func (n *discNode) matchPeerFingerprintByName(name string) string {
+	for _, p := range n.listener.Peers() {
+		if p.Name == name {
+			return p.Fingerprint
+		}
+	}
+	return ""
+}
+
+// connectTo：A 侧发起连接——dial 对端 TCP 通道，发 IDENTIFY 帧，后台等 IDENTIFY_RESPONSE。
+func (n *discNode) connectTo(fp string) error {
+	var target *protocol.LanIDPeer
+	peers := n.listener.Peers()
+	for i := range peers {
+		if peers[i].Fingerprint == fp {
+			target = &peers[i]
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("未找到该对端（可能已失联）")
+	}
+	n.mu.Lock()
+	if n.connState[fp] == "connecting" || n.connState[fp] == "connected" {
+		n.mu.Unlock()
+		return fmt.Errorf("已在连接中或已连接")
+	}
+	n.connState[fp] = "connecting"
+	n.mu.Unlock()
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", target.Addr, target.Port), 3*time.Second)
+	if err != nil {
+		n.mu.Lock()
+		n.connState[fp] = "failed"
+		n.mu.Unlock()
+		return fmt.Errorf("dial %s:%d: %w", target.Addr, target.Port, err)
+	}
+	if err := writeFrame(conn, n.identifyFrame()); err != nil {
+		conn.Close()
+		n.mu.Lock()
+		n.connState[fp] = "failed"
+		n.mu.Unlock()
+		return err
+	}
+	n.addEvent(fmt.Sprintf("→ 已向 %s 发起连接（TCP %s:%d），等待对端接受…", target.Name, target.Addr, target.Port))
+
+	go func() {
+		defer conn.Close()
+		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		wire, err := readFrame(conn)
+		if err != nil {
+			n.mu.Lock()
+			n.connState[fp] = "failed"
+			n.mu.Unlock()
+			n.addEvent("✗ " + target.Name + " 未响应：" + err.Error())
+			return
+		}
+		frame, _, err := protocol.DecodeFrameBytesWithHMAC(wire, demoHMACKey)
+		if err != nil || frame.Header.FrameType != protocol.FrameIdentifyRes {
+			n.mu.Lock()
+			n.connState[fp] = "failed"
+			n.mu.Unlock()
+			n.addEvent("✗ " + target.Name + " 响应解析失败")
+			return
+		}
+		resp, err := protocol.UnmarshalIdentifyResponse(frame.Payload)
+		if err != nil {
+			n.mu.Lock()
+			n.connState[fp] = "failed"
+			n.mu.Unlock()
+			return
+		}
+		n.mu.Lock()
+		if resp.Status == 0 {
+			n.connState[fp] = "connected"
+			n.connected[fp] = true
+		} else {
+			n.connState[fp] = "rejected"
+		}
+		n.mu.Unlock()
+		if resp.Status == 0 {
+			n.addEvent(fmt.Sprintf("✔ %s 已接受，连接建立（对端 %s）", target.Name, resp.Name))
+		} else {
+			n.addEvent(fmt.Sprintf("✗ %s 拒绝了连接请求", target.Name))
+		}
+	}()
+	return nil
+}
+
+// respondInvite：B 侧接受/拒绝一条邀请——在持有的 conn 上回 IDENTIFY_RESPONSE。
+func (n *discNode) respondInvite(name string, accept bool) error {
+	n.mu.Lock()
+	inv := n.invites[name]
+	if inv != nil {
+		delete(n.invites, name)
+	}
+	n.mu.Unlock()
+	if inv == nil {
+		return fmt.Errorf("邀请不存在或已处理")
+	}
+	status := uint8(0)
+	if !accept {
+		status = 0x01
+	}
+	err := writeFrame(inv.conn, n.identifyResponseFrame(status))
+	inv.conn.Close()
+	if accept {
+		if err == nil && inv.fromFp != "" {
+			n.mu.Lock()
+			n.connected[inv.fromFp] = true
+			n.connState[inv.fromFp] = "connected"
+			n.mu.Unlock()
+		}
+		n.addEvent(fmt.Sprintf("✔ 已接受 %s 的连接", name))
+	} else {
+		n.addEvent(fmt.Sprintf("✗ 已拒绝 %s 的连接", name))
+	}
+	return err
 }
 
 // GET /api/identity — 本节点身份（名称/平台/指纹/组播地址/信任链长度/事件流水）
@@ -356,11 +595,15 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 	}
 	node.mu.Lock()
 	events := append([]string(nil), node.events...)
-	// 复制一份再解锁：直接持有 map 引用的话，后台 onPeerDiscovered 写 map 与
+	// 复制一份再解锁：直接持有 map 引用的话，后台 connectTo/onPeerDiscovered 写 map 与
 	// 这里读 map 并发，Go 的 map 并发读写会直接 panic。
 	connected := make(map[string]bool, len(node.connected))
 	for k, v := range node.connected {
 		connected[k] = v
+	}
+	connState := make(map[string]string, len(node.connState))
+	for k, v := range node.connState {
+		connState[k] = v
 	}
 	node.mu.Unlock()
 
@@ -383,9 +626,58 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 			"caps":        fmt.Sprintf("0x%02x", uint8(p.Caps)),
 			"firstSeen":   p.FirstSeen.Format("15:04:05"),
 			"handshake":   connected[p.Fingerprint],
+			"connState": func() string {
+				if connected[p.Fingerprint] {
+					return "connected"
+				}
+				return connState[p.Fingerprint] // ""/connecting/rejected/failed
+			}(),
 		})
 	}
 	writeJSON(w, map[string]any{"peers": out, "events": events, "filteredLocal": filteredLocal})
+}
+
+// POST /api/connect?fp=<fingerprint> — 发起连接到某对端（A 侧）
+func handleConnect(w http.ResponseWriter, r *http.Request) {
+	if node == nil {
+		fail(w, fmt.Errorf("发现未启动"))
+		return
+	}
+	if err := node.connectTo(r.URL.Query().Get("fp")); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// GET /api/invites — 收到的待接受连接邀请（B 侧）
+func handleInvites(w http.ResponseWriter, r *http.Request) {
+	if node == nil {
+		fail(w, fmt.Errorf("发现未启动"))
+		return
+	}
+	node.mu.Lock()
+	out := []map[string]any{}
+	for name, inv := range node.invites {
+		out = append(out, map[string]any{"name": name, "addr": inv.fromAddr, "at": inv.at.Format("15:04:05")})
+	}
+	node.mu.Unlock()
+	writeJSON(w, map[string]any{"invites": out})
+}
+
+// POST /api/respond?name=<name>&accept=1|0 — 接受/拒绝邀请（B 侧）
+func handleRespond(w http.ResponseWriter, r *http.Request) {
+	if node == nil {
+		fail(w, fmt.Errorf("发现未启动"))
+		return
+	}
+	name := r.URL.Query().Get("name")
+	accept := r.URL.Query().Get("accept") == "1"
+	if err := node.respondInvite(name, accept); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // ── ② 链接：identify 握手（§4.2）+ 链路规划（PlanLinks）───────────────────

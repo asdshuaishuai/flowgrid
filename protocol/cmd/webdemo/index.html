@@ -40,6 +40,23 @@
            padding-left: 18px; }
   .steps li { margin: 2px 0; }
   b { color: var(--text); }
+  .box { background: #0b0d11; border: 1px solid var(--line); border-radius: 8px;
+         padding: 10px 12px; margin: 12px 0 0; font-size: 13px; max-height: 380px; overflow: auto; }
+  .box:empty { display: none; }
+  .peer { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+          border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; margin-top: 8px;
+          background: #12141a; }
+  .peer:first-child { margin-top: 0; }
+  .peerinfo { min-width: 0; flex: 1; }
+  .peer .plat { color: var(--muted); font-size: 12px; }
+  .peer .meta { color: var(--muted); font-family: var(--mono); font-size: 11px; margin-top: 3px;
+                word-break: break-all; }
+  .peer .state { font-weight: 600; }
+  .state-connected { color: var(--ok); }
+  .state-connecting { color: var(--accent); }
+  .state-rejected, .state-failed { color: #ff6b6b; }
+  button:disabled { opacity: .5; cursor: default; }
+  #invites-out { border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -53,9 +70,10 @@
 <main>
   <section class="card">
     <h2>① 设备发现 <span class="tag" id="disc-live">● 组播监听中</span></h2>
-    <p class="sub">IntelligentLink 私有链：本节点 ECDSA 身份 + 签名组播通告；局域网另一台机器上的同协议设备自动出现（验签通过 + 指纹 + 握手）。</p>
+    <p class="sub">IntelligentLink 私有链：本节点 ECDSA 身份 + 签名组播通告；局域网另一台机器上的同协议设备自动出现（验签通过 + 指纹）。发现后点「连接」发起握手，对端可接受/拒绝。</p>
     <pre id="identity-out">本节点身份加载中…</pre>
-    <pre id="peers-out">扫描周围同协议设备中…（同机另一实例默认不计）</pre>
+    <div class="box" id="invites-out"></div>
+    <div class="box" id="peers-out">扫描周围同协议设备中…（同机另一实例默认不计，可 FLOWGRID_DEMO_ALLOW_LOCAL=1 放开）</div>
     <ul class="steps" id="discover-events"></ul>
   </section>
 
@@ -104,6 +122,49 @@ function showSteps(id, steps) {
     (steps || []).map(s => `<li>${s}</li>`).join("");
 }
 
+function stateText(s) {
+  return { connected: "已连接 ✔", connecting: "连接中…", rejected: "已被拒绝", failed: "连接失败" }[s] || "未连接";
+}
+
+function renderPeers(peers, filteredLocal) {
+  const el = document.getElementById("peers-out");
+  const excluded = filteredLocal || 0;
+  const note = excluded > 0
+    ? `<div class="meta">（已排除本机上的 ${excluded} 个 FlowGrid 实例：同机不算周围设备，可 FLOWGRID_DEMO_ALLOW_LOCAL=1 放开）</div>`
+    : "";
+  if (!peers || peers.length === 0) {
+    el.innerHTML = `尚未发现周围的同协议设备…（换一台机器再跑一个 demo 实例即可自动出现）` + note;
+    return;
+  }
+  el.innerHTML = `<b>发现 ${peers.length} 台同协议设备：</b>` + peers.map(p => {
+    const busy = p.connState === "connected" || p.connState === "connecting";
+    return `<div class="peer">
+      <div class="peerinfo">
+        <b>● ${p.name}</b> <span class="plat">[${p.platform}]</span> ${p.addr}:${p.port}
+        <div class="meta">指纹 ${p.fingerprint} · caps ${p.caps} · 首见 ${p.firstSeen}</div>
+        <div class="meta state state-${p.connState || "none"}">${stateText(p.connState)}</div>
+      </div>
+      <button ${busy ? "disabled" : ""} onclick="connectTo('${p.fingerprint}')">连接</button>
+    </div>`;
+  }).join("") + note;
+}
+
+function renderInvites(invites) {
+  const el = document.getElementById("invites-out");
+  if (!invites || invites.length === 0) { el.innerHTML = ""; return; }
+  el.innerHTML = `<b>收到 ${invites.length} 条连接邀请：</b>` + invites.map(inv => `
+    <div class="peer">
+      <div class="peerinfo">
+        <b>● ${inv.name}</b>
+        <div class="meta">来自 ${inv.addr} · ${inv.at}</div>
+      </div>
+      <span class="row">
+        <button onclick="respond('${encodeURIComponent(inv.name)}', 1)">接受</button>
+        <button class="ghost" onclick="respond('${encodeURIComponent(inv.name)}', 0)">拒绝</button>
+      </span>
+    </div>`).join("");
+}
+
 async function refreshDiscovery() {
   let id;
   try { id = await getJSON("/api/identity"); } catch (e) { return; }
@@ -112,21 +173,9 @@ async function refreshDiscovery() {
   showSteps("discover-events", (id.events || []).slice(-6).reverse());
 
   const d = await getJSON("/api/peers");
-  const excluded = d.filteredLocal || 0;
-  if (!d.peers || d.peers.length === 0) {
-    let out = "尚未发现周围的同协议设备…（换一台机器再跑一个 demo 实例即可自动出现）";
-    if (excluded > 0) out += `\n已排除本机上的 ${excluded} 个 FlowGrid 实例（同机不算周围设备）`;
-    show("peers-out", out);
-  } else {
-    let out = `发现 ${d.peers.length} 台同协议设备：`;
-    for (const p of d.peers) {
-      out += `\n\n● ${p.name}  [${p.platform}]  ${p.addr}:${p.port}`;
-      out += `\n   指纹 ${p.fingerprint}`;
-      out += `\n   caps ${p.caps} · 首见 ${p.firstSeen} · 握手 ${p.handshake ? "已发起 ✔" : "待"}`;
-    }
-    if (excluded > 0) out += `\n\n（已排除本机上的 ${excluded} 个 FlowGrid 实例：同机不算周围设备）`;
-    show("peers-out", out);
-  }
+  renderPeers(d.peers, d.filteredLocal || 0);
+  const inv = await getJSON("/api/invites");
+  renderInvites(inv.invites);
 }
 
 // 自动发现：页面加载即开始，每 2s 轮询（与 LanIDAnnouncePeriod 一致）
