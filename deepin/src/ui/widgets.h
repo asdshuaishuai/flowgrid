@@ -13,12 +13,14 @@
 #include "core/theme.h"
 
 #include <QAbstractButton>
+#include <QColor>
 #include <QFont>
 #include <QFrame>
 #include <QStringList>
 #include <QVariant>
 #include <QWidget>
 
+#include <functional>
 #include <vector>
 
 class QLabel;
@@ -75,6 +77,46 @@ QFont uiFont(int px, int weight = QFont::Normal);
 // 收成一个函数免得每处各写一遍 QFontFamilies 的兜底顺序。
 QFont uiMonoFont(int px, int weight = QFont::Normal);
 
+// 颜色转 CSS 字符串：不透明走 #RRGGBB，带 alpha 走 #AARRGGBB。
+//
+// 必须带 alpha 的那一支是重点：ok-soft / accent-soft 这类柔和底色就是靠
+// 12%~18% 透明度叠出来的，用 #RRGGBB 会把它们渲染成实色，设计稿的浅底全废。
+//
+// 统一放这里而不是各处抄一份：这段函数此前在 10 个 .cpp 里各有一份副本，
+// 注释还不一致（有的写「必须带 alpha」，有的什么都没写），漂移就是这么来的。
+QString cssColor(const QColor &c);
+
+// 把「按当前主题重新上色」挂到 scope 上；scope 被销毁时自动摘掉。
+//
+// 为什么需要它：文字色只有两种写法——写进 QLabel 的样式表，或写进自绘控件
+// palette 的 WindowText 角色（实测样式表的 color 会落到 WindowText 上，自绘
+// 控件因此也跟着变）。两种写法记下的都是**构造那一刻**的主题值：明暗切换后
+// 它们停在旧值上，深色底上是一片近黑的字，浅色底上是一片看不见的白字。
+//
+// 于是凡是构造时把颜色写死的控件，都必须在 Theme::changed 时重刷一遍。
+// 走这个函数而不是各自 connect，是为了让「主题变了要重刷」只有一种写法。
+void bindTheme(QObject *scope, const std::function<void()> &restyle);
+
+// 相对时间，两种写法，各有各的位置。
+//
+// agoText：「30 秒前 / 5 分钟前 / 3 天前」——用在句子里。
+//     设计稿 connections.html 的设备副标题就是「离线 · 上次连接 12 分钟前」。
+//
+// compactDuration：「30s / 5m / 2h / 3d」——用在列表行末尾的时间标记。
+//     设计稿 clipboard.html / files.html 的 .clip__time、.t-11 都是这个写法。
+//
+// 此前这三份各抄一遍，且单位还不统一（剪贴板收秒、文件收毫秒、连接收秒），
+// 格式也是两套（"30s/5m/2h" 对 "30 秒前/5 分钟前/3 天前"）——同一屏里两种写法
+// 挨着放，看着像两个产品。收到一处：单位一律是秒，格式按用途分开。
+QString agoText(qint64 seconds);
+QString compactDuration(qint64 seconds);
+
+// 文件大小的人类可读写法：B / KB / MB / GB。
+//
+// 此前剪贴板屏与文件屏各有一份，一份支持 GB 一份不支持，一份 KB 恒 0 位小数
+// 一份非整除时给 1 位——同一批文件在两屏里显示成两个数。
+QString humanSize(qint64 bytes);
+
 // ── 分隔线：1px hairline，左右可内缩 ───────────────────────────────────
 //
 // 设计稿里各区之间的分隔是一道 hairline，两侧各留一点空。
@@ -113,7 +155,14 @@ public:
     void setQuality(Quality q);
     void setPulsing(bool on);
     qreal pulse() const { return pulse_; }
-    void setPulse(qreal v) { pulse_ = v; }
+
+    // 写完必须重绘。
+    //
+    // 呼吸动画是 QPropertyAnimation 写这个自定义属性推进的：属性系统的通知只
+    // 走到 READ/WRITE 这对访问器上，不会替我们调 update()。少了这一句，圆点就
+    // 停在初始那一帧——要么冻着不动，要么等到别处触发重绘时「啪」地跳一下，
+    // 看着像卡顿而不是呼吸。
+    void setPulse(qreal v);
 
 protected:
     void paintEvent(QPaintEvent *) override;
@@ -222,7 +271,9 @@ private:
     // 设计稿 .section__head:hover 是 surface-hi 底、:focus-visible 是 2px 主色
     // 内描边。头是唯一能点的区域，所以悬停判定要落在头上而不是整个折叠区。
     void refreshHeadState();
-    void paintFocusRing(QPainter &p);
+    void paintHeadFocusRing(QPainter &p);
+    // .section 的框与底色。构造与主题切换共用这一处。
+    void applySectionStyle();
 
     QWidget *body_ = nullptr;
     QWidget *head_ = nullptr;
@@ -321,6 +372,20 @@ private:
     bool focused_ = false;
 };
 
+// 尚未接通的功能统一走这里：记一条 qCInfo 说明是哪个功能没接通，再弹一条
+// toast 让用户看见——不做「点了没反应」的按钮，也不假装它已经生效。
+//
+// 参数：text 是按钮上的字，what 是功能名（进日志与 toast），iconName 可空，
+// small 是 24px 紧凑款，accent 是主色实心款，onClick 是额外要跑的回调。
+//
+// 此前这份逻辑在三屏各抄一份：设置屏那份只写日志不弹提示（用户点了屏幕
+// 纹丝不动，实测「管理」「3 个」两个按钮都是这样），键位映射屏那份同样只
+// 写日志，行为还不一致。统一成一份：一条 qCInfo + 一条 toast。
+FgButton *unwiredButton(const QString &text, const QString &what, QWidget *parent,
+                        const QString &iconName = QString(), bool small = false,
+                        bool accent = false,
+                        const std::function<void()> &onClick = {});
+
 // ── 图标按钮：26×26，无边框 ──────────────────────────────────────────
 class IconButton : public QAbstractButton {
     Q_OBJECT
@@ -374,7 +439,9 @@ public:
     // + 延迟 + 断开按钮）。不给出这个口子，这些差异就只能散在各个屏幕里
     // 各写一遍，或者退化成 mac 那样的一行纯文本。
     //
-    // 传 nullptr 不改变现状（仍用默认的延迟芯片 + 动作按钮）。
+    // 传 nullptr 表示**交回默认**：延迟芯片 + 动作按钮重新露出来，自定义尾部
+    // 被销毁。（此前这句写的是「不改变现状」，与实现对不上——实现是会回到默认
+    // 的。）
     void setTrailingWidget(QWidget *widget);
 
 Q_SIGNALS:
@@ -522,8 +589,15 @@ protected:
     void paintEvent(QPaintEvent *) override;
 
 private:
+    // 主题变了要重刷：类型块的图标、标题与提示三处的颜色都是构造那一刻写死的。
+    void refreshColors();
+
     QWidget *leading_ = nullptr;
     QWidget *trailing_ = nullptr;
+    QLabel *typeIcon_ = nullptr;     // 默认类型块里那枚图标
+    ElidedLabel *title_ = nullptr;
+    ElidedLabel *hint_ = nullptr;
+    QString iconName_;
     bool hovered_ = false;
     bool pressed_ = false;
     bool focused_ = false;
@@ -586,7 +660,12 @@ private:
 // 关闭即销毁，提示挂在它身上会跟着一起没，用户刚点的反馈就没了。
 void toast(const QString &text, ToastKind kind = ToastKind::Info);
 
-// 当前那个 Toast 实例（还没唤出过就是 nullptr）。
+// 当前那个 Toast 实例。
+//
+// 它是**首次调用时被创建**的单例（还没唤出过时这里会顺手建一个），所以
+// 拿到的指针永远非空——早先的注释写着「还没唤出过就是 nullptr」，与实现不符，
+// 按那个注释写的调用方会误判。
+//
 // 只给截图模式用：Toast 是独立顶层窗，浮板的 w->grab() 抓不到它——早先 Toast
 // 的药丸被内缩压成 3px 高、底色等于没画，就这么一路发出去没人发现。
 QWidget *activeToast();
@@ -638,6 +717,7 @@ protected:
     void paintEvent(QPaintEvent *) override;
     void mousePressEvent(QMouseEvent *) override;
     void enterEvent(QEnterEvent *) override;
+    void mouseMoveEvent(QMouseEvent *) override;
     void leaveEvent(QEvent *) override;
     void focusInEvent(QFocusEvent *) override;
     void focusOutEvent(QFocusEvent *) override;
@@ -652,7 +732,6 @@ private:
 
     int hitTest(int x) const;
 
-    QStringList labels_;
     QList<Segment> segments_;
     int current_ = 0;
     int hover_ = -1;

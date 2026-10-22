@@ -1,0 +1,301 @@
+# DDE 客户端代码审查记录
+
+> 2026-10-22 对 `deepin/src`（DDE 25 / DTK6 客户端，16818 行）与 `deepin/tests`
+> 做的全量审查，重点是脏代码与可复现缺陷。
+>
+> **方法**：四路并行分头扫（widgets / 应用外壳 / cgo FFI + 输入引擎 / 七屏面板），
+> 外加自己做的交叉核查；每条结论都要么坐实在代码上，要么在真桌面上实测过。
+> 子代理两路被环境取消，cgo FFI 与七屏面板两段由本人逐文件读完。
+>
+> **范围**：只读审查 + 按「只要是 UI 的问题直接都修好了」的长期指令做修复。
+> 协议层（`protocol/` 下的 Go 代码）一行未动。
+>
+> 条目编号：H=高、M=中、L=低（脏代码）。销账时保留条目并标注修复提交。
+
+## 结论速览
+
+| 级别 | 条数 | 已修 | 遗留 |
+|------|------|------|------|
+| H    | 5    | 5    | 0    |
+| M    | 6    | 6    | 0    |
+| L    | 12   | 12   | 0    |
+| 观察 | 2    | —    | 2    |
+
+审查中**没有发现**：TODO/FIXME/XXX、`Q_UNUSED` 滥用、`#if 0`、裸 `qDebug()`、
+硬编码主题色（逐文件 grep 无命中）、DConfig 键表与 meta 不一致（15 键逐键对齐，
+且已写进界面自检）、图标名缺失、`placePopup` 高度钳位越界、SVG `Scanner` 越界读。
+cgo FFI 层（`protocolapi.cpp`）的缓冲所有权、句柄注册表、错误码映射逐条核对，
+未发现缺陷。
+
+---
+
+## H（高）
+
+### H1 换强调色时全套派生色停滞在旧值
+
+- **位置**：`core/hosttheme.cpp`（原 `onAppearanceChanged` 只在明暗翻转时 refresh）
+- **成因**：`Appearance1` 的 `GlobalTheme` 字符串在换强调色时**不变**（还是
+  `bloom.dark`），而 `onAppearanceChanged()` 当时只在 `dark_` 翻转时才
+  `Theme::refresh()`。于是 accent / accentSoft / accentLine / line 系全部停在
+  旧值，直到重启。树内没有任何 `paletteChanged` / `themeChanged` 连接。
+- **影响**：用户换活动色，界面上的主色、按钮、开关、选中段全停在旧色。
+- **修**：① 连 `DGuiApplicationHelper::applicationPaletteChanged` → 无条件
+  `Theme::refresh()`（`Theme::refresh()` 每次重读一遍 DPalette，接到信号就能
+  整体换上）；② `onAppearanceChanged()` 里改为无条件 refresh，不再只看明暗。
+  见 `core/hosttheme.cpp:37`、`:64`。
+
+### H2 托盘浮层的文字色在明暗切换后不可读
+
+- **位置**：`ui/traypopup.cpp`、`ui/widgets.cpp`（`NavRow` / `ClipRow`）
+- **成因**：文字色只有两种写法——写进 `QLabel` 的样式表，或写进自绘控件
+  palette 的 `WindowText` 角色（实测：样式表的 `color` 会落到 `WindowText` 上，
+  自绘控件因此也跟着变）。两种写法记下的都是**构造那一刻**的主题值。
+  `NavRow::repaintChildren()` 只在构造与 `setDanger()` 时调用、类内无
+  `Theme::changed` 连接；`TrayPopup::restyle()` 只换阴影板与 band 底色，
+  头部标题、分组小标题、快捷开关行名、快捷键提示全停在旧值。
+- **影响**：明暗切换后深色底上是近黑的字（读不出来），浅色底上是看不见的白字。
+  托盘浮层是本应用唯一的常驻界面，一开就是整晚。
+- **修**：新增 `bindTheme(scope, restyle)`（`ui/widgets.h` / `ui/widgets.cpp:52`），
+  把「按当前主题重刷」挂到控件上，scope 销毁自动摘连接；`NavRow` / `ClipRow`
+  各自接上；`TrayPopup` 引入 `restylers_` 清单（`ui/traypopup.cpp:297`），
+  由建它的那个 `build*` 顺手登记，新增控件不必记得改 `restyle()`。
+- **验**：真桌面实测——同一个托盘浮层实例（在深色主题下构造）切到浅色后整体
+  换成浅色配色（深色字 / 浅底），切回深色亦然；并写成界面自检用例
+  `tests/uitest.cpp`（`checkThemeFollow`），关掉修复即失败。
+
+### H3 「失焦即走」的兜底实际不存在
+
+- **位置**：`ui/panel.cpp`（`Panel::eventFilter` 处理 `WindowDeactivate`）
+- **成因**：`Panel` 从未 `installEventFilter` 自己；唯一调用路径是
+  `keymappanel.cpp` 把 ghost 格子的过滤器转给 `Panel::eventFilter`，而
+  `WindowDeactivate` 是发给窗口本身的、不会发给子控件。于是那条兜底形同虚设，
+  浮板能不能收起全看后端（X11 的 `Qt::Popup` 会自动关，Wayland 不会）。
+- **修**：`Panel` 与 `TrayPopup` 构造时 `installEventFilter(this)`
+  （`ui/panel.cpp:201`、`ui/traypopup.cpp:159`），失活事件正是发给这两个顶层
+  popup 窗的；并且延后一拍再收、且只在「仍然失焦」时收——否则用户刚重新点开
+  面板，那条延后的 hide 会把它又收掉。
+
+### H4 多屏时浮板开到错的显示器
+
+- **位置**：`ui/panel.cpp`（`placePopup` / `edgeAdjustedMargin` 用了
+  `QGuiApplication::primaryScreen()`）
+- **成因**：浮板位置与任务栏方位都按**主屏**算，而锚点是全局坐标。用户把托盘
+  图标拖到第二块屏，点出来的浮板却开到第一块屏上；任务栏在左侧时方位也取错。
+- **修**：新增 `screenForAnchor(anchor, near)`（`ui/panel.cpp:37`）——锚点落在
+  哪块屏就选哪块，锚点拿不到时退回控件当前所在屏，再退回主屏；
+  `edgeAdjustedMargin` 改为接受屏幕参数，调用方统一传同一块屏。
+
+### H5 状态点的 2s 呼吸动画不重绘
+
+- **位置**：`ui/widgets.h`（`StatusDot::setPulse` 只写成员、不调 `update()`）
+- **成因**：呼吸动画是 `QPropertyAnimation` 写自定义属性推进的，属性系统的通知
+  只走到访问器上，不会替我们调 `update()`。少了这一句，圆点停在初始那一帧——
+  要么冻着不动，要么等别处触发重绘时「啪」地跳一下，看着像卡顿而不是呼吸。
+- **修**：`setPulse` 补 `update()`（`ui/widgets.cpp:293`）；时长改走
+  `tokens::kDurPulse`。
+
+---
+
+## M（中）
+
+### M1 未接通的按钮点了没有任何反馈
+
+- **位置**：`ui/settingspanel.cpp`（原 `unwiredButton` 只写日志）
+- **实测**：点「管理」（授权设备管理）与「3 个」（排除应用列表）**无任何可见
+  反馈**，仅 `flowgrid.settings.panel: "授权设备管理" "尚未接通"` 一行日志。
+  键位映射屏那份有 toast、设置屏那份没有——同一个概念两套行为。
+- **修**：统一到 `widgets.h` 的 `unwiredButton()`（`ui/widgets.cpp:1119`），
+  一条 `qCInfo` + 一条 toast；`main.cpp` 的 `notYetWired()` 也补上 toast。
+
+### M2 DConfig 拒收写入时静默丢弃
+
+- **位置**：`core/settings.cpp`（`write()` 丢弃 `setValue` 的结果）
+- **成因**：DTK6 的 `DConfig::setValue` 签名就是 `void`，没有返回值可判；
+  键不在 meta 里时（meta 装在系统目录，没跟着新版本重装就是缺新键）写入被
+  **静默**丢弃：界面上的开关看着生效了，进程一关就没了，用户还以为是自己没保存。
+- **修**：`write()` 先用 `config_->keyList().contains(key)` 判 DConfig 认不认这个
+  键（`core/settings.cpp:165`）；不认就记警告、把值留在进程内 Hash（本轮仍
+  生效）、并置降级状态。设置屏挂一条横幅把「本次修改不跨重启保留」写出来
+  （`Settings::degraded()` / `degradedReason()`）。
+
+### M3 「恢复默认」与键表是两套来源
+
+- **位置**：`core/settings.cpp`（`resetToDefaults()` 遍历 `config_->keyList()`）
+- **问题**：`managedKeys()` 声明为「一处定义两处用」，实际只有界面自检在用；
+  代码里没有调用点，注释与实现对不上。
+- **修**：`resetToDefaults()` 取「应用管理的键」与「meta 里实际存在的键」的
+  **并集**——只取 meta 会漏掉 meta 还没重装的新键，只取 `managedKeys()` 会漏掉
+  meta 里有而应用不认识的键。两边都取，「恢复默认」才是真的「全部回到默认」；
+  同时清掉进程内兜底的值（不清的话点完按钮开关还停在刚才拨的位置）。
+  `managedKeys()` 也因此真的成了「一处定义两处用」。
+
+### M4 设备源自行销毁后，列表与延迟读数冻住
+
+- **位置**：`core/devicemanager.cpp`
+- **问题**：源被销毁时只把 `source_` 置空，`devices_` 里那一批还留着，采样器却
+  已经没得可采（`onSampleTick` 早退）。界面于是永远显示着一批已经不在的对端，
+  延迟读数停在最后一帧——看着像「连不上但也不掉线」。
+- **修**：源销毁时把 `devices_` / `monitors_` 清掉、停掉采样器，并通知界面。
+- **注意**：收尾动作**推到事件循环里**做（`core/devicemanager.cpp:172`）。
+  源是 `QApplication` 的子对象，应用退出时它跟各块浮板一起被销毁、顺序不定；
+  在销毁回调里直接 `emit devicesChanged()`，浮板可能已经处在「销毁到一半」的
+  状态（子控件已经没了、对象还在），它的 `refresh()` 一跑就踩到悬空指针——
+  实测退出时段错误（崩在 Go 运行时的信号转发里，栈上看不出是哪一行）。
+  推给事件循环后：正常运行时下一轮就收拾干净；退出时事件循环早停了，这段根本
+  不会执行。
+
+### M5 SVG 路径在第一个 `z` 处被截断
+
+- **位置**：`ui/svgsubset.cpp`
+- **成因**：「本轮没有消费任何输入」的兜底起点记在**取命令字母之后**，于是
+  `Z/z` 这类不消费参数的命令对**显式**的 `z` 也成立——路径在第一个 `z` 处被
+  截断，后面那些子路径（一个图标里常有三四段）全被丢掉，且一路没有报错：
+  图标画得出来，只是缺了几笔。
+- **修**：起点改记在取命令字母之前——显式的 `z` 至少消费了那个字母，不会触发
+  兜底；只有**隐式重复**的 `z` 才真的什么都没消费，那时兜底生效，防止在字符串
+  末尾空转到死。
+
+### M6 `S`/`T` 的控制点反射规则混用
+
+- **位置**：`ui/svgsubset.cpp`（`Q`/`T` 与 `C`/`S` 共用 `lastCubicCtrl`）
+- **问题**：按 SVG 规范，`S/s` 反射的是上一个**三次**曲线（`C/c/S/s`）的第二个
+  控制点，`T/t` 反射的是上一个**二次**曲线（`Q/q/T/t`）的控制点；前一个命令是
+  另一族时控制点不存在，按「控制点 = 当前点」处理。原先两族共用一个变量，
+  `S` 跟在 `Q` 后面会把二次曲线的控制点当成三次的来反射，`T` 跟在 `C` 后面
+  也一样——画出来的曲线是歪的，而且歪得毫无规律。
+- **修**：拆成 `lastCubicCtrl` / `lastQuadCtrl` 两套（含各自的有效标志）。
+
+---
+
+## L（低 / 脏代码）
+
+### L1 `css()` 复制了 11 份
+
+`ui/panel.cpp`、`ui/widgets.cpp`、`ui/pairingpanel.cpp`、`ui/filespanel.cpp`、
+`ui/keymappanel.cpp`、`ui/clipboardpanel.cpp`、`ui/traypopup.cpp`、
+`ui/connectionspanel.cpp`、`ui/latencypanel.cpp`、`ui/settingspanel.cpp`、
+`main.cpp` 各一份，函数体相同、**注释还不一致**（部分有「必须带 alpha」说明，
+部分没有）——典型漂移。
+**修**：收成 `widgets.h` 的 `cssColor()`（`ui/widgets.cpp:47`），各屏改用它；
+`panel.cpp` 的 `colorHex()` 同名同体，一并收掉。
+
+### L2 `unwiredButton` 三份且行为分叉
+
+`pairingpanel.cpp`（5 参，有 toast）、`keymappanel.cpp`（6 参，无 toast）、
+`settingspanel.cpp`（3 参，无 toast、无图标）。**修**：并成
+`widgets.h` 的 `unwiredButton(text, what, parent, iconName, small, accent, onClick)`，
+三屏统一走它，行为一致（一条日志 + 一条 toast）。
+
+### L3 `agoText` 三份且单位不同
+
+`filespanel.cpp`（收 ms）、`clipboardpanel.cpp`（收 secs）、`connectionspanel.cpp`
+（收 secs，输出格式又是另一套）。**修**：拆成两个语义明确的共享函数——
+`compactDuration()`（列表行末尾的 `3m`，设计稿 clipboard.html / files.html 就是
+这个写法）与 `agoText()`（句子里的「12 分钟前」，设计稿 connections.html 的
+设备副标题就是这个写法），单位一律为秒。
+
+### L4 `humanSize` 两份且行为不同
+
+`filespanel.cpp`（支持 GB、KB 恒 0 位小数）与 `clipboardpanel.cpp`（不支持 GB、
+KB 非整除时 1 位小数）——同一批文件在两屏里显示成两个数。
+**修**：收成 `widgets.h` 的 `humanSize()`（`ui/widgets.cpp:95`）。
+
+### L5 `Settings::e2eEncryption()` 零调用点，徽章写死「已启用」
+
+键 `security/e2e_encryption` 在 DConfig meta 里、值 True，而设置屏的徽章是
+硬编码的「已启用」——用户在 dconfig-editor 里改它毫无作用。
+**修**：徽章取真值（读 DConfig），开显示「已启用」、关显示「已关闭」。
+
+### L6 `Settings::isBackedByDConfig()` / `unavailableReason()` 零调用点
+
+DConfig 不可用时的进程内 Hash 回退对用户完全不可见。
+**修**：并入 `degraded()` / `degradedReason()`，由设置屏横幅兜住（见 M2）。
+
+### L7 其它确认零引用的符号
+
+`LinkProbe::available()/received()/lost()`、`hostinfo::kernelLabel()/archLabel()/
+primaryMac()/screenLabel()`、`Surface::bandHeight()/footHeight()`、
+`icons::exists()`、`LinkProbe::measured()` 信号。
+**修**：诊断导出的内容太薄（只有设备列表，拿到报告的人不知道是在哪台机器、哪种
+网络下测的），把 hostinfo 四项与 LinkProbe 三项接进「导出诊断」；真正没有
+用途的（`Surface` 两个 getter、`icons::exists()`、`LinkProbe::measured()` 信号）
+删掉。
+
+### L8 `icons::icon(...).pixmap(...)` 两步走重复 11 处
+
+`size` 要写两遍，改尺寸时漏掉一处就是同一行里两个大小不一的图标。
+**修**：`icons::pixmap(name, size, color)`（`ui/icons.h:25`）。
+
+### L9 `Collapsible` 的框样式在构造与主题回调里各写一遍
+
+两处写法一旦漂移，主题换过之后框还留着旧色。
+**修**：抽成 `Collapsible::applySectionStyle()`，两处共用。
+
+### L10 `Collapsible::paintFocusRing` 重复文件内 helper
+
+它做的正是文件里那个共用 `paintFocusRing` 的事（内收 2px 的 2px 环），
+两份以后必然漂。**修**：改名为 `paintHeadFocusRing` 并调用共用实现。
+
+### L11 `Collapsible` 的 ↑/↓ 分节导航是死代码
+
+`findChildren<>(FindChildrenRecursively)` 找的是所有后代（嵌套的折叠区也在内），
+而且**不含自己**——`indexOf(this)` 恒为 -1，于是「下一节」永远算成第 0 个，
+与当前在哪一节无关：键盘在浮板里乱跳，看着像失灵。
+**修**：只在**同级**（`FindDirectChildrenOnly`）里找。
+
+### L12 若干零散项
+
+- `SegmentedControl::labels_` 只写不读 → 删。
+- `SegmentedControl` 的悬停档位会粘住：`enterEvent` 只在指针**进入**控件时来
+  一次，从「全部」挪到「文本」时指针始终在控件内部，不再有 Enter——悬停档位
+  停在上一次的那档。→ 补 `mouseMoveEvent`。
+- `LatencyChip` 的质量色可能停在旧档：读数只保留一位小数，4.0ms 与 4.04ms
+  显示成同一个「4.0ms」，可它们一个算良好一个算告警；原先文字没变就早退、
+  不重绘。→ 质量变了也重绘。
+- `Collapsible` 点击后把焦点给了 `head_`（一个默认 `NoFocus` 的普通 QWidget，
+  焦点给不进去）→ 焦点给 `this`，否则焦点环画不出来、键盘也走不到这一节。
+- `activeToast()` 的注释写着「还没唤出过就是 nullptr」，与实现不符（它首次调用
+  就建一个）→ 订正注释，删掉 `main.cpp` 里那个恒真的空指针检查。
+- `widgets.cpp` 里一条注释提到「覆写 changeEvent」，全仓并无此重写 → 删。
+- `ToggleSwitch` / `FgButton` 用 `QColor(Qt::white)` 而非 `Palette::onSolid`
+  → 改走语义角色。
+- 图表格数 `kSlots = 12` 重复 `tokens::kChartBars`；折叠箭头 `ic = 12` 重复
+  `tokens::kIconXs` → 改用令牌。
+- `FgKeycap` 的横向内边距用 `kS2`(8)，而设计稿 `.key` 写的是 `padding 5×7`——
+  每个键帽宽出 2px，一行键帽的边缘对不齐 → 新增 `kKeycapPadX = 7` 等令牌。
+- `FgSelect` 构造时不校验 `current`，越界时 `currentText()` 返回空串，控件显示
+  成一个没有文字的下拉框 → 构造时钳到有效范围。
+- Toast 的 2200ms 停留时长未令牌化 → `tokens::kToastHoldMs`。
+- `DeviceCard::setTrailingWidget(nullptr)` 的注释写「不改变现状」，实现却是
+  「交回默认」 → 订正注释。
+
+---
+
+## 观察（未改，留待后续）
+
+- **O1** 真桌面上偶发一条 Qt CSS 警告
+  `QCssParser::parseHexColor: Unknown color name '#d8ffffffpx'`（一次，未稳定
+  复现；浅/深两套无头快照都不出，交互序列重放也不出）。怀疑来自某个只在特定
+  主题状态下构造的样式串。没定位到具体那一处，先记在这里。
+- **O2** 协议层（`protocol/` 下的 Go 代码）本次一行未动；审查中在 cgo 边界上
+  没有发现缺陷，因此 `docs/PROTOCOL-ISSUES.md` 没有新增条目。
+
+---
+
+## 修复记录（2026-10-22）
+
+- **已修复**：H1–H5、M1–M6、L1–L12 —— 见上文各条。
+- **连带新增**：
+  - `bindTheme()` / `cssColor()` / `agoText()` / `compactDuration()` /
+    `humanSize()` / `unwiredButton()` 六个共享助手（`ui/widgets.h`），
+    收掉 11 份 `css()`、3 份 `unwiredButton()`、3 份 `agoText()`、
+    2 份 `humanSize()` 的副本；
+  - `icons::pixmap()` 一个助手，收掉 11 处两步走；
+  - 设计令牌新增 `kDurPulse`、`kToastHoldMs`、`kKeycapMinWidth`、`kKeycapPadX`、
+    `kKeycapPadY`；
+  - 界面自检新增一段「主题切换后配色跟随」（`tests/uitest.cpp`），
+    覆盖 H2：关掉修复即失败。
+- **验证**：`deepin/dev.sh --check` 全绿（界面自检、键鼠映射表单测、浅/深各
+  15 张无头快照、协议层 go vet + go test）；真桌面 1920×1080 实测明暗切换后
+  同一个托盘浮层实例跟随换色（两个方向各验一次），设置屏「安全」页的
+  「端到端加密」徽章取真值。

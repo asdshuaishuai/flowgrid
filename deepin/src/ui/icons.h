@@ -18,9 +18,11 @@ namespace fg::icons {
 // 内部按 2x 渲染再交给 Qt 缩放，避免高分屏下描边发虚。
 QIcon icon(const QString &name, int size, const QColor &color);
 
-// 图标是否存在。调用方给的图标名不在表里时它会静默返回空 QIcon，界面上就
-// 是一块什么都没有的方块——排查这类问题时先查这里。
-bool exists(const QString &name);
+// 直接取位图：icon() 给的是 QIcon，还得再 .pixmap(size) 才成图。
+//
+// 收成这个函数是因为那两步在 11 处各写一遍，而 size 要写两遍——改尺寸时
+// 漏掉一处就是同一行里两个大小不一的图标，肉眼很难看出差在哪。
+QPixmap pixmap(const QString &name, int size, const QColor &color);
 
 // 全部图标名，按字母序。给 --snapshot 的图标总览图用。
 QStringList names();

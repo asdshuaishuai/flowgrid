@@ -18,6 +18,7 @@
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QLinearGradient>
+#include <QLoggingCategory>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPropertyAnimation>
@@ -27,6 +28,8 @@
 #include <QVBoxLayout>
 
 namespace fg {
+
+Q_LOGGING_CATEGORY(lcWidgets, "flowgrid.widgets")
 
 void applyBoxStyle(QWidget *w, const QString &declarations)
 {
@@ -39,6 +42,75 @@ void applyBoxStyle(QWidget *w, const QString &declarations)
         w->setObjectName(QStringLiteral("fgBox%1").arg(++seq));
     }
     w->setStyleSheet(QStringLiteral("#%1 { %2 }").arg(w->objectName(), declarations));
+}
+
+QString cssColor(const QColor &c)
+{
+    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
+}
+
+void bindTheme(QObject *scope, const std::function<void()> &restyle)
+{
+    if (scope == nullptr) {
+        return;
+    }
+    // scope 当作连接上下文：控件销毁时 Qt 自动断开这条连接，调用方不用管生命周期。
+    QObject::connect(&Theme::instance(), &Theme::changed, scope, [restyle] { restyle(); });
+}
+
+QString agoText(qint64 seconds)
+{
+    if (seconds < 0) {
+        seconds = 0;
+    }
+    if (seconds < 60) {
+        return QObject::tr("%1 秒前").arg(seconds);
+    }
+    if (seconds < 3600) {
+        return QObject::tr("%1 分钟前").arg(seconds / 60);
+    }
+    if (seconds < 86400) {
+        return QObject::tr("%1 小时前").arg(seconds / 3600);
+    }
+    return QObject::tr("%1 天前").arg(seconds / 86400);
+}
+
+QString compactDuration(qint64 seconds)
+{
+    if (seconds < 0) {
+        seconds = 0;
+    }
+    if (seconds < 60) {
+        return QObject::tr("%1s").arg(seconds);
+    }
+    if (seconds < 3600) {
+        return QObject::tr("%1m").arg(seconds / 60);
+    }
+    if (seconds < 86400) {
+        return QObject::tr("%1h").arg(seconds / 3600);
+    }
+    return QObject::tr("%1d").arg(seconds / 86400);
+}
+
+QString humanSize(qint64 bytes)
+{
+    constexpr qint64 kKb = 1024;
+    constexpr qint64 kMb = kKb * 1024;
+    constexpr qint64 kGb = kMb * 1024;
+
+    if (bytes < 0) {
+        bytes = 0;
+    }
+    if (bytes < kKb) {
+        return QObject::tr("%1 B").arg(bytes);
+    }
+    if (bytes < kMb) {
+        return QObject::tr("%1 KB").arg(static_cast<double>(bytes) / kKb, 0, 'f', 0);
+    }
+    if (bytes < kGb) {
+        return QObject::tr("%1 MB").arg(static_cast<double>(bytes) / kMb, 0, 'f', 1);
+    }
+    return QObject::tr("%1 GB").arg(static_cast<double>(bytes) / kGb, 0, 'f', 1);
 }
 
 
@@ -92,12 +164,6 @@ qreal cssCubicBezier(qreal progress, qreal x1, qreal y1, qreal x2, qreal y2)
 qreal easeState(qreal progress)
 {
     return cssCubicBezier(progress, 0.4, 0.0, 0.2, 1.0);
-}
-
-// 与面板侧同一个坑：柔和底色靠 alpha 叠出来，HexRgb 会把它压成实色。
-QString cssColor(const QColor &c)
-{
-    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
 }
 
 // 焦点环。
@@ -217,11 +283,20 @@ StatusDot::StatusDot(QWidget *parent) : QWidget(parent)
     // 设计稿 pulse 2s infinite，用 QTimeLine 表达比 QPropertyAnimation 更直白：
     // 0→1 全不透明，50% 处降到 0.4，来回。
     anim_ = new QPropertyAnimation(this, "pulse", this);
-    anim_->setDuration(2000);
+    anim_->setDuration(tokens::kDurPulse);
     anim_->setStartValue(1.0);
     anim_->setKeyValueAt(0.5, 0.4);
     anim_->setEndValue(1.0);
     anim_->start();
+}
+
+void StatusDot::setPulse(qreal v)
+{
+    pulse_ = v;
+    // 动画是靠写这个属性推进的：属性系统只负责通知访问器，不会替我们重绘。
+    // 不补这一句，圆点就停在构造那一帧——冻结，或者等别处触发重绘时「啪」地
+    // 跳一下，看着像卡顿而不是呼吸。
+    update();
 }
 
 void StatusDot::setQuality(Quality q)
@@ -310,9 +385,6 @@ QSize Badge::sizeHint() const
                  tokens::kBadgeHeight);
 }
 
-// 文字变化后要把最小宽度一起改，所以覆写 changeEvent 统一走 setText 的效果。
-
-
 void Badge::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
@@ -396,7 +468,7 @@ void ToggleSwitch::paintEvent(QPaintEvent *)
         pt.setBrush(sh);
         pt.drawEllipse(QRectF(x - i * 0.5, pad + 1.0 - i * 0.5, d + i, d + i));
     }
-    pt.setBrush(QColor(Qt::white));
+    pt.setBrush(p.onSolid);
     pt.drawEllipse(QRectF(x, pad, d, d));
 
     // ui.css .switch:focus-visible —— 2px 主色、向外 2px。Qt 画不到控件外面
@@ -431,14 +503,25 @@ LatencyChip::LatencyChip(QWidget *parent) : QWidget(parent)
 
 void LatencyChip::setLatency(double ms, bool online)
 {
-    quality_ = Theme::qualityOf(ms, online);
+    const Quality q = Theme::qualityOf(ms, online);
     const QString next = online ? QStringLiteral("%1ms").arg(ms, 0, 'f', 1)
                                 : QStringLiteral("—");
-    if (next == text_) {
+    const bool textChanged = (next != text_);
+    const bool qualityChanged = (q != quality_);
+    quality_ = q;
+    if (!textChanged && !qualityChanged) {
         return;
     }
-    text_ = next;
-    updateGeometry();
+    if (textChanged) {
+        text_ = next;
+        updateGeometry();
+    }
+    // 质量变了也必须重绘。
+    //
+    // 读数只保留一位小数，4.0ms 与 4.04ms 显示成同一个「4.0ms」，可它们一个
+    // 算良好一个算告警（分界在 4ms）。原先文字没变就早退、不重绘，芯片的
+    // 颜色于是停在前一档上，直到别处碰巧触发一次重绘才换过来——看着像阈值
+    // 判定没生效。
     update();
 }
 
@@ -489,11 +572,7 @@ Collapsible::Collapsible(const QString &title, const QString &iconName, QWidget 
     // 早先用的是 card（浅色下是白），那三项就全成了白：折叠区跟内容区同色，
     // 只剩一圈描边撑着，浮板里的分组看着像「一块白底上画了几条线」。
     setAttribute(Qt::WA_StyledBackground, true);
-    applyBoxStyle(this,
-                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(cssColor(Theme::instance().palette().line2))
-                      .arg(QString::number(tokens::kRadiusCard))
-                      .arg(cssColor(Theme::instance().palette().surface2)));
+    applySectionStyle();
 
     head_ = new QWidget(this);
     auto *hl = new QHBoxLayout(head_);
@@ -506,19 +585,12 @@ Collapsible::Collapsible(const QString &title, const QString &iconName, QWidget 
     // 所以本控件必须收得到 move 事件。
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
-    connect(&Theme::instance(), &Theme::changed, this, [this] {
-        const Palette &p = Theme::instance().palette();
-        applyBoxStyle(this,
-                      QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                          .arg(cssColor(p.line2))
-                          .arg(QString::number(tokens::kRadiusCard))
-                          .arg(cssColor(p.surface2)));
-    });
+    connect(&Theme::instance(), &Theme::changed, this, [this] { applySectionStyle(); });
 
     if (!iconName.isEmpty()) {
         auto *ic = new QLabel(head_);
         ic->setFixedSize(tokens::kIconMd, tokens::kIconMd);
-        ic->setPixmap(icons::icon(iconName, tokens::kIconMd, Theme::instance().palette().text2).pixmap(tokens::kIconMd, tokens::kIconMd));
+        ic->setPixmap(icons::pixmap(iconName, tokens::kIconMd, Theme::instance().palette().text2));
         hl->addWidget(ic);
     }
 
@@ -545,6 +617,18 @@ Collapsible::Collapsible(const QString &title, const QString &iconName, QWidget 
     setCollapsed(false);
 }
 
+void Collapsible::applySectionStyle()
+{
+    // .section 的框与底色。构造与主题切换走同一处，免得两处写法漂移：
+    // 主题换过之后框还留着旧色，是这类「样式写在两处」的典型后果。
+    const Palette &p = Theme::instance().palette();
+    applyBoxStyle(this,
+                  QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
+                      .arg(cssColor(p.line2))
+                      .arg(QString::number(tokens::kRadiusCard))
+                      .arg(cssColor(p.surface2)));
+}
+
 void Collapsible::setCollapsed(bool collapsed)
 {
     collapsed_ = collapsed;
@@ -555,7 +639,7 @@ void Collapsible::setCollapsed(bool collapsed)
         const QString name = collapsed ? QStringLiteral("chevronRight")
                                        : QStringLiteral("chevronDown");
         chevron_->setPixmap(
-            icons::icon(name, tokens::kIconMd, Theme::instance().palette().text3).pixmap(tokens::kIconMd, tokens::kIconMd));
+            icons::pixmap(name, tokens::kIconMd, Theme::instance().palette().text3));
     }
     updateGeometry();
 }
@@ -565,7 +649,12 @@ void Collapsible::mouseReleaseEvent(QMouseEvent *e)
     if (head_->geometry().contains(e->position().toPoint())) {
         setCollapsed(!collapsed_);
     }
-    head_->setFocus(Qt::MouseFocusReason);
+    // 焦点给**自己**，不是头部。
+    //
+    // 头部是一个普通 QWidget（默认 NoFocus），焦点给它是给不进去的：于是
+    // Collapsible 永远收不到 focusInEvent，焦点环画不出来，键盘也走不到
+    // 这一节——点一下折叠区，视觉上毫无反应。
+    setFocus(Qt::MouseFocusReason);
     QFrame::mouseReleaseEvent(e);
 }
 
@@ -601,15 +690,31 @@ void Collapsible::keyPressEvent(QKeyEvent *e)
         return;
     case Qt::Key_Up:
     case Qt::Key_Down: {
-        const QList<Collapsible *> all =
-            findChildren<Collapsible *>(QString(), Qt::FindChildrenRecursively);
-        const int n = all.size();
-        if (n == 0) {
+        // 在**同级**折叠区之间走。
+        //
+        // 原先用 findChildren<>(FindChildrenRecursively)：它找的是所有后代
+        // （嵌套进去的折叠区也在内），而且**不含自己**——indexOf(this) 恒为
+        // -1，于是「下一节」永远算成第 0 个，跟当前在哪一节无关：键盘在浮板
+        // 里乱跳，看着像失灵。
+        QWidget *parent = parentWidget();
+        if (parent == nullptr) {
             break;
         }
-        const int cur = all.indexOf(this);
+        QList<Collapsible *> siblings;
+        const QList<QWidget *> children =
+            parent->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly);
+        for (QWidget *child : children) {
+            if (auto *c = qobject_cast<Collapsible *>(child)) {
+                siblings.append(c);
+            }
+        }
+        const int n = siblings.size();
+        const int cur = siblings.indexOf(this);
+        if (n == 0 || cur < 0) {
+            break;
+        }
         const int next = (cur + (e->key() == Qt::Key_Down ? 1 : n - 1)) % n;
-        all.at(next)->setFocus(Qt::TabFocusReason);
+        siblings.at(next)->setFocus(Qt::TabFocusReason);
         e->accept();
         return;
     }
@@ -619,18 +724,19 @@ void Collapsible::keyPressEvent(QKeyEvent *e)
     QFrame::keyPressEvent(e);
 }
 
-void Collapsible::paintFocusRing(QPainter &p)
+void Collapsible::paintHeadFocusRing(QPainter &p)
 {
-    if (!focused_) {
+    if (!focused_ || head_ == nullptr) {
         return;
     }
     // ui.css .section__head:focus-visible —— 2px 主色、offset -2px，即贴着头的
-    // 内侧画一圈，不外扩到卡外。pen 画在路径上会往外渗半像素，所以路径本身
-    // 再往里收 1px。
-    p.setPen(QPen(Theme::instance().palette().accent, 2));
-    p.setBrush(Qt::NoBrush);
-    p.drawRoundedRect(QRectF(head_->geometry()).adjusted(2.0, 2.0, -2.0, -2.0),
-                      tokens::kRadiusCard - 2, tokens::kRadiusCard - 2);
+    // 内侧画一圈，不外扩到卡外。
+    //
+    // 用文件里那个共用的 paintFocusRing：它做的正是「内收 2px 的 2px 环」，
+    // 早先这里另写了一份一模一样的（pen 渗出与半径各减 2 都对上了），
+    // 两份以后必然漂。
+    paintFocusRing(p, QRectF(head_->geometry()), tokens::kRadiusCard,
+                   Theme::instance().palette().accent);
 }
 
 void Collapsible::focusInEvent(QFocusEvent *e)
@@ -658,7 +764,7 @@ void Collapsible::paintEvent(QPaintEvent *)
         p.drawRoundedRect(QRectF(head_->geometry()), tokens::kRadiusCard,
                           tokens::kRadiusCard);
     }
-    paintFocusRing(p);
+    paintHeadFocusRing(p);
 }
 
 void Collapsible::refreshHeadState()
@@ -771,7 +877,9 @@ void BarChart::paintEvent(QPaintEvent *)
     // 早先按实际采样点数量算宽度：只采到 1 个点时，那一根就占了整幅宽度，
     // 画成一条满宽的实心蓝条——看着像一条进度条，而不是「12 格里的第 1 格」。
     // 采样要 24 秒才填满，起步那一阵正好是最常被看到的时候。
-    constexpr int kSlots = 12;
+    // 格数取 tokens::kChartBars（设计稿柱数），别在这里另写一个 12：
+    // 两处数字一旦漂了，格数与轴标跨度就对不上。
+    constexpr int kSlots = tokens::kChartBars;
     const qreal barW =
         qMax<qreal>(3.0, (innerW - gap * (kSlots - 1)) / kSlots);
     // 柱高纯按比例算，**不设最小高度**（mac 端 FGLatencyChart 的 .frame(height:
@@ -917,7 +1025,7 @@ void FgButton::refreshColors()
     case Variant::Accent:    bg_ = p.accent;          fg_ = p.onAccent; break;
     case Variant::Secondary: bg_ = p.surface;         fg_ = p.text1;    break;
     case Variant::Ghost:     bg_ = QColor(Qt::transparent); fg_ = p.text2; break;
-    case Variant::Danger:    bg_ = p.danger.solid;    fg_ = QColor(Qt::white); break;
+    case Variant::Danger:    bg_ = p.danger.solid;    fg_ = p.onSolid; break;
     }
 }
 
@@ -994,7 +1102,7 @@ void FgButton::paintEvent(QPaintEvent *)
         const int total = iconSize + gap + fm.horizontalAdvance(text_);
         const int x0 = (width() - total) / 2;
         const int y0 = (height() - iconSize) / 2;
-        pt.drawPixmap(QPoint(x0, y0), icons::icon(iconName_, iconSize, fg_).pixmap(iconSize, iconSize));
+        pt.drawPixmap(QPoint(x0, y0), icons::pixmap(iconName_, iconSize, fg_));
         pt.drawText(QRect(x0 + iconSize + gap, 0, fm.horizontalAdvance(text_) + 2, height()),
                     Qt::AlignVCenter | Qt::AlignLeft, text_);
     }
@@ -1006,6 +1114,33 @@ void FgButton::paintEvent(QPaintEvent *)
         const bool solid = (variant_ == Variant::Accent);
         paintFocusRing(pt, QRectF(rect()), tokens::kRadiusCtl, solid ? p.onSolid : p.accent);
     }
+}
+
+FgButton *unwiredButton(const QString &text, const QString &what, QWidget *parent,
+                        const QString &iconName, bool small, bool accent,
+                        const std::function<void()> &onClick)
+{
+    auto *btn = new FgButton(text,
+                             accent ? FgButton::Variant::Accent : FgButton::Variant::Secondary,
+                             small, parent);
+    if (!iconName.isEmpty()) {
+        btn->setIcon(iconName);
+    }
+    // 点了必须既留痕又让用户看见。
+    //
+    // 此前这份逻辑在三屏各抄一份：设置屏那份只写日志不弹提示，用户点了屏幕
+    // 纹丝不动（实测「管理」「3 个」两个按钮都是这样）；键位映射屏那份有
+    // 额外回调但同样没有提示。两份行为不一致，用户没法判断这个按钮到底是
+    // 坏了还是没做。统一成一份：一条 qCInfo 说明是哪个功能没接通 + 一条
+    // toast 告诉用户。
+    QObject::connect(btn, &FgButton::clicked, parent, [what, onClick] {
+        qCInfo(lcWidgets) << what << QStringLiteral("尚未接通");
+        toast(QObject::tr("%1 尚未接通").arg(what), ToastKind::Info);
+        if (onClick) {
+            onClick();
+        }
+    });
+    return btn;
 }
 
 void FgButton::focusInEvent(QFocusEvent *e)
@@ -1078,7 +1213,7 @@ void IconButton::paintEvent(QPaintEvent *)
     // 3px，齿轮的齿、关闭叉的尖都顶在边上，看着像「贴边的一团」而不是一枚按钮。
     const int s = tokens::kIconMd;
     pt.drawPixmap((width() - s) / 2, (height() - s) / 2,
-                  icons::icon(iconName_, s, hovered_ ? p.text1 : p.text3).pixmap(s, s));
+                  icons::pixmap(iconName_, s, hovered_ ? p.text1 : p.text3));
 
     // 26px 的小控件，环压到相邻控件上不好看；统一内收（见 paintFocusRing）。
     if (focused_) {
@@ -1349,6 +1484,10 @@ NavRow::NavRow(const QString &iconName, const QString &label, QWidget *trailing,
     }
 
     repaintChildren(Theme::instance().palette());
+
+    // 明暗切换后必须重刷：文字色是构造那一刻写进样式表的，不重刷就一直停在
+    // 旧值上——深色底上是近黑的字，浅色底上是看不见的白字。
+    bindTheme(this, [this] { repaintChildren(Theme::instance().palette()); });
 }
 
 void NavRow::setLabel(const QString &label)
@@ -1365,8 +1504,7 @@ void NavRow::setDanger(bool danger)
 
 void NavRow::repaintChildren(const Palette &p)
 {
-    iconLabel_->setPixmap(icons::icon(iconName_, tokens::kIconMd, danger_ ? p.danger.text : p.text2)
-                              .pixmap(tokens::kIconMd, tokens::kIconMd));
+    iconLabel_->setPixmap(icons::pixmap(iconName_, tokens::kIconMd, danger_ ? p.danger.text : p.text2));
     labelWidget_->setFont(uiFont(tokens::kFont12));
     labelWidget_->setStyleSheet(
         QStringLiteral("color:%1").arg(cssColor(danger_ ? p.danger.text : p.text1)));
@@ -1500,13 +1638,12 @@ void ElidedLabel::paintEvent(QPaintEvent *)
 // ── ClipRow ───────────────────────────────────────────────────────────
 ClipRow::ClipRow(const QString &iconName, const QString &text, const QString &hint,
                  QWidget *trailing, QWidget *parent, QWidget *leading)
-    : QWidget(parent), leading_(leading), trailing_(trailing)
+    : QWidget(parent), leading_(leading), trailing_(trailing), iconName_(iconName)
 {
     setCursor(Qt::PointingHandCursor);
     // 历史条目点一下就是「写入本地剪贴板」，是剪贴板屏的主要操作。整行可点
     // 就要整行可聚焦，否则键盘用户只能看着列表过。
     setFocusPolicy(Qt::StrongFocus);
-    const Palette &p = Theme::instance().palette();
 
     // ui.css .list__row：padding 10px var(--s-3)、gap var(--s-3)；
     // .list__label：竖排 gap 2；.list__hint：t-11 / text-3。
@@ -1519,14 +1656,10 @@ ClipRow::ClipRow(const QString &iconName, const QString &text, const QString &hi
         leading_ = new QWidget(this);
         auto *tl = new QHBoxLayout(leading_);
         tl->setContentsMargins(0, 0, 0, 0);
-        auto *iconLabel = new QLabel(leading_);
-        iconLabel->setFixedSize(tokens::kBadgeHeight, tokens::kBadgeHeight);
-        iconLabel->setAlignment(Qt::AlignCenter);
-        iconLabel->setPixmap(icons::icon(iconName, tokens::kIconXs, p.text2).pixmap(tokens::kIconXs, tokens::kIconXs));
-        tl->addWidget(iconLabel);
-        applyBoxStyle(leading_,
-                      QStringLiteral("border-radius:%1px;background:%2")
-                          .arg(QString::number(tokens::kRadiusChip), cssColor(p.surface3)));
+        typeIcon_ = new QLabel(leading_);
+        typeIcon_->setFixedSize(tokens::kBadgeHeight, tokens::kBadgeHeight);
+        typeIcon_->setAlignment(Qt::AlignCenter);
+        tl->addWidget(typeIcon_);
     } else {
         leading_->setParent(this);
     }
@@ -1535,18 +1668,37 @@ ClipRow::ClipRow(const QString &iconName, const QString &text, const QString &hi
     auto *col = new QVBoxLayout;
     col->setContentsMargins(0, 0, 0, 0);
     col->setSpacing(2);
-    auto *title = new ElidedLabel(text, this);
-    title->setFont(uiFont(tokens::kFont12));
-    title->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
-    col->addWidget(title);
-    auto *hintLabel = new ElidedLabel(hint, this);
-    hintLabel->setFont(uiFont(tokens::kFont11));
-    hintLabel->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
-    col->addWidget(hintLabel);
+    title_ = new ElidedLabel(text, this);
+    title_->setFont(uiFont(tokens::kFont12));
+    col->addWidget(title_);
+    hint_ = new ElidedLabel(hint, this);
+    hint_->setFont(uiFont(tokens::kFont11));
+    col->addWidget(hint_);
     hl->addLayout(col, 1);
 
     if (trailing_ != nullptr) {
         hl->addWidget(trailing_, 0, Qt::AlignVCenter);
+    }
+
+    refreshColors();
+    // 明暗切换后重刷：标题 / 提示 / 类型块图标三处的颜色都是构造那一刻写死的。
+    bindTheme(this, [this] { refreshColors(); });
+}
+
+void ClipRow::refreshColors()
+{
+    const Palette &p = Theme::instance().palette();
+    if (typeIcon_ != nullptr) {
+        typeIcon_->setPixmap(icons::pixmap(iconName_, tokens::kIconXs, p.text2));
+        applyBoxStyle(leading_,
+                      QStringLiteral("border-radius:%1px;background:%2")
+                          .arg(QString::number(tokens::kRadiusChip), cssColor(p.surface3)));
+    }
+    if (title_ != nullptr) {
+        title_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
+    }
+    if (hint_ != nullptr) {
+        hint_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     }
 }
 
@@ -1755,9 +1907,13 @@ FgKeycap::FgKeycap(const QString &text, bool ghost, QWidget *parent)
 QSize FgKeycap::sizeHint() const
 {
     // ui.css .key：min-width 34 + padding 5×7 + 1px 描边
+    //
+    // 横向内边距是 7（不是 kS2 的 8）：那一行键帽是按等宽字排的，每枚宽出
+    // 2px 就会让整行的边缘对不齐，而设计稿写的就是 7。
     const QFontMetrics fm(keycapFont());
-    return QSize(qMax(34, fm.horizontalAdvance(text_) + tokens::kS2 * 2 + 2),
-                 fm.height() + 5 * 2 + 2);
+    return QSize(qMax(tokens::kKeycapMinWidth,
+                      fm.horizontalAdvance(text_) + tokens::kKeycapPadX * 2 + 2),
+                 fm.height() + tokens::kKeycapPadY * 2 + 2);
 }
 
 void FgKeycap::setText(const QString &text)
@@ -1860,7 +2016,7 @@ QWidget *banner(const QString &text, QWidget *parent, BannerVariant variant)
     hl->setSpacing(tokens::kS2);
     auto *icon = new QLabel(w);
     icon->setFixedSize(tokens::kIconSm, tokens::kIconSm);
-    icon->setPixmap(icons::icon(iconName, tokens::kIconSm, fg).pixmap(tokens::kIconSm, tokens::kIconSm));
+    icon->setPixmap(icons::pixmap(iconName, tokens::kIconSm, fg));
     auto *label = new QLabel(text, w);
     label->setWordWrap(true);
     label->setFont(uiFont(tokens::kFont12));
@@ -1891,7 +2047,7 @@ EmptyState::EmptyState(const QString &iconName, const QString &title, const QStr
         auto *icon = new QLabel(this);
         icon->setFixedSize(tokens::kEmptyIconSize, tokens::kEmptyIconSize);
         icon->setAlignment(Qt::AlignCenter);
-        icon->setPixmap(icons::icon(iconName, tokens::kIconMd, p.text3).pixmap(tokens::kIconMd, tokens::kIconMd));
+        icon->setPixmap(icons::pixmap(iconName, tokens::kIconMd, p.text3));
         applyBoxStyle(icon, QStringLiteral("border-radius:%1px;background:%2")
                                   .arg(QString::number(tokens::pillRadius(tokens::kEmptyIconSize)),
                                        cssColor(p.surface3)));
@@ -1976,7 +2132,7 @@ Toast::Toast(QWidget *parent) : QWidget(parent)
     // 于是每唤一次 Toast 就多挂一条连接，第 N 次提示会触发 N 个收起定时器。
     hideTimer_ = new QTimer(this);
     hideTimer_->setSingleShot(true);
-    hideTimer_->setInterval(2200);
+    hideTimer_->setInterval(tokens::kToastHoldMs);
     connect(hideTimer_, &QTimer::timeout, this, [this] { hide(); });
     connect(anim_, &QPropertyAnimation::finished, hideTimer_, qOverload<>(&QTimer::start));
 }
@@ -2034,8 +2190,7 @@ void Toast::paintEvent(QPaintEvent *)
     const QString iconName = kind_ == ToastKind::Ok ? QStringLiteral("check")
                              : kind_ == ToastKind::Danger ? QStringLiteral("warn")
                                                           : QStringLiteral("info");
-    pt.drawPixmap(QPoint(x0, y0), icons::icon(iconName, kToastIcon, p.toastFg)
-                                     .pixmap(kToastIcon, kToastIcon));
+    pt.drawPixmap(QPoint(x0, y0), icons::pixmap(iconName, kToastIcon, p.toastFg));
     pt.drawText(QRect(x0 + kToastIcon + tokens::kS2, int(pill.top()),
                       fm.horizontalAdvance(text_) + 2, int(pill.height())),
                 Qt::AlignVCenter | Qt::AlignLeft, text_);
@@ -2097,7 +2252,7 @@ QLabel *groupTitle(const QString &text, QWidget *parent)
 // 一档就是一个几何，不是子控件——用 QPushButton + 布局的话 hover 底色、
 // 选中浮起都要逐个贴样式表，加一档就多一份样式声明。
 SegmentedControl::SegmentedControl(const QStringList &items, QWidget *parent)
-    : QWidget(parent), labels_(items)
+    : QWidget(parent)
 {
     setCursor(Qt::PointingHandCursor);
     setMouseTracking(true);
@@ -2236,6 +2391,21 @@ void SegmentedControl::enterEvent(QEnterEvent *event)
     QWidget::enterEvent(event);
 }
 
+void SegmentedControl::mouseMoveEvent(QMouseEvent *event)
+{
+    // 悬停档位要跟着指针在控件内的移动走。
+    //
+    // enterEvent 只在指针**进入**控件时来一次：从「全部」那档挪到「文本」那档
+    // 时，指针始终在控件内部，不会再有 Enter——hover_ 于是一直停在第一档上，
+    // 用户的指针明明压在另一档上，那档却还是暗的，看着像这一档没生效。
+    const int i = hitTest(event->position().toPoint().x());
+    if (i != hover_) {
+        hover_ = i;
+        update();
+    }
+    QWidget::mouseMoveEvent(event);
+}
+
 void SegmentedControl::leaveEvent(QEvent *event)
 {
     hover_ = -1;
@@ -2322,7 +2492,7 @@ QWidget *buildMappingGrid(const QList<KeyPair> &pairs, QWidget *parent)
         kl->addWidget(new FgKeycap(pair.from, pair.ghost, keys));
         auto *arrow = new QLabel(keys);
         arrow->setFixedSize(tokens::kIconXs, tokens::kIconXs);
-        arrow->setPixmap(icons::icon(QStringLiteral("arrowRight"), tokens::kIconXs, p.text3).pixmap(tokens::kIconXs, tokens::kIconXs));
+        arrow->setPixmap(icons::pixmap(QStringLiteral("arrowRight"), tokens::kIconXs, p.text3));
         kl->addWidget(arrow, 0, Qt::AlignVCenter);
         kl->addWidget(new FgKeycap(pair.to, pair.ghost, keys));
         kl->addStretch(1);
@@ -2343,6 +2513,14 @@ QWidget *buildMappingGrid(const QList<KeyPair> &pairs, QWidget *parent)
 FgSelect::FgSelect(const QStringList &options, int current, QWidget *parent)
     : QAbstractButton(parent), options_(options), current_(current)
 {
+    // 构造时就校一遍 current。
+    //
+    // 传进来的下标越界时，currentText() 只能返回空串——控件于是显示成一个
+    // 没有文字的下拉框，宽度也按空串算，看着像控件建坏了。钳到有效范围，
+    // 至少它显示的是第一项。
+    if (current_ < 0 || current_ >= options_.size()) {
+        current_ = 0;
+    }
     setCursor(Qt::PointingHandCursor);
     setFocusPolicy(Qt::StrongFocus);
     connect(this, &QAbstractButton::clicked, this, [this] { openMenu(); });
@@ -2415,9 +2593,9 @@ void FgSelect::paintEvent(QPaintEvent *)
                                                    textRect.width()));
 
     // chevron：.select-wrap .ic，right 8px、垂直居中
-    const int ic = 12;
+    const int ic = tokens::kIconXs;
     pt.drawPixmap(QPoint(width() - tokens::kS2 - ic, (height() - ic) / 2),
-                  icons::icon(QStringLiteral("chevronDown"), ic, p.text3).pixmap(ic, ic));
+                  icons::pixmap(QStringLiteral("chevronDown"), ic, p.text3));
 }
 
 void FgSelect::enterEvent(QEnterEvent *e)

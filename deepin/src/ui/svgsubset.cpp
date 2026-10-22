@@ -181,9 +181,18 @@ QPainterPath parsePathData(const QString &d)
     QChar cmd;
     QPointF cur(0, 0);
     QPointF subpathStart(0, 0);
-    // S/s 需要上一个 cubic 的第二个控制点做镜像；C/c 会覆盖它。
+    // S/s 与 T/t 各自要反射**自己那族**的前一个控制点，按 SVG 规范不能混：
+    //   · S/s 反射的是上一个**三次**曲线（C/c/S/s）的第二个控制点；
+    //   · T/t 反射的是上一个**二次**曲线（Q/q/T/t）的控制点。
+    // 前一个命令是另一族时，控制点不存在，按「控制点 = 当前点」处理。
+    //
+    // 原先两族共用一个 lastCubicCtrl：S 跟在 Q 后面会把二次曲线的控制点
+    // 当成三次的来反射，T 跟在 C 后面也一样——画出来的曲线是歪的，而且
+    // 歪得毫无规律，很难看出是哪儿错了。
     QPointF lastCubicCtrl(0, 0);
     bool haveCubicCtrl = false;
+    QPointF lastQuadCtrl(0, 0);
+    bool haveQuadCtrl = false;
 
     // SVG 允许省略重复出现的命令字母（如 "L1 1 2 2" 等价于 "L1 1 L2 2"）。
     // 所以每次循环要么读到新命令，要么沿用上一个命令——但 path 必须以命令
@@ -191,6 +200,18 @@ QPainterPath parsePathData(const QString &d)
     bool first = true;
     while (true) {
         sc.skipSeparators();
+        // 本轮起点：必须在**取命令字母之前**记。
+        //
+        // Z/z 不带参数、闭合子路径后什么也不消费。起点若记在取完字母之后，
+        // 「本轮没有消费任何输入」这条对**显式**的 z 也成立——路径会在第一个
+        // z 处被截断，后面那些子路径（一个图标里常有三四段）全被丢掉，
+        // 而且一路没有任何报错：图标画得出来，只是缺了几笔。
+        //
+        // 记在取字母之前：显式的 z 至少消费了那个字母（位置前进 1），不会
+        // 触发兜底；只有**隐式重复**的 z 才真的什么都没消费，那时兜底生效，
+        // 防止在字符串末尾空转到死——设计稿里几乎每个闭合图标都以 z 结尾。
+        const int before = sc.position();
+
         QChar next;
         const bool explicitCmd = sc.peekCommand(&next);
         if (explicitCmd) {
@@ -198,10 +219,6 @@ QPainterPath parsePathData(const QString &d)
         } else if (first) {
             break;
         }
-        // 记录本轮起点：Z/z 这类闭合指令不消费任何输入，若允许它们被隐式
-        // 重复就会在字符串末尾永远转圈——设计稿里几乎每个闭合图标都以 z
-        // 结尾，所以这个兜底不是可选的保险。
-        const int before = sc.position();
 
         const bool rel = cmd.isLower();
         const QChar up = cmd.toUpper();
@@ -225,6 +242,7 @@ QPainterPath parsePathData(const QString &d)
             path.moveTo(p);
             cur = subpathStart = p;
             haveCubicCtrl = false;
+            haveQuadCtrl = false;
             // 后续同命令的坐标对是隐式 lineto。
             cmd = rel ? QLatin1Char('l') : QLatin1Char('L');
             break;
@@ -237,6 +255,7 @@ QPainterPath parsePathData(const QString &d)
             path.lineTo(p);
             cur = p;
             haveCubicCtrl = false;
+            haveQuadCtrl = false;
             break;
         }
         case 'H': {
@@ -247,6 +266,7 @@ QPainterPath parsePathData(const QString &d)
             cur = QPointF(rel ? cur.x() + x : x, cur.y());
             path.lineTo(cur);
             haveCubicCtrl = false;
+            haveQuadCtrl = false;
             break;
         }
         case 'V': {
@@ -257,6 +277,7 @@ QPainterPath parsePathData(const QString &d)
             cur = QPointF(cur.x(), rel ? cur.y() + y : y);
             path.lineTo(cur);
             haveCubicCtrl = false;
+            haveQuadCtrl = false;
             break;
         }
         case 'C': {
@@ -271,6 +292,7 @@ QPainterPath parsePathData(const QString &d)
             path.cubicTo(c1, c2, end);
             lastCubicCtrl = c2;
             haveCubicCtrl = true;
+            haveQuadCtrl = false;
             cur = end;
             break;
         }
@@ -288,6 +310,7 @@ QPainterPath parsePathData(const QString &d)
             path.cubicTo(c1, c2, end);
             lastCubicCtrl = c2;
             haveCubicCtrl = true;
+            haveQuadCtrl = false;
             cur = end;
             break;
         }
@@ -303,6 +326,7 @@ QPainterPath parsePathData(const QString &d)
             appendArc(path, cur, rx, ry, rot, largeArc, sweep, end);
             cur = end;
             haveCubicCtrl = false;
+            haveQuadCtrl = false;
             break;
         }
         case 'Q': {
@@ -315,8 +339,9 @@ QPainterPath parsePathData(const QString &d)
             QPointF c(rel ? cur.x() + x1 : x1, rel ? cur.y() + y1 : y1);
             QPointF end(rel ? cur.x() + x : x, rel ? cur.y() + y : y);
             path.quadTo(c, end);
-            lastCubicCtrl = c;
-            haveCubicCtrl = true;
+            lastQuadCtrl = c;
+            haveQuadCtrl = true;
+            haveCubicCtrl = false;
             cur = end;
             break;
         }
@@ -325,13 +350,16 @@ QPainterPath parsePathData(const QString &d)
             if (!sc.number(&x) || !sc.number(&y)) {
                 return path;
             }
-            QPointF c = haveCubicCtrl
-                             ? QPointF(2 * cur.x() - lastCubicCtrl.x(), 2 * cur.y() - lastCubicCtrl.y())
+            // T 反射的是上一个**二次**曲线的控制点；前一个命令是 C/S 时不存在，
+            // 按「控制点 = 当前点」处理。
+            QPointF c = haveQuadCtrl
+                             ? QPointF(2 * cur.x() - lastQuadCtrl.x(), 2 * cur.y() - lastQuadCtrl.y())
                              : cur;
             QPointF end(rel ? cur.x() + x : x, rel ? cur.y() + y : y);
             path.quadTo(c, end);
-            lastCubicCtrl = c;
-            haveCubicCtrl = true;
+            lastQuadCtrl = c;
+            haveQuadCtrl = true;
+            haveCubicCtrl = false;
             cur = end;
             break;
         }
@@ -339,6 +367,7 @@ QPainterPath parsePathData(const QString &d)
             path.closeSubpath();
             cur = subpathStart;
             haveCubicCtrl = false;
+            haveQuadCtrl = false;
             break;
         }
         default:

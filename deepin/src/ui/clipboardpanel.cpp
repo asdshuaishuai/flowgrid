@@ -33,11 +33,6 @@ constexpr int kClipSegLimit = 63240;
 // 减去上下 12px 内边距还剩 68px，按 --lh-13 折正好 3 行。
 constexpr int kPreviewLines = 3;
 
-QString css(const QColor &c)
-{
-    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
-}
-
 // 条目归类：分段控件的五个档位就是靠它过滤的。协议帧只给 MIME + 载荷
 // （PROTOCOL.md §5.3），所以分类只能从这两样推，推不出就归「文本」，
 // 不去猜来源应用的语义。
@@ -100,17 +95,6 @@ QString oneLine(const QString &text)
     return s;
 }
 
-QString agoText(int secs)
-{
-    if (secs < 60) {
-        return QStringLiteral("%1s").arg(secs);
-    }
-    if (secs < 3600) {
-        return QStringLiteral("%1m").arg(secs / 60);
-    }
-    return QStringLiteral("%1h").arg(secs / 3600);
-}
-
 // 条目年龄：从产生时刻算，不是从入库时抄下来的那个数。
 // 没有时间戳的（协议侧入站的旧条目）退回 agoSecs。
 int ageSecsOf(const ClipEntry &e)
@@ -119,17 +103,6 @@ int ageSecsOf(const ClipEntry &e)
         return e.agoSecs;
     }
     return static_cast<int>((QDateTime::currentMSecsSinceEpoch() - e.atMs) / 1000);
-}
-
-QString humanSize(qint64 bytes)
-{
-    if (bytes < 1024) {
-        return QStringLiteral("%1 B").arg(bytes);
-    }
-    if (bytes < 1024 * 1024) {
-        return QStringLiteral("%1 KB").arg(bytes / 1024.0, 0, 'f', bytes % 1024 == 0 ? 0 : 1);
-    }
-    return QStringLiteral("%1 MB").arg(bytes / (1024.0 * 1024.0), 0, 'f', 1);
 }
 
 // 页脚那行载荷规格。设计稿写的是「62 B · 单帧发送 · 未分段」——那是 62 字节
@@ -176,7 +149,7 @@ QLabel *oversizeChip(QWidget *parent)
     box->setPixmap(icons::icon(QStringLiteral("warn"), tokens::kIconXs, p.warn.text)
                        .pixmap(tokens::kIconXs, tokens::kIconXs));
     applyBoxStyle(box, QStringLiteral("border-radius:%1px;background:%2")
-                           .arg(QString::number(tokens::kRadiusChip), css(p.warn.soft)));
+                           .arg(QString::number(tokens::kRadiusChip), cssColor(p.warn.soft)));
     return box;
 }
 
@@ -197,7 +170,7 @@ QWidget *switchRow(const QString &label, bool checked, const QString &hint, QWid
     if (!hint.isEmpty()) {
         auto *hintLabel = new QLabel(hint, w);
         hintLabel->setFont(uiFont(tokens::kFont11));
-        hintLabel->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        hintLabel->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
         hintLabel->setWordWrap(true);
         col->addWidget(hintLabel);
     }
@@ -229,7 +202,7 @@ ClipboardPanel::ClipboardPanel(QWidget *parent) : Panel(tr("剪贴板"), parent)
         pl->addWidget(dot);
         pl->addWidget(label);
         pill->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
-                                .arg(css(Theme::instance().palette().ok.soft),
+                                .arg(cssColor(Theme::instance().palette().ok.soft),
                                      QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
         setTitleBarWidget(pill);
         pill_ = pill;
@@ -388,7 +361,7 @@ QWidget *ClipboardPanel::buildCurrent()
     typeIcon->setPixmap(icons::icon(QStringLiteral("type"), tokens::kIconXs, p.text2).pixmap(tokens::kIconXs, tokens::kIconXs));
     applyBoxStyle(typeIcon,
                   QStringLiteral("border-radius:%1px;background:%2")
-                      .arg(QString::number(tokens::kRadiusChip), css(p.surface3)));
+                      .arg(QString::number(tokens::kRadiusChip), cssColor(p.surface3)));
     typeIcon_ = typeIcon;
     auto *title = new QLabel(tr("当前剪贴板"), head);
     title->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
@@ -410,7 +383,7 @@ QWidget *ClipboardPanel::buildCurrent()
     fromIcon->setPixmap(icons::icon(QStringLiteral("laptop"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
     fromLabel_ = new QLabel(fromBox);
     fromLabel_->setFont(uiFont(tokens::kFont11));
-    fromLabel_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    fromLabel_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     fromHl->addWidget(fromIcon);
     fromHl->addWidget(fromLabel_);
     hl->addWidget(fromBox);
@@ -418,7 +391,7 @@ QWidget *ClipboardPanel::buildCurrent()
     applyBoxStyle(head,
                   QStringLiteral("background:%1;border-bottom:1px solid %2;"
                                  "border-top-left-radius:%3px;border-top-right-radius:%3px")
-                      .arg(css(p.card), css(p.hairline))
+                      .arg(cssColor(p.card), cssColor(p.hairline))
                       .arg(tokens::kRadiusCard));
     vl->addWidget(head);
 
@@ -432,10 +405,10 @@ QWidget *ClipboardPanel::buildCurrent()
     preview_ = new QLabel(tr("暂无剪贴板内容"), bodyBox);
     preview_->setFont(uiMonoFont(tokens::kFont12));
     preview_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-    preview_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
+    preview_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
     preview_->setFixedHeight(QFontMetrics(preview_->font()).lineSpacing());
     bl->addWidget(preview_);
-    applyBoxStyle(bodyBox, QStringLiteral("background:%1").arg(css(p.well)));
+    applyBoxStyle(bodyBox, QStringLiteral("background:%1").arg(cssColor(p.well)));
     vl->addWidget(bodyBox);
 
     // __foot：surface 底 + 上 hairline，左边讲这条载荷的规格，右边两个动作。
@@ -448,7 +421,7 @@ QWidget *ClipboardPanel::buildCurrent()
     info->setPixmap(icons::icon(QStringLiteral("info"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
     spec_ = new QLabel(tr("--"), foot);
     spec_->setFont(uiFont(tokens::kFont11));
-    spec_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    spec_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     fl->addWidget(info);
     fl->addWidget(spec_);
     fl->addStretch(1);
@@ -488,14 +461,14 @@ QWidget *ClipboardPanel::buildCurrent()
     applyBoxStyle(foot,
                   QStringLiteral("background:%1;border-top:1px solid %2;"
                                  "border-bottom-left-radius:%3px;border-bottom-right-radius:%3px")
-                      .arg(css(p.card), css(p.hairline))
+                      .arg(cssColor(p.card), cssColor(p.hairline))
                       .arg(tokens::kRadiusCard));
     vl->addWidget(foot);
 
     // 外框只补左右两侧：上下两段自带 hairline 与圆角，外框再画一圈会叠成 2px。
     applyBoxStyle(card,
                   QStringLiteral("border-left:1px solid %1;border-right:1px solid %1")
-                      .arg(css(p.line1)));
+                      .arg(cssColor(p.line1)));
     return card;
 }
 
@@ -547,9 +520,9 @@ QWidget *ClipboardPanel::buildHistory()
 
     applyBoxStyle(list,
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2))
+                      .arg(cssColor(p.line2))
                       .arg(tokens::kRadiusCard)
-                      .arg(css(p.card)));
+                      .arg(cssColor(p.card)));
     return list;
 }
 
@@ -631,7 +604,7 @@ QWidget *ClipboardPanel::buildFooter()
     icon->setPixmap(icons::icon(QStringLiteral("shield"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
     auto *hint = new QLabel(tr("端到端加密 · 不落盘"), foot);
     hint->setFont(uiFont(tokens::kFont11));
-    hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    hint->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     hl->addWidget(icon);
     hl->addWidget(hint);
     hl->addStretch(1);
@@ -658,7 +631,7 @@ void ClipboardPanel::refreshSyncState()
     pillDot_->setPulsing(on);
     pillDot_->setQuality(on ? Quality::Good : Quality::Idle);
     pill_->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
-                             .arg(css(on ? p.ok.soft : p.idle.soft),
+                             .arg(cssColor(on ? p.ok.soft : p.idle.soft),
                                   QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
 }
 
@@ -915,9 +888,9 @@ void ClipboardPanel::rebuildHistory()
             tl->addWidget(new Badge(tr("超限"), Badge::Variant::Warn, trailing), 0,
                           Qt::AlignVCenter);
         }
-        auto *ago = new QLabel(agoText(ageSecsOf(e)), trailing);
+        auto *ago = new QLabel(compactDuration(ageSecsOf(e)), trailing);
         ago->setFont(uiFont(tokens::kFont11));
-        ago->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        ago->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
         tl->addWidget(ago, 0, Qt::AlignVCenter);
         if (!e.oversize) {
             auto *copy = new IconButton(QStringLiteral("copy"), tr("写入本地"), trailing);

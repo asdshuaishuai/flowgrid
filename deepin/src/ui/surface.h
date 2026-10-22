@@ -38,11 +38,9 @@ public:
     // 顶部 band（标题栏那条）的高度。0 = 不画。
     // band 的底色默认取 card（比页面亮一档，正好和 mac 的 surface-2 一个角色）。
     void setBandHeight(int h);
-    int bandHeight() const { return bandH_; }
 
     // 底部 band（页脚那条）的高度。0 = 不画。顶部一道 hairline。
     void setFootHeight(int h);
-    int footHeight() const { return footH_; }
 
     // band 底色。传非法色表示用默认（card）。
     void setBandColor(const QColor &c);

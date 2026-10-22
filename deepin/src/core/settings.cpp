@@ -138,15 +138,43 @@ Settings::Settings()
 
 QVariant Settings::read(const QString &key, const QVariant &fallback) const
 {
+    // 进程内的值优先于 DConfig。
+    //
+    // fallback_ 装的是两种东西：DConfig 整个不可用时的替身，以及 DConfig
+    // **拒收**某次写入时留下的本轮会话值。两种都得比 DConfig 优先，否则
+    // 「写入被拒 → 值留在 Hash 里 → 下一次读却又读回 DConfig 的旧值」，
+    // 开关在界面上拨过去又弹回来。
+    if (fallback_.contains(key)) {
+        return fallback_.value(key);
+    }
     if (config_ != nullptr) {
         return config_->value(key, fallback);
     }
-    return fallback_.value(key, fallback);
+    return fallback;
 }
 
 void Settings::write(const QString &key, const QVariant &value)
 {
     if (config_ != nullptr) {
+        // DConfig 的 setValue 没有返回值（DTK6 的签名就是 void），所以「这次
+        // 写入到底收没收」只能自己验：DConfig 认不认这个键。
+        //
+        // 键不在 meta 里时（meta 装在系统目录里，没跟着新版本重装过就会缺
+        // 新键）DConfig 会**静默**丢掉这次写入：界面上的开关看着生效了，
+        // 进程一关就没了，用户还以为是自己没保存。
+        if (!config_->keyList().contains(key)) {
+            qCWarning(lcSettings) << "DConfig 不认这个键，写入会被丢弃" << key << value;
+            degraded_ = true;
+            if (degradedReason_.isEmpty()) {
+                degradedReason_ = QStringLiteral(
+                    "配置未能写入系统配置库（键 %1 不在 DConfig meta 中），本次修改仅在本进程内有效")
+                    .arg(key);
+            }
+            // 值留在进程内的 Hash 里：至少这一轮会话里它真的生效。
+            fallback_.insert(key, value);
+            Q_EMIT changed(key);
+            return;
+        }
         config_->setValue(key, value);
         return;
     }
@@ -307,21 +335,33 @@ void Settings::setRequireConfirmation(bool on)
 
 void Settings::resetToDefaults()
 {
-    // 键表以 DConfig meta 为唯一源头，不在此手抄一份。上一版正是手抄的：
-    // 「恢复默认」漏掉了 clipboard_images / clipboard_ignore_passwords /
-    // clipboard_auto_write 三个键，点完按钮它们不还原——列表与定义两处漂移。
+    // 键表取「应用管理的键」与「meta 里实际存在的键」的**并集**。
+    //
+    // 只取 meta 的 keyList()：meta 里没有的键（应用升级后新加的、meta 还没
+    // 跟着重装的）不会被还原。只取 managedKeys()：meta 里有而应用不认识的键
+    // 会留在用户配置里。两边都取，「恢复默认」才是真的「全部回到默认」。
+    //
+    // managedKeys() 与 meta 的 keyList() 逐键对齐这件事，由界面自检盯着
+    //（见 settings.h 里 managedKeys 的说明）；真对不齐了，这里多取的那几个
+    // 键也不会漏还原。
+    QStringList keys = managedKeys();
     if (config_ != nullptr) {
-        const QStringList keys = config_->keyList();
+        const QStringList fromMeta = config_->keyList();
+        for (const QString &key : fromMeta) {
+            if (!keys.contains(key)) {
+                keys.append(key);
+            }
+        }
         for (const QString &key : keys) {
             config_->reset(key);   // 回到 meta 文件里的 default
         }
-        return;
     }
-    // 兜底 Hash：只有被写过的键才在表里，逐个移除即回到进程内默认。
-    const QStringList keys = fallback_.keys();
+    // 进程内的值也要清：它们是「DConfig 拒收但这一轮仍要生效」的键。不清的话
+    // 点完「恢复默认」，开关还停在用户刚才拨的那个位置上——按钮看着点了没用。
     for (const QString &key : keys) {
-        fallback_.remove(key);
-        Q_EMIT changed(key);
+        if (fallback_.remove(key) > 0) {
+            Q_EMIT changed(key);
+        }
     }
 }
 

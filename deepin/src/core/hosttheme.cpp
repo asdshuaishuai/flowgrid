@@ -32,6 +32,22 @@ HostTheme::HostTheme()
         kAppearanceService, kAppearancePath, kPropertiesIface,
         "PropertiesChanged", this, SLOT(onAppearanceChanged()));
 
+    // 换**强调色**时 GlobalTheme 一点没变（还是 "bloom"），Appearance1 的
+    // PropertiesChanged 也可能不带 GlobalTheme 字段——但 DTK 自己会发
+    // applicationPaletteChanged。这条信号才是强调色变更的可靠入口：
+    // Theme::refresh() 每次都重新读一遍 DPalette，接到信号就能把新的主色
+    // 及其派生色（accentSoft / accentLine / line 系）整体换上。
+    //
+    // 少了这一条：用户换了活动色，界面上的主色、按钮、开关、选中段全停在旧色，
+    // 直到重启才生效。
+    connect(DGuiApplicationHelper::instance(), &DGuiApplicationHelper::applicationPaletteChanged,
+            this, [this] {
+                if (forced_) {
+                    return;
+                }
+                Theme::instance().refresh();
+            });
+
     probe();
 }
 
@@ -50,11 +66,15 @@ void HostTheme::onAppearanceChanged()
     if (forced_) {
         return;
     }
-    const bool before = dark_;
+    // 探测一次，明暗可能翻也可能没翻。
     probe();
-    if (before != dark_) {
-        Theme::instance().refresh();
-    }
+    // 无条件重刷，不只看明暗有没有翻。
+    //
+    // 原先只在 dark_ 翻转时 refresh()：于是 Appearance1 上那些**不改变明暗**
+    // 的变化（换强调色、换字体）全被漏掉——GlobalTheme 字符串没变，界面就一直
+    // 用着旧主色。多刷一次的成本只是重画几屏，而漏刷的代价是整套配色停在
+    // 旧主题上、用户以为换主题没生效。
+    Theme::instance().refresh();
 }
 
 HostTheme &HostTheme::instance()

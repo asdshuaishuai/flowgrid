@@ -193,6 +193,9 @@ void showPanel(QWidget *panel)
 void notYetWired(const QString &what)
 {
     qCInfo(lcApp) << "尚未接通:" << what;
+    // 光记日志用户是看不见的：点了按钮屏幕纹丝不动，用户只能靠猜。
+    // 配一条 toast，明确说清是哪个功能还没做。
+    fg::toast(QObject::tr("%1 尚未接通").arg(what), fg::ToastKind::Info);
 }
 
 // 「写入本地」与「接收后自动写入本地」的落点：把一条剪贴板历史写回本机系统
@@ -651,12 +654,13 @@ int main(int argc, char *argv[])
             // base 必须按值捕获：外层 singleShot 返回后它就析构了，按引用捕获
             // 会拼出乱码文件名（顺带在下一轮跑出 std::bad_alloc）。
             QTimer::singleShot(tokens::kDurToast + 120, &app, [&app, base] {
-                if (QWidget *t = activeToast(); t != nullptr) {
-                    t->ensurePolished();
-                    const QString toastPath =
-                        QStringLiteral("%1-toast.png").arg(base);
-                    saveSnapshot(t, toastPath);
-                }
+                // activeToast() 是单例，第一次取就会建出来，指针永远非空——
+                // 早先这里写了个 != nullptr 的判断，是照着「可能为空」的旧注释
+                // 写的，死代码。
+                QWidget *t = activeToast();
+                t->ensurePolished();
+                const QString toastPath = QStringLiteral("%1-toast.png").arg(base);
+                saveSnapshot(t, toastPath);
                 // 文件传输屏再拍一张：它的会话轮询每 500ms 就按 Go 侧报的数字改写
                 // 已播种的条目（进度、终态、大小）。只拍唤出瞬间那一张的话，
                 // 「轮询把状态改坏」这类问题在无头环境里根本看不见——实测漏过
@@ -847,8 +851,7 @@ static QWidget *buildIconSheet()
             {
                 QColor c = p.text3;
                 name->setStyleSheet(QStringLiteral("color:%1")
-                                        .arg(c.alpha() == 255 ? c.name(QColor::HexRgb)
-                                                              : c.name(QColor::HexArgb)));
+                                        .arg(fg::cssColor(c)));
             }
             name->setAlignment(Qt::AlignCenter);
             col->addWidget(name);

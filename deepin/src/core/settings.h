@@ -27,10 +27,22 @@ class Settings : public QObject {
 public:
     static Settings &instance();
 
-    // DConfig 在无 DDE 会话、或 meta 文件没装到 /usr/share/<appId>/ 时不可用。
-    // 这时退化成进程内 Hash：设置屏的开关仍然可点可生效，只是不跨进程保留。
-    bool isBackedByDConfig() const { return config_ != nullptr; }
-    QString unavailableReason() const { return reason_; }
+    // 「配置存不住」的降级状态。
+    //
+    // 两种情况都算：DConfig 整个不可用（没有 meta、或后端起不来），或者
+    // DConfig 收下了连接却在某次写入时拒收（键不在 meta 里——meta 装在系统
+    // 目录里，没跟着新版本重装就是这个下场）。后一种原先完全不可见：界面开关
+    // 拨得动，进程一关就没了，用户只会以为是自己没点保存。
+    //
+    // 设置屏用它挂一条提示横幅，让「这次修改不跨重启保留」明明白白写出来。
+    bool degraded() const { return degraded_ || config_ == nullptr; }
+    QString degradedReason() const
+    {
+        if (!degradedReason_.isEmpty()) {
+            return degradedReason_;
+        }
+        return reason_;
+    }
 
     // ── 连接 ──
     QString preferredLink() const;                  // "IntelligentLink" / "DirectLink" / "IntelligentLinkOnly"
@@ -119,7 +131,9 @@ private:
 
     Dtk::Core::DConfig *config_ = nullptr;
     QHash<QString, QVariant> fallback_;
-    QString reason_;
+    QString reason_;         // DConfig 整个不可用时的原因
+    QString degradedReason_; // 某次写入被拒时的原因
+    bool degraded_ = false;  // 有写入被拒过
 };
 
 // input/switch_hotkey 取值语义（1=Ctrl / 2=Alt）对应的修饰键名。设置屏的键帽、

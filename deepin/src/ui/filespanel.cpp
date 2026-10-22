@@ -31,25 +31,6 @@ Q_LOGGING_CATEGORY(lcFiles, "flowgrid.files")
 namespace fg {
 namespace {
 
-QString css(const QColor &c)
-{
-    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
-}
-
-QString humanSize(qint64 bytes)
-{
-    if (bytes < 1024) {
-        return QStringLiteral("%1 B").arg(bytes);
-    }
-    if (bytes < 1024 * 1024) {
-        return QStringLiteral("%1 KB").arg(bytes / 1024.0, 0, 'f', 0);
-    }
-    if (bytes < 1024LL * 1024 * 1024) {
-        return QStringLiteral("%1 MB").arg(bytes / (1024.0 * 1024.0), 0, 'f', 1);
-    }
-    return QStringLiteral("%1 GB").arg(bytes / (1024.0 * 1024.0 * 1024.0), 0, 'f', 1);
-}
-
 // 速率（字节/秒 → 可读文本），与 humanSize 同一套单位。
 QString humanRate(double bytesPerSec)
 {
@@ -78,19 +59,6 @@ QString etaText(int remainBytes, double bytesPerSec)
     return QStringLiteral("%1h").arg(secs / 3600);
 }
 
-// 记录行右侧的「多久之前」，与设计稿的 3m / 12m 同一量级。
-QString agoText(qint64 ms)
-{
-    const qint64 secs = ms / 1000;
-    if (secs < 60) {
-        return QObject::tr("%1s").arg(secs);
-    }
-    if (secs < 3600) {
-        return QObject::tr("%1m").arg(secs / 60);
-    }
-    return QObject::tr("%1h").arg(secs / 3600);
-}
-
 // 28×28 圆角图标底座（ui.css .xfer__icon），按状态取 soft 底 + text 字色。
 QLabel *xferIcon(const QString &name, const StatusColor &c, QWidget *parent)
 {
@@ -99,7 +67,7 @@ QLabel *xferIcon(const QString &name, const StatusColor &c, QWidget *parent)
     box->setAlignment(Qt::AlignCenter);
     box->setPixmap(icons::icon(name, tokens::kIconSm, c.text).pixmap(tokens::kIconSm, tokens::kIconSm));
     box->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
-                           .arg(css(c.soft), QString::number(tokens::kRadiusCtl)));
+                           .arg(cssColor(c.soft), QString::number(tokens::kRadiusCtl)));
     return box;
 }
 
@@ -132,9 +100,9 @@ void DropZone::applyRestingStyle()
 {
     applyBoxStyle(this,
                   QStringLiteral("border:2px dashed %1;border-radius:%2px;background:%3")
-                      .arg(css(Theme::instance().palette().line2),
+                      .arg(cssColor(Theme::instance().palette().line2),
                            QString::number(tokens::kRadiusCard),
-                           css(Theme::instance().palette().card)));
+                           cssColor(Theme::instance().palette().card)));
 }
 
 void DropZone::enterEvent(QEnterEvent *e)
@@ -144,8 +112,8 @@ void DropZone::enterEvent(QEnterEvent *e)
     const Palette &p = Theme::instance().palette();
     applyBoxStyle(this,
                   QStringLiteral("border:2px dashed %1;border-radius:%2px;background:%3")
-                      .arg(css(p.accent), QString::number(tokens::kRadiusCard),
-                           css(p.accentSoft)));
+                      .arg(cssColor(p.accent), QString::number(tokens::kRadiusCard),
+                           cssColor(p.accentSoft)));
     Q_EMIT hoverChanged(true);
     QWidget::enterEvent(e);
 }
@@ -172,8 +140,8 @@ void DropZone::dragEnterEvent(QDragEnterEvent *e)
         const Palette &p = Theme::instance().palette();
         applyBoxStyle(this,
                       QStringLiteral("border:2px dashed %1;border-radius:%2px;background:%3")
-                          .arg(css(p.accent), QString::number(tokens::kRadiusCard),
-                               css(p.accentSoft)));
+                          .arg(cssColor(p.accent), QString::number(tokens::kRadiusCard),
+                               cssColor(p.accentSoft)));
         // 拖进来了：标题换成「松开以发送」（mac 端 FGDropZone 的 dropTargeted 态）。
         Q_EMIT dropTargetedChanged(true);
     }
@@ -268,7 +236,7 @@ void FilesPanel::refreshPill()
     pillDot_->setPulsing(on && active > 0);
     pillDot_->setQuality(on && active > 0 ? Quality::Good : Quality::Idle);
     pill_->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
-                             .arg(css(on && active > 0 ? p.ok.soft : p.idle.soft),
+                             .arg(cssColor(on && active > 0 ? p.ok.soft : p.idle.soft),
                                   QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
 }
 
@@ -289,7 +257,7 @@ QWidget *FilesPanel::buildTransferList()
     transferLayout_->addLayout(transferRows_);
     applyBoxStyle(list,
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.card)));
+                      .arg(cssColor(p.line2)).arg(tokens::kRadiusCard).arg(cssColor(p.card)));
     return list;
 }
 
@@ -310,14 +278,14 @@ QWidget *FilesPanel::buildDropZone()
     auto *text = new QLabel(tr("拖入文件，或点击选择"), zone);
     text->setAlignment(Qt::AlignCenter);
     text->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
-    text->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
+    text->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
     dropTitle_ = text;
 
     auto *hint = new QLabel(
         tr("单文件 1 B – 16 MiB · 文件名不含路径分隔符"), zone);
     hint->setAlignment(Qt::AlignCenter);
     hint->setFont(uiFont(tokens::kFont11));
-    hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    hint->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
 
     vl->addWidget(icon);
     vl->addWidget(text);
@@ -360,7 +328,7 @@ void FilesPanel::updateDropZoneLook(bool active)
     }
     if (dropTitle_ != nullptr) {
         dropTitle_->setText(dropTargeted_ ? tr("松开以发送") : tr("拖入文件，或点击选择"));
-        dropTitle_->setStyleSheet(QStringLiteral("color:%1").arg(css(active ? p.accentText : p.text1)));
+        dropTitle_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(active ? p.accentText : p.text1)));
     }
 }
 
@@ -378,7 +346,7 @@ QWidget *FilesPanel::buildRecords()
     recordsLayout_->addLayout(recordRows_);
     applyBoxStyle(list,
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2)).arg(tokens::kRadiusCard).arg(css(p.card)));
+                      .arg(cssColor(p.line2)).arg(tokens::kRadiusCard).arg(cssColor(p.card)));
     return list;
 }
 
@@ -414,7 +382,7 @@ QWidget *FilesPanel::buildSettings()
         if (!hint.isEmpty()) {
             auto *hintLabel = new QLabel(hint, w);
             hintLabel->setFont(uiFont(tokens::kFont11));
-            hintLabel->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+            hintLabel->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
             hintLabel->setWordWrap(true);
             col->addWidget(hintLabel);
         }
@@ -538,7 +506,7 @@ QWidget *FilesPanel::buildFooter()
     icon->setPixmap(icons::icon(QStringLiteral("shield"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
     auto *hint = new QLabel(tr("SHA-256 校验后交付"), foot);
     hint->setFont(uiFont(tokens::kFont11));
-    hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    hint->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     hl->addWidget(icon);
     hl->addWidget(hint);
     hl->addStretch(1);
@@ -815,14 +783,14 @@ void FilesPanel::rebuildTransfers()
         // 长文件名必须省略号，否则会把整行撑破、右侧百分比被挤出可视区。
         auto *name = new ElidedLabel(e.name, body);
         name->setFont(uiFont(tokens::kFont12, QFont::Medium));
-        name->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
+        name->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
         const int pct =
             e.totalBytes > 0 ? int(e.sentBytes * 100 / e.totalBytes) : 0;
         auto *pctLabel = new QLabel(tr("%1%").arg(pct), body);
         // .xfer__pct 明确指定了 font-mono + tabular-nums：百分比每 500ms 跳一次，
         // 不等宽的话整行会左右抖。
         pctLabel->setFont(uiMonoFont(tokens::kFont11, QFont::DemiBold));
-        pctLabel->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text2)));
+        pctLabel->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text2)));
         pctLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         pctLabel->setFixedWidth(tokens::kXferPctWidth);   // ui.css .xfer__pct 的 min-width
         top->addWidget(name, 1);
@@ -863,7 +831,7 @@ void FilesPanel::rebuildTransfers()
         }
         auto *meta = new ElidedLabel(parts.join(QStringLiteral(" · ")), body);
         meta->setFont(uiFont(tokens::kFont11));
-        meta->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        meta->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
         vl->addWidget(meta);
 
         hl->addWidget(body, 1);
@@ -875,7 +843,7 @@ void FilesPanel::rebuildTransfers()
         });
         hl->addWidget(side, 0, Qt::AlignTop);
 
-        applyBoxStyle(card, QStringLiteral("border-bottom:1px solid %1").arg(css(p.hairline)));
+        applyBoxStyle(card, QStringLiteral("border-bottom:1px solid %1").arg(cssColor(p.hairline)));
         transferRows_->addWidget(card);
     }
 
@@ -970,9 +938,11 @@ void FilesPanel::rebuildRecords()
                : (e.rejected || timedOut ? Badge::Variant::Warn : Badge::Variant::Danger),
             trailing);
         tl->addWidget(badge, 0, Qt::AlignVCenter);
-        auto *ago = new QLabel(agoText(now - e.finishedAtMs), trailing);
+        // 设计稿 files.html 的记录行末尾是 "3m" / "12m" 这种紧凑写法。
+        // 共享的 compactDuration 一律收秒，这里把毫秒差换算过去。
+        auto *ago = new QLabel(compactDuration((now - e.finishedAtMs) / 1000), trailing);
         ago->setFont(uiFont(tokens::kFont11));
-        ago->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        ago->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
         // 34 是「装得下「2分钟前」」的实用宽度，与 .xfer__pct 的 34 无血缘——
         // 那个是设计稿 min-width，这个是 Qt 侧按内容定的，别合并成一个令牌。
         ago->setFixedWidth(34);

@@ -21,22 +21,14 @@ namespace {
 
 Q_LOGGING_CATEGORY(lcPairing, "flowgrid.pairing")
 
-// 样式表里的颜色：全不透明走 #RRGGBB，带 alpha 走 #AARRGGBB。
-// 柔和底色（surface2 / accent-soft / ok-soft）都是带 alpha 的，用 HexRgb
-// 会把 alpha 压成实色——半透明的底画出来比设计稿深一档。
-QString css(const QColor &c)
-{
-    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
-}
-
 // mac 端 PairingView 的卡片：surface2 底 + line2 描边 + 圆角 + s3 内边距。
 // 这里抽成一个函数，三张卡片共用，免得三处各写一遍样式、以后漂移。
 QString cardStyle()
 {
     const Palette &p = Theme::instance().palette();
     return QStringLiteral("background:%1;border:1px solid %2;border-radius:%3px")
-        .arg(css(p.surface2))
-        .arg(css(p.line2))
+        .arg(cssColor(p.surface2))
+        .arg(cssColor(p.line2))
         .arg(tokens::kRadiusCard);
 }
 
@@ -50,7 +42,7 @@ QWidget *labeledField(const QString &label, QLineEdit *edit, QWidget *parent)
 
     auto *text = new QLabel(label, box);
     text->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
-    text->setStyleSheet(QStringLiteral("color:%1").arg(css(Theme::instance().palette().text2)));
+    text->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text2)));
     vl->addWidget(text);
     vl->addWidget(edit);
     return box;
@@ -105,7 +97,7 @@ QWidget *PairingPanel::buildNearbyCard()
 
     auto *title = new QLabel(tr("附近的设备"), head);
     title->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
-    title->setStyleSheet(QStringLiteral("color:%1").arg(css(Theme::instance().palette().text1)));
+    title->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text1)));
     hl->addWidget(title);
     hl->addStretch(1);
 
@@ -148,7 +140,7 @@ QWidget *PairingPanel::buildPeerList()
 
     peerEmptyLabel_ = new QLabel(tr("正在搜索局域网内的 FlowGrid 设备…"), searching);
     peerEmptyLabel_->setFont(uiFont(tokens::kFont11));
-    peerEmptyLabel_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    peerEmptyLabel_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     sh->addWidget(peerEmptyLabel_);
     vl->addWidget(searching);
 
@@ -157,7 +149,7 @@ QWidget *PairingPanel::buildPeerList()
         box);
     peerStatusLabel_->setWordWrap(true);
     peerStatusLabel_->setFont(uiFont(tokens::kFont11));
-    peerStatusLabel_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    peerStatusLabel_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     vl->addWidget(peerStatusLabel_);
 
     return box;
@@ -203,7 +195,7 @@ void PairingPanel::rebuildPeers()
 
         auto *name = new QLabel(peer.name, texts);
         name->setFont(uiFont(tokens::kFont12, QFont::Medium));
-        name->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
+        name->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
         tl->addWidget(name);
 
         // 副标题：平台 + 端口。跟 mac 的 peerSubtitle 一致。
@@ -218,7 +210,7 @@ void PairingPanel::rebuildPeers()
                                                    : parts.join(QStringLiteral(" · ")),
                                     texts);
         subtitle->setFont(uiFont(tokens::kFont11));
-        subtitle->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        subtitle->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
         tl->addWidget(subtitle);
 
         hl->addWidget(texts, 1);
@@ -278,7 +270,7 @@ QWidget *PairingPanel::buildConnectCard()
     connectStatusLabel_ = new QLabel(tr("未连接"), row);
     connectStatusLabel_->setFont(uiFont(tokens::kFont11));
     connectStatusLabel_->setStyleSheet(
-        QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+        QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text3)));
     hl->addWidget(connectStatusLabel_);
 
     vl->addWidget(row);
@@ -302,13 +294,13 @@ QWidget *PairingPanel::buildLocalCodeCard()
 
     auto *title = new QLabel(tr("本机配对码"), head);
     title->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
-    title->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
+    title->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
     hl->addWidget(title);
     hl->addStretch(1);
 
     auto *hint = new QLabel(tr("对端连接本机时需输入此码"), head);
     hint->setFont(uiFont(tokens::kFont11));
-    hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    hint->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     hl->addWidget(hint);
     vl->addWidget(head);
 
@@ -334,10 +326,10 @@ QWidget *PairingPanel::buildLocalCodeCard()
         slot->setFont(uiFont(tokens::kFont20, QFont::Bold));
         slot->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px;color:%3;"
                                           "border-bottom:1px solid %4")
-                                .arg(css(p.card))
+                                .arg(cssColor(p.card))
                                 .arg(tokens::kRadiusCtl)
-                                .arg(css(p.text1))
-                                .arg(css(p.line1)));
+                                .arg(cssColor(p.text1))
+                                .arg(cssColor(p.line1)));
         codeSlots_ << slot;
         ch->addWidget(slot);
     }
@@ -387,7 +379,7 @@ QWidget *PairingPanel::buildLocalCodeCard()
                             warn);
     text->setWordWrap(true);
     text->setFont(uiFont(tokens::kFont11));
-    text->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    text->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     wl->addWidget(icon, 0, Qt::AlignTop);
     wl->addWidget(text, 1);
     vl->addWidget(warn);

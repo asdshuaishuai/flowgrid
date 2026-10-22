@@ -33,6 +33,11 @@ inline constexpr int kDurToast = 300;  // --dur-toast
 inline constexpr int kDurChart = 500;  // 柱状图高度过渡（ui.css chart__bar）
 inline constexpr int kDurCollapse = 200;  // chevron rotate(-90deg)
 inline constexpr int kDurSwitch = 200;  // .switch 底色/位移过渡（ui.css 里的字面量 200ms）
+inline constexpr int kDurPulse = 2000;  // 状态点呼吸：设计稿写死 2s infinite
+
+// Toast 在屏上停留多久。它不是动效时长（进出场是 kDurToast），是「读完再收」
+// 的时间，所以单独一个令牌。
+inline constexpr int kToastHoldMs = 2200;
 
 inline constexpr int kChartHeight  = 70;  // .chart：上一版原值
 inline constexpr int kChartBars    = 12;  // 设计稿柱数
@@ -93,6 +98,15 @@ inline constexpr int kPairSlotW      = 34;   // .paircode span
 inline constexpr int kPairSlotH      = 42;
 inline constexpr int kStepBadgeSize  = 22;   // 配对流程的序号圆
 inline constexpr int kEmptyIconSize  = 40;   // .empty__icon 圆形底
+
+// 键帽（设计稿 .key）：min-width 34 / padding 5×7 / 底部 1px 阴影。
+//
+// 7 不是 4 的倍数，所以它不在间距阶梯里、只能作为键帽自己的规格存在。
+// 早先这里用的是 kS2(8)——每个键帽宽出 2px，一行键帽的边缘对不齐，
+// 而注释里写的还是设计稿的 7。
+inline constexpr int kKeycapMinWidth = 34;
+inline constexpr int kKeycapPadX      = 7;
+inline constexpr int kKeycapPadY      = 5;
 
 // ── 5b. 图标尺寸阶梯 ─────────────────────────────────────────────────
 // 设计稿 .ic 定义了四档：默认 16 / --sm 14 / --lg 20 / --xl 28。--xl 与

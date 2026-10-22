@@ -21,11 +21,6 @@ Q_LOGGING_CATEGORY(lcSettingsPanel, "flowgrid.settings.panel")
 namespace fg {
 namespace {
 
-QString css(const QColor &c)
-{
-    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
-}
-
 // 设计稿 settings.html 剪贴板组给的档位。协议侧只认这三个值，早先用的自由
 // 数字输入框能填出 37 这种没人认的数。
 constexpr int kHistoryCounts[3] = {50, 100, 200};
@@ -91,9 +86,9 @@ QWidget *groupBox(const QString &title, const QList<QWidget *> &rows, QWidget *p
     }
     applyBoxStyle(list,
                   QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                      .arg(css(p.line2))
+                      .arg(cssColor(p.line2))
                       .arg(tokens::kRadiusCard)
-                      .arg(css(p.card)));
+                      .arg(cssColor(p.card)));
     for (QWidget *row : rows) {
         ll->addWidget(row);
     }
@@ -142,20 +137,14 @@ QLabel *unitLabel(const QString &text, QWidget *parent)
 {
     auto *l = new QLabel(text, parent);
     l->setFont(uiFont(tokens::kFont11));
-    l->setStyleSheet(QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+    l->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text3)));
     return l;
 }
 
-// 还没接通的功能一律明确记一条日志，不做成点了没反应的按钮，也不假装成功。
-FgButton *unwiredButton(const QString &text, const QString &what, QWidget *parent)
-{
-    auto *btn = new FgButton(text, FgButton::Variant::Secondary, true, parent);
-    QObject::connect(btn, &FgButton::clicked, parent, [what] {
-        qCInfo(lcSettingsPanel) << what << QStringLiteral("尚未接通");
-    });
-    return btn;
-}
-
+// 还没接通的功能一律明确记一条日志 + 给用户一条提示，不做成点了没反应的按钮，
+// 也不假装成功。实现见 widgets.h 的 unwiredButton()——此前这一屏与键位映射屏
+// 各抄了一份：这一份只写日志不弹提示（用户点了屏幕纹丝不动，实测「管理」
+// 与「3 个」两个按钮都是这样），另一份有提示，行为对不上。
 } // namespace
 
 SettingsPanel::SettingsPanel(QWidget *parent) : Panel(tr("设置"), parent)
@@ -168,6 +157,16 @@ SettingsPanel::SettingsPanel(QWidget *parent) : Panel(tr("设置"), parent)
     body->addWidget(
         banner(tr("设置即时生效并同步到全部已配对设备，无需重启。"), this,
                BannerVariant::Info));
+
+    // 配置存不住时把话说明白。
+    //
+    // DConfig 整个不可用、或某次写入被拒（键不在 meta 里）时，设置仍然可拨、
+    // 本轮也确实生效，但不跨进程保留。原先这层降级对用户完全不可见：开关
+    // 拨得动，退出重开就没了，用户只会以为是自己没点保存。
+    degradedBanner_ = new QWidget(this);
+    degradedBanner_->setVisible(false);
+    degradedBanner_->setLayout(new QVBoxLayout(degradedBanner_));
+    body->addWidget(degradedBanner_);
 
     // 分段控件切 tab：与 mac 端 FGSegmented 同一套控件、同一组选项。
     tabs_ = new SegmentedControl({tr("连接"), tr("输入"), tr("剪贴板"), tr("安全")}, this);
@@ -384,7 +383,7 @@ QWidget *SettingsPanel::buildSyncGroup()
            {new ListRow(tr("跨端同步"), tr("文本与图片，单条上限 63,240 B"), clipSync_, this),
             new ListRow(tr("历史条数"), tr("超出后按时间淘汰"), clipHistory_, this),
             new ListRow(tr("排除应用"), tr("密码管理器等窗口内不采集"),
-                        unwiredButton(tr("3 个"), tr("排除应用列表"), this), this)},
+                        unwiredButton(tr("3 个"), tr("排除应用列表"), this, QString(), true), this)},
            this);
 }
 
@@ -395,7 +394,11 @@ QWidget *SettingsPanel::buildSecurityGroup()
     // 端到端加密是协议层的硬约束（PROTOCOL.md §3），不是用户能关的开关。
     // 早先这里摆的是一个禁用开关，视觉上像"可以改但改不了"；设计稿给的是
     // 徽章，直接说清状态。徽章自己跟着 Theme::changed 重取颜色，这里不再转发。
-    auto *e2eBadge = new Badge(tr("已启用"), Badge::Variant::Ok, this);
+    //
+    // 徽章的**状态取真值**：DConfig 里有 security/e2e_encryption 这个键，
+    // 原先这里写死「已启用」而没人读它——用户在 dconfig-editor 里把它关掉，
+    // 界面照样说「已启用」。现在读真值，开就写开、关就写关。
+    e2eBadge_ = new Badge(QString(), Badge::Variant::Ok, this);
 
     // 「新设备需确认」是本页的行，开关就建在本组里（原先建在剪贴板组、拿过来
     // 用，见 buildSyncGroup 里的说明）。
@@ -406,11 +409,11 @@ QWidget *SettingsPanel::buildSecurityGroup()
     });
 
     return groupBox(tr("安全"),
-           {new ListRow(tr("端到端加密"), tr("XChaCha20-Poly1305"), e2eBadge, this),
+           {new ListRow(tr("端到端加密"), tr("XChaCha20-Poly1305"), e2eBadge_, this),
             new ListRow(tr("新设备需确认"), tr("关闭后任何局域网设备可直接配对"),
                         confirm_, this),
             new ListRow(tr("已授权设备"), tr("可单独撤销信任"),
-                        unwiredButton(tr("管理"), tr("授权设备管理"), this), this)},
+                        unwiredButton(tr("管理"), tr("授权设备管理"), this, QString(), true), this)},
            this);
 }
 
@@ -449,6 +452,27 @@ void SettingsPanel::restoreDefaults()
 void SettingsPanel::reload()
 {
     auto &s = Settings::instance();
+
+    // 降级提示：配置存不住时把话说明白，不让用户对着「拨了没反应」的开关
+    // 猜。横幅内容每次重建——降级原因可能变化（先是没有 DConfig，后是某个
+    // 键被拒），文案要跟着最新的一条走。
+    if (degradedBanner_ != nullptr) {
+        QLayout *lay = degradedBanner_->layout();
+        while (lay->count() > 0) {
+            QLayoutItem *item = lay->takeAt(0);
+            if (item->widget() != nullptr) {
+                item->widget()->deleteLater();
+            }
+            delete item;
+        }
+        if (s.degraded()) {
+            degradedBanner_->setVisible(true);
+            lay->addWidget(banner(s.degradedReason(), this, BannerVariant::Warn));
+        } else {
+            degradedBanner_->setVisible(false);
+        }
+    }
+
     if (preferredLink_ != nullptr) {
         const int idx = s.preferredLink() == QLatin1String("DirectLink")        ? 1
                         : s.preferredLink() == QLatin1String("IntelligentLinkOnly") ? 2
@@ -467,6 +491,13 @@ void SettingsPanel::reload()
     sync(smoothing_, s.mouseSmoothing());
     sync(clipSync_, s.clipboardSync());
     sync(confirm_, s.requireConfirmation());
+
+    // 端到端加密的徽章取真值，不写死「已启用」。
+    if (e2eBadge_ != nullptr) {
+        const bool on = s.e2eEncryption();
+        e2eBadge_->setText(on ? tr("已启用") : tr("已关闭"));
+        e2eBadge_->setVariant(on ? Badge::Variant::Ok : Badge::Variant::Warn);
+    }
 
     if (edgeThreshold_ != nullptr) {
         edgeThreshold_->setText(QString::number(s.edgeThreshold()));

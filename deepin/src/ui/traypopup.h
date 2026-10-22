@@ -55,6 +55,7 @@ protected:
     void showEvent(QShowEvent *) override;
     void resizeEvent(QResizeEvent *) override;
     void keyPressEvent(QKeyEvent *) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     QWidget *buildHead();
@@ -67,8 +68,21 @@ private:
                             const std::function<void(bool)> &onWrite);
     QWidget *buildSeparator();
     QWidget *buildBottomBar();
+    QWidget *buildKbdHint(const QString &key);
     void syncShadowPlate();
     void restyle();
+
+    // 需要跟着主题重新上色的控件登记在这里。
+    //
+    // 为什么要有这一层：托盘里的文字色要么写进 QLabel 的样式表，要么写进
+    // 自绘控件 palette 的 WindowText 角色——两种写法记下的都是**构造那一刻**
+    // 的主题值。原先 restyle() 只换阴影与 band 的底色，头部标题、分组小标题、
+    // 快捷开关的行名、快捷键提示这几处的字色全停在旧值上：深色底上是近黑的
+    // 字（读不出来），浅色底上是看不见的白字。
+    //
+    // 每一项是一段「按当前主题重刷」的回调，由建它的那个 build* 顺手登记，
+    // 于是新增控件时不必记得去改 restyle()。
+    QList<std::function<void()>> restylers_;
 
     DeviceManager &manager_;
     ShellMargin margin_;

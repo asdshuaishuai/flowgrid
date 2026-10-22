@@ -128,7 +128,6 @@ void LinkProbe::onReadyRead()
             if (ok) {
                 ++received_;
                 lastRttUs_ = static_cast<qint64>(qRound(ms * 1000.0));
-                Q_EMIT measured();
                 continue;
             }
         }

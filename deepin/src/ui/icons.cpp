@@ -304,11 +304,6 @@ QPixmap render(const svg::Icon &g, int size, const QColor &stroke, qreal strokeW
 
 } // namespace
 
-bool exists(const QString &name)
-{
-    return paths().contains(name);
-}
-
 QStringList names()
 {
     QStringList out = paths().keys();
@@ -332,6 +327,11 @@ QIcon icon(const QString &name, int size, const QColor &color)
     QIcon result;
     result.addPixmap(pm);
     return result;
+}
+
+QPixmap pixmap(const QString &name, int size, const QColor &color)
+{
+    return icon(name, size, color).pixmap(size, size);
 }
 
 QPixmap logoPixmap(int size)

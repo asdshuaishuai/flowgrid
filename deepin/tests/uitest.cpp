@@ -14,6 +14,7 @@
 // 验不了的（真实桌面的托盘唤出、深色主题、Wayland 全局热键）写在 README 里，
 // 不在这里假装验过。
 #include "core/designtokens.h"
+#include "core/hosttheme.h"
 #include "core/settings.h"
 #include "core/theme.h"
 #include "ui/hotkeys.h"
@@ -27,6 +28,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QPixmap>
 #include <QShortcut>
 #include <QWidget>
@@ -183,6 +185,61 @@ void checkDConfigMeta()
     }
 }
 
+// ── 明暗切换后配色要跟着换 ─────────────────────────────────────────────
+//
+// 这一段守的是「深色下字是近黑的」那个坑。
+//
+// 文字色只有两种写法：写进 QLabel 的样式表，或写进自绘控件 palette 的
+// WindowText 角色。两种记下的都是**构造那一刻**的主题值——控件造好之后再切
+// 主题，它们不跟着换：深色底上是一片近黑的字（浅色底上反过来，是看不见的
+// 白字）。托盘浮层是这应用唯一的常驻界面，它一开就是整晚。
+//
+// 这里造一个真的 NavRow（托盘里每一行都是它），再拿托盘浮层的头部标题
+// 当第二条线索：两个都是构造时把颜色写死的类型，翻一次主题后都该换色。
+QLabel *findLabel(QWidget *root, const QString &text)
+{
+    for (QLabel *l : root->findChildren<QLabel *>()) {
+        if (l->text() == text) {
+            return l;
+        }
+    }
+    return nullptr;
+}
+
+void checkThemeFollow(QWidget *tray)
+{
+    std::printf("主题切换后配色跟随\n");
+    fg::HostTheme &host = fg::HostTheme::instance();
+    const bool wasDark = host.isDark();
+    const bool wasForced = host.isForced();
+
+    auto *row = new fg::NavRow(QStringLiteral("devices"), QStringLiteral("设备与连接"), nullptr);
+    row->setAttribute(Qt::WA_DontShowOnScreen, true);
+    row->show();
+
+    QLabel *rowLabel = findLabel(row, QStringLiteral("设备与连接"));
+    QLabel *trayTitle = findLabel(tray, QStringLiteral("FlowGrid"));
+    check(rowLabel != nullptr, QStringLiteral("导航行里找得到文字标签"));
+    check(trayTitle != nullptr, QStringLiteral("托盘浮层里找得到头部标题"));
+
+    const QString rowBefore = rowLabel != nullptr ? rowLabel->styleSheet() : QString();
+    const QString titleBefore = trayTitle != nullptr ? trayTitle->styleSheet() : QString();
+
+    // 翻到明暗的另一边：setForced 走的是与真实主题切换同一条路
+    // （Theme::refresh() → changed() → 各控件重新上色）。
+    host.setForced(!wasDark, true);
+    const QString rowAfter = rowLabel != nullptr ? rowLabel->styleSheet() : QString();
+    const QString titleAfter = trayTitle != nullptr ? trayTitle->styleSheet() : QString();
+
+    // 还原，免得影响后面几段检查。
+    host.setForced(wasDark, wasForced);
+
+    check(!rowBefore.isEmpty() && rowBefore != rowAfter,
+          QStringLiteral("明暗切换后导航行的文字色跟着换了"));
+    check(!titleBefore.isEmpty() && titleBefore != titleAfter,
+          QStringLiteral("明暗切换后托盘头部标题的字色跟着换了"));
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -298,6 +355,9 @@ int main(int argc, char **argv)
     // 就没了。装到哪儿、什么格式，在这里问 DTK 自己，别靠记。
     std::printf("DConfig meta\n");
     checkDConfigMeta();
+
+    // ── 5. 明暗切换后配色跟随 ──────────────────────────────────────────
+    checkThemeFollow(tray);
 
     std::printf(g_failures == 0 ? "\n全部通过\n" : "\n有 %d 项未通过\n", g_failures);
     return g_failures == 0 ? 0 : 1;

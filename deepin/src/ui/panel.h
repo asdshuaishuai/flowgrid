@@ -24,6 +24,7 @@ class QVBoxLayout;
 class QLabel;
 class QScrollArea;
 class QScrollBar;
+class QScreen;
 
 namespace fg {
 
@@ -38,6 +39,15 @@ struct ShellMargin {
     int bottom = 0;
 };
 
+// 锚点落在哪块屏幕上。
+//
+// 多屏时必须按锚点选屏：原先一律用 QGuiApplication::primaryScreen()，
+// 于是用户把托盘图标拖到第二块屏，点出来的浮板却开到第一块屏上；任务栏在
+// 哪一侧也跟着取错屏——浮板贴着**另一块屏**的任务栏方向摆。
+//
+// 锚点为空（DDE 的 dock 不给托盘图标几何）时退回 near 所在屏，再退回主屏。
+QScreen *screenForAnchor(const QPoint &anchor, const QWidget *near = nullptr);
+
 // 按任务栏所在的方向，把**贴边那一侧**的阴影余白去掉。
 //
 // 为什么必须去掉：X11 上 popup 窗口被限制在工作区（可用区）内——实测把浮板
@@ -49,8 +59,9 @@ struct ShellMargin {
 //
 // 去掉之后：卡片下沿正好压在任务栏上沿上，投影落在左右和上方——那才是
 // 「浮板从任务栏里长出来」的观感（mac 上浮板也是贴着菜单栏下沿长的）。
-// 底边贴着任务栏，本来也看不见投影。
-ShellMargin edgeAdjustedMargin(const ShellMargin &base);
+//
+// screen 为空时按主屏算（单屏机器上的常见情形）。
+ShellMargin edgeAdjustedMargin(const ShellMargin &base, QScreen *screen = nullptr);
 
 // 浮板摆位：贴住锚点、且绝不越出屏幕可用区。
 //

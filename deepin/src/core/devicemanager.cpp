@@ -125,7 +125,52 @@ void DeviceManager::setSource(DeviceSource *source)
     monitors_.clear();
 
     if (source_ != nullptr) {
-        connect(source_, &DeviceSource::destroyed, this, [this] { source_ = nullptr; });
+        connect(source_, &DeviceSource::destroyed, this, [this, source] {
+            // 只有被销毁的还是**当前**那个源时才收尾。
+            //
+            // 「只有当前那个」这层判断不是为了防「换源」——换源时旧源是
+            // deleteLater() 延迟销毁的，它的 destroyed 会晚于新源装好才触发；
+            // 之所以眼下没出事，是因为 setSource 里的 disconnect(this) 恰好先把
+            // 这条连接摘掉了。留着判断是为了不让「谁销毁了源」这件事依赖调用
+            // 顺序：将来谁调整那句 disconnect 的位置，这里不会跟着塌。
+            if (source_ != source) {
+                return;
+            }
+            source_ = nullptr;
+
+            // 收尾动作**推到事件循环里**做，不在这里直接做。
+            //
+            // 源是 QApplication 的子对象：应用退出时它跟各块浮板一起被销毁，
+            // 而销毁顺序不确定。若在这里直接 emit devicesChanged()，浮板可能
+            // 已经处在「销毁到一半」的状态（子控件已经没了、对象还在），它的
+            // refresh() 一跑就踩到悬空指针——实测退出时段错误（崩在 Go 运行
+            // 时的信号转发里，栈上看不出是哪一行）。
+            //
+            // 推给事件循环之后：正常运行时下一轮就收拾干净；退出时事件循环
+            // 早就停了，这段根本不会执行，谁也不会被碰到。
+            QMetaObject::invokeMethod(
+                this,
+                [this, source] {
+                    // 这期间可能已经换过源了：那时该保留新源的数据，不能再清。
+                    if (source_ != nullptr) {
+                        return;
+                    }
+                    // 源没了，列表里那些设备就是假的了。
+                    //
+                    // 原先只把 source_ 置空：devices_ 里那一批还留着，采样器
+                    // 却已经没得可采（onSampleTick 早退）。于是界面永远显示着
+                    // 一批已经不在的对端，延迟读数停在最后一帧——看着像「连不
+                    // 上但也不掉线」。
+                    devices_.clear();
+                    for (auto *m : monitors_) {
+                        delete m;
+                    }
+                    monitors_.clear();
+                    timer_.stop();
+                    Q_EMIT devicesChanged();
+                },
+                Qt::QueuedConnection);
+        });
         devices_ = source_->discover();
         monitors_.reserve(devices_.size());
         for (int i = 0; i < devices_.size(); ++i) {

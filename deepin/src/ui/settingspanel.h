@@ -23,6 +23,7 @@ class FgButton;
 class FgKeycap;
 class ListRow;
 class SegmentedControl;
+class Badge;
 
 class SettingsPanel : public Panel {
     Q_OBJECT
@@ -62,6 +63,10 @@ private:
 
     SegmentedControl *tabs_ = nullptr;
     QStackedWidget *pages_ = nullptr;
+    // 配置存不住时的提示横幅（平时整块隐藏）。
+    QWidget *degradedBanner_ = nullptr;
+    // 端到端加密的状态徽章：取真值，不写死。
+    Badge *e2eBadge_ = nullptr;
 
     FgSelect *preferredLink_ = nullptr;
     ToggleSwitch *autoRouting_ = nullptr;

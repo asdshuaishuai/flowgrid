@@ -15,17 +15,11 @@
 #include <QPainterPath>
 #include <QResizeEvent>
 #include <QShowEvent>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace fg {
 namespace {
-
-// 必须带 alpha：柔和底色（ok-soft / accent-soft）就是靠 12%~18% 透明度
-// 叠出来的。用 HexRgb 丢 alpha 会把它们渲染成实色，整个设计稿的浅底全废。
-QString css(const QColor &c)
-{
-    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
-}
 
 } // namespace
 
@@ -58,30 +52,12 @@ QString kbdText(const QString &key)
 // 没法用 connect 直接挂——与其用事件过滤器绕，不如把点击语义收进类型里。
 // .tray__kbd：11px / text-3 / tabular-nums。托盘是键盘用户的主入口，
 // 每个浮板右上角摆着它的快捷键才有用。
-QWidget *kbdHint(const QString &key)
-{
-    const Palette &p = Theme::instance().palette();
-    auto *w = new QWidget;
-    auto *hl = new QHBoxLayout(w);
-    hl->setContentsMargins(0, 0, 0, 0);
-    hl->setSpacing(tokens::kS1);
-    // 修饰键名跟着设置屏的「切换热键」走：默认 1=Ctrl，改成 Alt 时这里也显示 Alt。
-    for (const QString &part : {switchModifier(), key}) {
-        auto *cap = new QLabel(part, w);
-        cap->setFont(uiFont(tokens::kFont11));
-        cap->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
-        hl->addWidget(cap);
-    }
-    hl->addStretch(1);
-    return w;
-}
-
 class QuickButton : public QWidget {
     Q_OBJECT
 public:
     QuickButton(const QString &abbrev, int hotkey, const StatusColor &sc, bool active,
                 QWidget *parent)
-        : QWidget(parent), active_(active)
+        : QWidget(parent), status_(sc), active_(active)
     {
         setCursor(Qt::PointingHandCursor);
         // 描边与底色要画在「自己」身上，而普通 QWidget 子类默认不参与样式表绘制，
@@ -98,17 +74,13 @@ public:
         icon->setFixedSize(tokens::kSwitchBtnIconSize, tokens::kSwitchBtnIconSize);
         icon->setAlignment(Qt::AlignCenter);
         icon->setFont(uiFont(tokens::kFont11, QFont::Bold));
-        icon->setStyleSheet(QStringLiteral("background:%1;color:%2;border-radius:%3px")
-                                 .arg(css(sc.solid))
-                                 .arg(css(Theme::instance().palette().onSolid))
-                                 .arg(tokens::kRadiusCtl));
+        iconLabel_ = icon;
 
         // .switch-btn__key
         auto *kbd = new QLabel(deviceHotkeyLabel(hotkey), this);
         kbd->setFont(uiFont(tokens::kFont11));
         kbd->setAlignment(Qt::AlignCenter);
-        kbd->setStyleSheet(
-            QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+        kbdLabel_ = kbd;
 
         vl->addWidget(icon);
         vl->addWidget(kbd);
@@ -155,11 +127,21 @@ private:
         const bool on = hovered_ || active_;
         applyBoxStyle(this,
                       QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                          .arg(css(on ? p.accent : p.line2))
+                          .arg(cssColor(on ? p.accent : p.line2))
                           .arg(tokens::kRadiusCtl)
-                          .arg(css(on ? p.accentSoft : p.card)));
+                          .arg(cssColor(on ? p.accentSoft : p.card)));
+        // 上面只换了按钮自己的框；里面那枚实色方块与下面的键位串还有各自的
+        // 颜色，不跟着重刷的话，明暗切换后它们就停在旧值上。
+        iconLabel_->setStyleSheet(QStringLiteral("background:%1;color:%2;border-radius:%3px")
+                                      .arg(cssColor(status_.solid))
+                                      .arg(cssColor(p.onSolid))
+                                      .arg(tokens::kRadiusCtl));
+        kbdLabel_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     }
 
+    StatusColor status_;
+    QLabel *iconLabel_ = nullptr;
+    QLabel *kbdLabel_ = nullptr;
     bool active_ = false;
     bool hovered_ = false;
 };
@@ -171,6 +153,10 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
     setWindowFlags(Qt::FramelessWindowHint | Qt::Popup | Qt::Tool);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAttribute(Qt::WA_QuitOnClose, false);
+    // 「失焦即走」的兜底，与 520px 浮板同一套做法：装在自己身上，
+    // 失活事件（WindowDeactivate）正是发给这个顶层 popup 窗的。
+    // 没有它，X11 上靠 Qt::Popup 自动关，Wayland 上就收不回去了。
+    installEventFilter(this);
 
     // 外壳与 520px 浮板完全同一套：窗口留阴影边距 → 阴影板 → 圆角卡片。
     // 托盘早先是「裸 QWidget 自己 paintEvent 画圆角+描边」，和浮板那套各画各的，
@@ -273,7 +259,7 @@ TrayPopup::TrayPopup(QWidget *parent) : QWidget(parent), manager_(DeviceManager:
     {
         // 设计稿这行右侧是 .tray__kbd 的快捷键提示（Ctrl K）。
         QList<QWidget *> rows{
-            buildNavRow(QStringLiteral("keyboard"), tr("键位映射"), kbdHint("K"),
+            buildNavRow(QStringLiteral("keyboard"), tr("键位映射"), buildKbdHint(QStringLiteral("K")),
                         QStringLiteral("keymap")),
         };
         cardLayout_->addWidget(buildGroup(QString(), rows));
@@ -306,6 +292,11 @@ void TrayPopup::restyle()
         // 不同控件拼的——「内外不一致」。
         card_->setBandColor(Theme::instance().palette().surface);
     }
+    // 逐项重刷那些构造时写死了颜色的控件（头部标题、分组小标题、快捷开关行名、
+    // 快捷键提示、当前设备那一块）。少了这一步，明暗切换后它们停在旧值上。
+    for (const auto &fn : restylers_) {
+        fn();
+    }
     update();
 }
 
@@ -313,6 +304,20 @@ void TrayPopup::showEvent(QShowEvent *e)
 {
     QWidget::showEvent(e);
     syncShadowPlate();
+}
+
+bool TrayPopup::eventFilter(QObject *watched, QEvent *event)
+{
+    // 与 Panel 同一套：失焦即走。延后一拍再收，并且只在「仍然失焦」时收——
+    // 否则用户刚重新点开托盘，这一条延后的 hide 会把它又收掉。
+    if (event->type() == QEvent::WindowDeactivate && isVisible()) {
+        QTimer::singleShot(0, this, [this] {
+            if (isVisible() && !isActiveWindow()) {
+                hide();
+            }
+        });
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void TrayPopup::resizeEvent(QResizeEvent *e)
@@ -343,7 +348,6 @@ QWidget *TrayPopup::buildSeparator()
 
 QWidget *TrayPopup::buildHead()
 {
-    const Palette &p = Theme::instance().palette();
     auto *head = new QWidget(this);
     auto *hl = new QHBoxLayout(head);
     hl->setContentsMargins(tokens::kS3, 10, tokens::kS3, 10);
@@ -359,11 +363,9 @@ QWidget *TrayPopup::buildHead()
 
     auto *icon = new QLabel(head);
     icon->setFixedSize(tokens::kIconMd, tokens::kIconMd);
-    icon->setPixmap(icons::icon(QStringLiteral("link"), tokens::kIconMd, p.text1).pixmap(tokens::kIconMd, tokens::kIconMd));
 
     auto *title = new QLabel(QStringLiteral("FlowGrid"), head);
     title->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
-    title->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
 
     hl->addWidget(icon);
     hl->addWidget(title);
@@ -379,9 +381,18 @@ QWidget *TrayPopup::buildHead()
     headLatency_->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
     pl->addWidget(dot);
     pl->addWidget(headLatency_);
-    pill->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
-                        .arg(css(p.ok.soft), QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
     hl->addWidget(pill);
+
+    // 头部三处的颜色登记一份重刷：图标、标题、状态胶囊的底色。
+    restylers_.append([icon, title, pill, this] {
+        const Palette &pal = Theme::instance().palette();
+        icon->setPixmap(icons::icon(QStringLiteral("link"), tokens::kIconMd, pal.text1)
+                            .pixmap(tokens::kIconMd, tokens::kIconMd));
+        title->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(pal.text1)));
+        pill->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
+                                .arg(cssColor(pal.ok.soft),
+                                     QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
+    });
 
     // 头部只有「图标 + 标题 + 状态胶囊」，右上角不放别的。
     //
@@ -405,6 +416,30 @@ QWidget *TrayPopup::buildHead()
 //
 // 快捷键提示写进 tooltip：文字行没了，提示不能跟着一起消失（tooltip 里写全，
 // 含修饰键，跟着设置屏的「切换热键」走）。
+QWidget *TrayPopup::buildKbdHint(const QString &key)
+{
+    auto *w = new QWidget(this);
+    auto *hl = new QHBoxLayout(w);
+    hl->setContentsMargins(0, 0, 0, 0);
+    hl->setSpacing(tokens::kS1);
+    // 修饰键名跟着设置屏的「切换热键」走：默认 1=Ctrl，改成 Alt 时这里也显示 Alt。
+    QList<QLabel *> caps;
+    for (const QString &part : {switchModifier(), key}) {
+        auto *cap = new QLabel(part, w);
+        cap->setFont(uiFont(tokens::kFont11));
+        caps.append(cap);
+        hl->addWidget(cap);
+    }
+    hl->addStretch(1);
+    restylers_.append([caps] {
+        const QColor c = Theme::instance().palette().text3;
+        for (QLabel *cap : caps) {
+            cap->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(c)));
+        }
+    });
+    return w;
+}
+
 QWidget *TrayPopup::buildBottomBar()
 {
     auto *bar = new QWidget(this);
@@ -435,10 +470,12 @@ QWidget *TrayPopup::buildGroup(const QString &label, const QList<QWidget *> &row
         auto *lab = new QLabel(label, group);
         lab->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
         lab->setContentsMargins(tokens::kS3, 6, tokens::kS3, 6);
-        // 设计稿 .tray__label：全大写 + 0.04em 字距 + text-3
-        lab->setStyleSheet(
-            QStringLiteral("color:%1;text-transform:uppercase;letter-spacing:0.4px")
-                .arg(css(Theme::instance().palette().text3)));
+        restylers_.append([lab] {
+            // 设计稿 .tray__label：全大写 + 0.04em 字距 + text-3
+            lab->setStyleSheet(
+                QStringLiteral("color:%1;text-transform:uppercase;letter-spacing:0.4px")
+                    .arg(cssColor(Theme::instance().palette().text3)));
+        });
         vl->addWidget(lab);
     }
     for (QWidget *row : rows) {
@@ -474,7 +511,6 @@ QWidget *TrayPopup::buildNavRow(const QString &iconName, const QString &label, Q
 QWidget *TrayPopup::buildCurrentDevice()
 {
     auto *group = buildGroup(tr("当前设备"), {});
-    const Palette &p = Theme::instance().palette();
 
     auto *row = new QWidget(group);
     // 设计稿 ui.css .tray__active：margin 4px 8px / padding 8px 12px /
@@ -493,9 +529,9 @@ QWidget *TrayPopup::buildCurrentDevice()
         // 连同描边一起被丢掉，上面刚补的「当前设备」卡片其实一直没画出来。
         applyBoxStyle(row,
                       QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                          .arg(css(pal.accentLine))
+                          .arg(cssColor(pal.accentLine))
                           .arg(QString::number(tokens::kRadiusCard))
-                          .arg(css(pal.accentSoft)));
+                          .arg(cssColor(pal.accentSoft)));
     };
     connect(&Theme::instance(), &Theme::changed, row, styleActiveRow);
     styleActiveRow();
@@ -504,21 +540,26 @@ QWidget *TrayPopup::buildCurrentDevice()
     deviceIcon_->setFixedSize(tokens::kTrayActiveIconSize, tokens::kTrayActiveIconSize);
     deviceIcon_->setAlignment(Qt::AlignCenter);
     deviceIcon_->setFont(uiFont(tokens::kFont12, QFont::Bold));
-    deviceIcon_->setStyleSheet(QStringLiteral("background:%1;color:%2;border-radius:%3px")
-                                    .arg(css(p.ok.soft), css(p.ok.text))
-                                    .arg(tokens::kRadiusCtl));
 
     auto *col = new QVBoxLayout;
     col->setContentsMargins(0, 0, 0, 0);
     col->setSpacing(2);
     deviceName_ = new QLabel(QStringLiteral("—"), row);
     deviceName_->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
-    deviceName_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
     deviceMeta_ = new QLabel(QStringLiteral("—"), row);
     deviceMeta_->setFont(uiFont(tokens::kFont11));
-    deviceMeta_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
     col->addWidget(deviceName_);
     col->addWidget(deviceMeta_);
+
+    // 「当前设备」那一枚状态方块与设备名 / 副标题的字色，一并跟着主题重刷。
+    restylers_.append([this] {
+        const Palette &pal = Theme::instance().palette();
+        deviceIcon_->setStyleSheet(QStringLiteral("background:%1;color:%2;border-radius:%3px")
+                                        .arg(cssColor(pal.ok.soft), cssColor(pal.ok.text))
+                                        .arg(tokens::kRadiusCtl));
+        deviceName_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(pal.text1)));
+        deviceMeta_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(pal.text3)));
+    });
 
     hl->addWidget(deviceIcon_);
     hl->addLayout(col);
@@ -554,7 +595,10 @@ QWidget *TrayPopup::buildToggleRow(const QString &label, bool on,
     hl->setSpacing(tokens::kS2);
     auto *text = new QLabel(label, row);
     text->setFont(uiFont(tokens::kFont12));
-    text->setStyleSheet(QStringLiteral("color:%1").arg(css(Theme::instance().palette().text1)));
+    restylers_.append([text] {
+        text->setStyleSheet(QStringLiteral("color:%1")
+                                .arg(cssColor(Theme::instance().palette().text1)));
+    });
     hl->addWidget(text);
     hl->addStretch(1);
     auto *toggle = new ToggleSwitch(row);
@@ -569,7 +613,8 @@ QWidget *TrayPopup::buildToggleRow(const QString &label, bool on,
 void TrayPopup::popupAt(const QPoint &anchor)
 {
     // 贴任务栏那一侧不留投影余白，理由与 520px 浮板完全一致（edgeAdjustedMargin）。
-    margin_ = edgeAdjustedMargin(baseMargin_);
+    // 屏按锚点选：多屏时任务栏在哪一侧也是按那块屏算的。
+    margin_ = edgeAdjustedMargin(baseMargin_, screenForAnchor(anchor, this));
     root_->setContentsMargins(margin_.left, margin_.top, margin_.right, margin_.bottom);
     placePopup(this, anchor, margin_);
     animatePopupIn(this);
@@ -599,7 +644,7 @@ void TrayPopup::refresh()
         headLatency_->setText(hasReading ? QStringLiteral("%1ms").arg(ms, 0, 'f', 1)
                                           : QStringLiteral("--"));
         headLatency_->setStyleSheet(QStringLiteral("color:%1").arg(
-            css(Theme::instance().color(Theme::qualityOf(ms, hasReading)).text)));
+            cssColor(Theme::instance().color(Theme::qualityOf(ms, hasReading)).text)));
     }
     if (trayLatency_ != nullptr) {
         trayLatency_->setLatency(ms, hasReading);
@@ -691,7 +736,7 @@ void TrayPopup::refresh()
             // 没有可切换的对端时说清楚，而不是留一行空白让人以为渲染坏了。
             auto *hint = new QLabel(tr("暂无可切换的设备"), this);
             hint->setFont(uiFont(tokens::kFont11));
-            hint->setStyleSheet(QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+            hint->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text3)));
             quickRow_->addWidget(hint);
         }
         quickRow_->addStretch(1);

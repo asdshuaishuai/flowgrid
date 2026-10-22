@@ -47,10 +47,6 @@ public:
     // 丢包率（百分比）。一个包都没收到过返回 -1。
     double lossPercent() const;
 
-Q_SIGNALS:
-    // 每拿到一个新的真实 RTT 就发一次。
-    void measured();
-
 private:
     explicit LinkProbe(QObject *parent = nullptr);
     ~LinkProbe() override;

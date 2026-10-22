@@ -19,30 +19,6 @@ Q_LOGGING_CATEGORY(lcKeymap, "flowgrid.keymap")
 namespace fg {
 namespace {
 
-QString css(const QColor &c)
-{
-    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
-}
-
-// 规则编辑器未接通的动作统一记一条日志，不做成点了没反应的按钮。
-FgButton *unwiredButton(const QString &text, const QString &iconName, const QString &what,
-                        QWidget *parent, bool accent, const std::function<void()> &onClick)
-{
-    auto *btn = new FgButton(text,
-                             accent ? FgButton::Variant::Accent : FgButton::Variant::Secondary,
-                             false, parent);
-    if (!iconName.isEmpty()) {
-        btn->setIcon(iconName);
-    }
-    QObject::connect(btn, &FgButton::clicked, parent, [what, onClick] {
-        qCInfo(lcKeymap) << what << QStringLiteral("尚未接通，规则表仍由 YAML 提供");
-        if (onClick) {
-            onClick();
-        }
-    });
-    return btn;
-}
-
 // 规则表尚未接通（等传输层加载 YAML）：开关照设计稿摆出来，但点了要给出反馈，
 // 不然就和「点了没反应的按钮」是同一类问题——unwiredButton 是这么处理的。
 void unwiredToggle(ToggleSwitch *sw, const QString &what, QObject *ctx)
@@ -69,7 +45,7 @@ QWidget *iconTitle(const QString &iconName, const QString &text, const QColor &i
                         .pixmap(tokens::kIconMd, tokens::kIconMd));
     auto *label = new QLabel(text, w);
     label->setFont(uiFont(tokens::kFont12));
-    label->setStyleSheet(QStringLiteral("color:%1").arg(css(textColor)));
+    label->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(textColor)));
     hl->addWidget(icon);
     hl->addWidget(label);
     return w;
@@ -92,13 +68,14 @@ KeymapPanel::KeymapPanel(QWidget *parent) : Panel(tr("键位映射"), parent)
         countBadge_ = new Badge(QStringLiteral("0 条"), Badge::Variant::Accent);
         auto *hint = new QLabel(tr("按应用自动切换"), row);
         hint->setFont(uiFont(tokens::kFont11));
-        hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        hint->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
 
         hl->addWidget(countBadge_);
         hl->addWidget(hint);
         hl->addStretch(1);
-        hl->addWidget(unwiredButton(tr("新增规则"), QStringLiteral("plus"), tr("新增规则"),
-                                     row, true, [this] { Q_EMIT editRequested(); }));
+        hl->addWidget(unwiredButton(tr("新增规则"), tr("新增规则"), row,
+                                     QStringLiteral("plus"), false, true,
+                                     [this] { Q_EMIT editRequested(); }));
         body->addWidget(row);
     }
 
@@ -214,7 +191,7 @@ QWidget *KeymapPanel::buildFooter()
     icon->setPixmap(icons::icon(QStringLiteral("info"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
     auto *hint = new QLabel(tr("规则按从上到下顺序匹配"), foot);
     hint->setFont(uiFont(tokens::kFont11));
-    hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    hint->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     hl->addWidget(icon);
     hl->addWidget(hint);
     hl->addStretch(1);
@@ -275,7 +252,7 @@ void KeymapPanel::rebuildRows()
         empty->setFont(uiFont(tokens::kFont12));
         empty->setAlignment(Qt::AlignCenter);
         empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
-        empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        empty->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
         mappingLayout_->addWidget(empty);
         return;
     }

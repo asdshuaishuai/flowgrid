@@ -1,6 +1,7 @@
 #include "latencypanel.h"
 #include "core/designtokens.h"
 #include "core/devicemanager.h"
+#include "core/hostinfo.h"
 #include "core/linkprobe.h"
 #include "core/theme.h"
 #include "icons.h"
@@ -22,13 +23,6 @@ Q_LOGGING_CATEGORY(lcLatency, "flowgrid.latency")
 namespace fg {
 namespace {
 
-// 必须带 alpha：柔和底色（ok-soft / accent-soft）就是靠 12%~18% 透明度
-// 叠出来的。用 HexRgb 丢 alpha 会把它们渲染成实色，整个设计稿的浅底全废。
-QString css(const QColor &c)
-{
-    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
-}
-
 } // namespace
 
 LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
@@ -48,7 +42,7 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         pl->addWidget(titleDot_);
         pl->addWidget(titleLatency_);
         pill->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
-                                .arg(css(Theme::instance().palette().ok.soft),
+                                .arg(cssColor(Theme::instance().palette().ok.soft),
                                      QString::number(tokens::pillRadius(tokens::kStatusPillHeight))));
         setTitleBarWidget(pill);
     }
@@ -67,7 +61,7 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         caption->setFont(uiFont(tokens::kFont11, QFont::DemiBold));
         caption->setStyleSheet(
             QStringLiteral("color:%1;text-transform:uppercase;letter-spacing:0.3px")
-                .arg(css(Theme::instance().palette().text3)));
+                .arg(cssColor(Theme::instance().palette().text3)));
         bigValue_ = new QLabel(QStringLiteral("--"), row);
         // 设计稿写死 .t-28 w-bold mono：读数每 2 秒跳一次，不等宽整行会左右抖。
         bigValue_->setFont(uiMonoFont(tokens::kFont28, QFont::Bold));
@@ -80,7 +74,7 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         measureNote_ = new QLabel(row);
         measureNote_->setFont(uiFont(tokens::kFont11));
         measureNote_->setStyleSheet(
-            QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+            QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text3)));
         col->addWidget(measureNote_);
 
         // 设计稿：这一行是 align-items:flex-end——两列**底对齐**。
@@ -92,7 +86,7 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         auto *linkCaption = new QLabel(tr("链路"), row);
         linkCaption->setFont(uiFont(tokens::kFont11));
         linkCaption->setStyleSheet(
-            QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+            QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text3)));
         linkCaption->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
         // 设计稿里链路值是 [wifi 图标] + 名称，整体右对齐
@@ -103,7 +97,7 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         linkLabel_ = new QLabel(QStringLiteral("—"), linkRow);
         linkLabel_->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
         linkLabel_->setStyleSheet(
-            QStringLiteral("color:%1").arg(css(Theme::instance().palette().text1)));
+            QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text1)));
         // mac 端：连上了是 lan，没连上是 wifi，尺寸 16（设计稿 .ic 默认档）、
         // 字色 text1。这里原来固定画一个 12px 的 wifi，跟「链路已通」对不上。
         linkIcon_ = new QLabel(linkRow);
@@ -146,7 +140,7 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         for (QLabel *l : {left, right}) {
             l->setFont(uiFont(tokens::kFont11));
             l->setStyleSheet(
-                QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+                QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text3)));
         }
         al->addWidget(left);
         al->addStretch(1);
@@ -168,7 +162,7 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
         auto *hintText = new QLabel(tr("连接设备后开始采样"), hintBox);
         hintText->setFont(uiFont(tokens::kFont11));
         hintText->setStyleSheet(
-            QStringLiteral("color:%1").arg(css(Theme::instance().palette().text3)));
+            QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text3)));
         hbl->addWidget(hintIcon);
         hbl->addWidget(hintText);
         hbl->addStretch(1);
@@ -198,9 +192,9 @@ LatencyPanel::LatencyPanel(QWidget *parent) : Panel(tr("网络延迟"), parent)
 
         applyBoxStyle(card,
                       QStringLiteral("border:1px solid %1;border-radius:%2px;background:%3")
-                          .arg(css(p.line2))
+                          .arg(cssColor(p.line2))
                           .arg(tokens::kRadiusCard)
-                          .arg(css(p.card)));
+                          .arg(cssColor(p.card)));
         contentLayout_->addWidget(card);
     }
 
@@ -234,10 +228,10 @@ QWidget *LatencyPanel::buildThresholdSection()
         hl->setSpacing(tokens::kS3);
         auto *text = new QLabel(label, row);
         text->setFont(uiFont(tokens::kFont12));
-        text->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
+        text->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
         auto *unitLabel = new QLabel(unit, row);
         unitLabel->setFont(uiFont(tokens::kFont11));
-        unitLabel->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        unitLabel->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
         hl->addWidget(text);
         hl->addStretch(1);
         hl->addWidget(control);
@@ -267,7 +261,7 @@ QWidget *LatencyPanel::buildThresholdSection()
         tr("阈值当前仅作展示：自动切链需要传输层落地后才能生效"), body);
     note->setWordWrap(true);
     note->setFont(uiFont(tokens::kFont11));
-    note->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    note->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     vl->addWidget(note);
 
     auto *section = new Collapsible(tr("告警阈值"), QStringLiteral("settings"), body, badge);
@@ -288,7 +282,7 @@ QWidget *LatencyPanel::buildFooter()
     icon->setPixmap(icons::icon(QStringLiteral("info"), tokens::kIconSm, p.text3).pixmap(tokens::kIconSm, tokens::kIconSm));
     auto *hint = new QLabel(tr("每 2 秒采样一次"), foot);
     hint->setFont(uiFont(tokens::kFont11));
-    hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    hint->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     hl->addWidget(icon);
     hl->addWidget(hint);
     hl->addStretch(1);
@@ -312,6 +306,28 @@ QWidget *LatencyPanel::buildFooter()
         const DeviceManager &m = DeviceManager::instance();
         QTextStream out(&f);
         out << "FlowGrid 延迟诊断 " << QDateTime::currentDateTime().toString(Qt::ISODate) << "\n";
+
+        // 本机环境：不写这几行的话，拿到报告的人不知道这份数据是在哪台机器、
+        // 哪种网络下测的，定位链路问题就无从下手。
+        out << "\n[本机]\n";
+        out << "主机名 " << hostinfo::hostName() << "\n";
+        out << "发行版 " << hostinfo::osLabel() << "\n";
+        out << "内核 " << hostinfo::kernelLabel() << "\n";
+        out << "架构 " << hostinfo::archLabel() << "\n";
+        out << "网卡 " << hostinfo::primaryIface() << " " << hostinfo::primaryIPv4()
+            << " (" << hostinfo::primaryMac() << ")\n";
+        out << "默认网关 " << hostinfo::defaultGateway() << "\n";
+        out << "屏幕 " << hostinfo::screenLabel() << "\n";
+
+        // 探测本身的状态：ping 打的是哪台、收回来几个、丢了几个。
+        const LinkProbe *probe = LinkProbe::instance();
+        out << "\n[探测]\n";
+        out << "目标 " << probe->target() << "\n";
+        out << "可用 " << (probe->available() ? "是" : "否") << "\n";
+        out << "回包 " << probe->received() << " / 丢包 " << probe->lost() << "\n";
+        out << "丢包率 " << QString::number(probe->lossPercent(), 'f', 1) << "%\n";
+
+        out << "\n[设备]\n";
         out << "设备数 " << m.devices().size() << "\n";
         for (const Device &d : m.devices()) {
             out << "  " << d.name << " | " << (d.online ? "在线" : "离线")
@@ -341,7 +357,7 @@ void LatencyPanel::refresh()
         bigValue_->setText(hasReading ? QStringLiteral("%1ms").arg(ms, 0, 'f', 1)
                                       : QStringLiteral("—"));
         bigValue_->setStyleSheet(
-            QStringLiteral("color:%1").arg(css(Theme::instance().color(q).text)));
+            QStringLiteral("color:%1").arg(cssColor(Theme::instance().color(q).text)));
     }
     if (linkLabel_ != nullptr) {
         // mac 端：连上了显示链路名，没连上写「未连接」。
@@ -388,7 +404,7 @@ void LatencyPanel::refresh()
         if (devices.isEmpty()) {
             auto *empty = new QLabel(tr("暂无设备"), this);
             empty->setFont(uiFont(tokens::kFont12));
-            empty->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+            empty->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
             empty->setAlignment(Qt::AlignCenter);
             empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);
             deviceRows_->addWidget(empty);
@@ -422,7 +438,7 @@ void LatencyPanel::refresh()
             // mac 端设备名是 12px 常规字重（不是半粗），字重重一档会显得
             // 比 mac 端更抢眼。
             name->setFont(uiFont(tokens::kFont12));
-            name->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
+            name->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
             tl->addWidget(name);
 
             deviceRows_->addWidget(new ListRow(QString(), hint, lat, this, title));

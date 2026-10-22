@@ -29,29 +29,6 @@ Q_LOGGING_CATEGORY(lcConnections, "flowgrid.connections")
 namespace fg {
 namespace {
 
-// 必须带 alpha：柔和底色（ok-soft / accent-soft）就是靠 12%~18% 透明度
-// 叠出来的。用 HexRgb 丢 alpha 会把它们渲染成实色，整个设计稿的浅底全废。
-QString css(const QColor &c)
-{
-    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
-}
-
-// 「3 分钟前」这类相对时间。设备行的副标题用它说明离线对端上次是什么时候
-// 见到的——mac 那边写的是设备自带的 lastSeen 字符串（同样是这个意思）。
-QString agoText(qint64 secs)
-{
-    if (secs < 60) {
-        return QObject::tr("%1 秒前").arg(secs);
-    }
-    if (secs < 3600) {
-        return QObject::tr("%1 分钟前").arg(secs / 60);
-    }
-    if (secs < 86400) {
-        return QObject::tr("%1 小时前").arg(secs / 3600);
-    }
-    return QObject::tr("%1 天前").arg(secs / 86400);
-}
-
 // 设备行的副标题（对齐 mac ConnectionsView.meta(for:)）。
 //
 // 本机写「本机 · <系统版本>」，在线的对端写「<系统版本> · DirectLink · 已连接」，
@@ -153,7 +130,7 @@ QWidget *ConnectionsPanel::buildCaptureRow()
     vl->setSpacing(tokens::kS2);
     // mac 端这块是 surface2 底 + 1px line2 描边 + 卡片圆角。
     applyBoxStyle(card, QStringLiteral("background:%1;border:1px solid %2;border-radius:%3px")
-                                .arg(css(p.surface2), css(p.line2),
+                                .arg(cssColor(p.surface2), cssColor(p.line2),
                                      QString::number(tokens::kRadiusCard)));
 
     auto *row = new QWidget(card);
@@ -166,10 +143,10 @@ QWidget *ConnectionsPanel::buildCaptureRow()
     textCol->setSpacing(2);
     auto *title = new QLabel(tr("接管对端键鼠"), row);
     title->setFont(uiFont(tokens::kFont12, QFont::DemiBold));
-    title->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text1)));
+    title->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text1)));
     captureHint_ = new QLabel(row);
     captureHint_->setFont(uiFont(tokens::kFont11));
-    captureHint_->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    captureHint_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     textCol->addWidget(title);
     textCol->addWidget(captureHint_);
     hl->addLayout(textCol, 1);
@@ -260,7 +237,7 @@ QWidget *ConnectionsPanel::buildFooter()
                                                                                tokens::kIconSm));
     auto *hint = new QLabel(tr("DirectLink · 帧级 HMAC 校验"), foot);
     hint->setFont(uiFont(tokens::kFont11));
-    hint->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+    hint->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
     hl->addWidget(icon);
     hl->addWidget(hint);
     hl->addStretch(1);
@@ -431,7 +408,7 @@ void ConnectionsPanel::rebuildDeviceCards()
                             .pixmap(tokens::kIconXs, tokens::kIconXs));
         auto *text = new QLabel(tr("连接设备后，对端会出现在这里"), hint);
         text->setFont(uiFont(tokens::kFont11));
-        text->setStyleSheet(QStringLiteral("color:%1").arg(css(p.text3)));
+        text->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
         hl->addWidget(icon);
         hl->addWidget(text);
         hl->addStretch(1);
@@ -453,9 +430,9 @@ void ConnectionsPanel::refresh()
         // ok 底、靠圆点区分状态」，DDE 这里让胶囊跟着状态走，跟同屏其它
         // 状态色（徽章、延迟胶囊）的读法一致。
         const StatusColor sc = connected ? p.ok : p.idle;
-        statusLabel_->setStyleSheet(QStringLiteral("color:%1").arg(css(sc.text)));
+        statusLabel_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(sc.text)));
         statusPill_->setStyleSheet(QStringLiteral("background:%1;border-radius:%2px")
-                                       .arg(css(sc.soft),
+                                       .arg(cssColor(sc.soft),
                                             QString::number(tokens::pillRadius(
                                                 tokens::kStatusPillHeight))));
         statusDot_->setQuality(connected ? Quality::Good : Quality::Idle);

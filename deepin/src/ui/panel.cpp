@@ -22,12 +22,6 @@
 namespace fg {
 namespace {
 
-// 透明色必须带 alpha：ok-soft / accent-soft 这类柔和底色就是靠透明度叠出来的。
-QString colorHex(const QColor &c)
-{
-    return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
-}
-
 QFont titleFont()
 {
     QFont f = baseFont();
@@ -40,9 +34,31 @@ QFont titleFont()
 
 } // namespace
 
-ShellMargin edgeAdjustedMargin(const ShellMargin &base)
+QScreen *screenForAnchor(const QPoint &anchor, const QWidget *near)
 {
-    QScreen *screen = QGuiApplication::primaryScreen();
+    // 锚点优先：托盘图标在哪儿，浮板就该开在那块屏上。
+    if (!anchor.isNull()) {
+        const auto screens = QGuiApplication::screens();
+        for (QScreen *s : screens) {
+            if (s != nullptr && s->geometry().contains(anchor)) {
+                return s;
+            }
+        }
+    }
+    // 锚点拿不到（DDE 的 dock 不给托盘图标几何）：退回控件当前所在屏。
+    if (near != nullptr) {
+        if (QScreen *s = near->screen(); s != nullptr) {
+            return s;
+        }
+    }
+    return QGuiApplication::primaryScreen();
+}
+
+ShellMargin edgeAdjustedMargin(const ShellMargin &base, QScreen *screen)
+{
+    if (screen == nullptr) {
+        screen = QGuiApplication::primaryScreen();
+    }
     if (screen == nullptr) {
         return base;
     }
@@ -69,7 +85,8 @@ bool placePopup(QWidget *w, const QPoint &anchor, const ShellMargin &margin)
     if (w == nullptr) {
         return false;
     }
-    QScreen *screen = QGuiApplication::primaryScreen();
+    // 屏按锚点选：多屏时浮板要开在托盘图标所在那块屏上，不能一律用主屏。
+    QScreen *screen = screenForAnchor(anchor, w);
     if (screen == nullptr) {
         w->show();
         return false;
@@ -172,6 +189,17 @@ Panel::Panel(const QString &title, QWidget *parent) : QWidget(parent)
     setAttribute(Qt::WA_QuitOnClose, false);
     setFocusPolicy(Qt::StrongFocus);
 
+    // 「失焦即走」的兜底要真的挂上。
+    //
+    // eventFilter() 里处理了 WindowDeactivate，可它此前**从来没有被安装过**：
+    // 唯一一条调用路径是键位映射屏把 ghost 格子的过滤器转给 Panel::eventFilter，
+    // 而 WindowDeactivate 是发给窗口本身的、不会发给子控件——于是那条兜底
+    // 实际上不存在，浮板能不能收起全看后端（X11 的 Qt::Popup 会自动关，
+    // Wayland 不会）。
+    //
+    // 装在自己身上：Panel 本身是 Qt::Popup 顶层窗，失活事件正是发给它的。
+    installEventFilter(this);
+
     // 窗口四周的阴影留白。数值见 designtokens.h：按 CSS box-shadow 推，
     // blur 42 的可见扩散约 21px，向下偏移 18px，于是左右上各留 21、下留 39。
     //
@@ -217,7 +245,7 @@ Panel::Panel(const QString &title, QWidget *parent) : QWidget(parent)
         // 不设色的话它继承 QLabel 的 WindowText，比 text1 淡一整档——面板标题
         // 反而不像标题。面板标题是这一屏最重的一档字。
         titleLabel_->setStyleSheet(
-            QStringLiteral("color:%1").arg(colorHex(Theme::instance().palette().text1)));
+            QStringLiteral("color:%1").arg(cssColor(Theme::instance().palette().text1)));
         hl->addWidget(titleLabel_);
         hl->addStretch(1);
         titleRight_ = new QWidget(titleBar_);
@@ -327,7 +355,9 @@ void Panel::popupAt(const QPoint &anchor)
 {
     // 贴任务栏那一侧不留投影余白（理由见 edgeAdjustedMargin）。余白变了，
     // 窗口根布局的边距要跟着改，否则卡片会被挤在窗口里比该在的位置高/低一截。
-    margin_ = edgeAdjustedMargin(baseMargin_);
+    //
+    // 屏按锚点选：多屏时任务栏在哪一侧也是按那块屏算的，用主屏算会取错方向。
+    margin_ = edgeAdjustedMargin(baseMargin_, screenForAnchor(anchor, this));
     root_->setContentsMargins(margin_.left, margin_.top, margin_.right, margin_.bottom);
     placePopup(this, anchor, margin_);
     animatePopupIn(this);
@@ -387,7 +417,16 @@ bool Panel::eventFilter(QObject *watched, QEvent *event)
     // 设计稿：失焦即走。Qt::Popup 本身在多数后端已经会自动关闭，这里兜住
     // Wayland 等不自动关的情况。
     if (event->type() == QEvent::WindowDeactivate && isVisible()) {
-        QTimer::singleShot(0, this, &QWidget::hide);
+        // 延到事件循环之后再收：事件派发途中直接 hide() 会和 Qt 自己的
+        // popup 关闭逻辑打架。
+        //
+        // 延后这一拍也留了「面板刚被重新唤出」的口子——那种情况下它已经又拿到
+        // 焦点了（isActiveWindow() 为真），这时再收就是误伤用户刚点的那个面板。
+        QTimer::singleShot(0, this, [this] {
+            if (isVisible() && !isActiveWindow()) {
+                hide();
+            }
+        });
     }
     return QWidget::eventFilter(watched, event);
 }
@@ -418,7 +457,7 @@ void Panel::restyle()
         plate_->setShadow(pal.shadowPanel, tokens::kShadowPanelR, 0, tokens::kShadowPanelY);
     }
     if (titleLabel_ != nullptr) {
-        titleLabel_->setStyleSheet(QStringLiteral("color:%1").arg(colorHex(pal.text1)));
+        titleLabel_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(pal.text1)));
     }
     if (card_ != nullptr) {
         // 标题栏与页脚都是 **surface-2** 底（设计稿 .titlebar / .panel__foot）：
@@ -437,7 +476,7 @@ void Panel::restyle()
         // 的时候它比视口高），所以那一条每次都被重新铺一遍，旧像素不会留
         // 下来——「残影」就是这么没的。
         content_->setStyleSheet(
-            QStringLiteral("#panelContent{background:%1;}").arg(colorHex(pal.surface)));
+            QStringLiteral("#panelContent{background:%1;}").arg(cssColor(pal.surface)));
     }
     if (scroll_ != nullptr) {
         // 滚动条样式**下在滚动条自己身上**。
@@ -462,7 +501,7 @@ void Panel::restyle()
                            "QScrollBar::add-page:vertical,"
                            "QScrollBar::sub-page:vertical{background:transparent;}")
                 .arg(tokens::kScrollbarWidth)
-                .arg(colorHex(pal.line3))
+                .arg(cssColor(pal.line3))
                 .arg(tokens::pillRadius((tokens::kScrollbarWidth - 4) / 2))
                 .arg((tokens::kScrollbarWidth - 4) / 2));
     }
