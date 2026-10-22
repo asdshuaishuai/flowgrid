@@ -120,24 +120,4 @@ public enum KeyCodeTable {
         default: return nil
         }
     }
-
-    /// 跨平台默认修饰键换算（协议 §6.3）：macOS/iOS 用 Cmd 做主修饰，
-    /// Windows/Linux 用 Ctrl。位掩码由 Go 的 RemapModifiers 换，但修饰键
-    /// 本身也是普通 KEY_DOWN/UP 事件，HID 不一起换就会在目标端按下错误的
-    /// 物理键（mac 的 Cmd 变成 Windows 的 Win，复制粘贴全废）。
-    /// 用户 keymap 规则命中时应优先于这个默认换算。
-    public static func remapModifierKey(_ usage: UInt16, from: FGPlatform, to: FGPlatform) -> UInt16 {
-        guard usesMetaModifier(from) != usesMetaModifier(to) else { return usage }
-        switch usage {
-        case 0xE0: return 0xE3 // LCtrl ↔ LMeta
-        case 0xE3: return 0xE0
-        case 0xE4: return 0xE7 // RCtrl ↔ RMeta
-        case 0xE7: return 0xE4
-        default: return usage
-        }
-    }
-
-    private static func usesMetaModifier(_ platform: FGPlatform) -> Bool {
-        platform == .macOS || platform == .iOS
-    }
 }

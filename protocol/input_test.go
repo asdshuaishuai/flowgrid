@@ -138,3 +138,32 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+func TestRemapCapturedKeyDefault(t *testing.T) {
+	// Non-modifier key: usage unchanged, mask Meta→Ctrl (macOS→Linux).
+	if k, m := RemapCapturedKey(HIDKeyC, ModLeftMeta, PlatformMacOS, PlatformLinux, nil, ""); k != HIDKeyC || m != ModLeftCtrl {
+		t.Errorf("Cmd+C: got 0x%04X/0x%02X, want 0x%04X/0x%02X", k, m, HIDKeyC, ModLeftCtrl)
+	}
+	// Modifier key itself: LMeta→LCtrl (§6.3), mask Meta→Ctrl.
+	if k, m := RemapCapturedKey(HIDKeyLMeta, ModLeftMeta, PlatformMacOS, PlatformLinux, nil, ContextGlobal); k != HIDKeyLCtrl || m != ModLeftCtrl {
+		t.Errorf("LMeta: got 0x%04X/0x%02X, want 0x%04X/0x%02X", k, m, HIDKeyLCtrl, ModLeftCtrl)
+	}
+	// Same platform: no-op.
+	if k, m := RemapCapturedKey(HIDKeyC, ModLeftMeta, PlatformMacOS, PlatformMacOS, nil, ContextGlobal); k != HIDKeyC || m != ModLeftMeta {
+		t.Errorf("same platform: got 0x%04X/0x%02X, want unchanged", k, m)
+	}
+	// Reverse: Linux Ctrl+C → macOS Cmd+C.
+	if k, m := RemapCapturedKey(HIDKeyC, ModLeftCtrl, PlatformLinux, PlatformMacOS, nil, ContextGlobal); k != HIDKeyC || m != ModLeftMeta {
+		t.Errorf("Ctrl+C linux→mac: got 0x%04X/0x%02X, want 0x%04X/0x%02X", k, m, HIDKeyC, ModLeftMeta)
+	}
+}
+
+func TestRemapCapturedKeyRuleOverride(t *testing.T) {
+	table := NewKeyMapTable(&KeyMapFile{Rules: []KeyMapRule{
+		{FromOS: PlatformMacOS, ToOS: PlatformLinux, FromKey: HIDKeyC, ToKey: HIDKeyV, Modifiers: ModLeftCtrl, Context: ContextGlobal},
+	}})
+	// Empty context is treated as ContextGlobal, so the rule matches.
+	if k, m := RemapCapturedKey(HIDKeyC, ModLeftMeta, PlatformMacOS, PlatformLinux, table, ""); k != HIDKeyV || m != ModLeftCtrl {
+		t.Errorf("rule override: got 0x%04X/0x%02X, want 0x%04X/0x%02X", k, m, HIDKeyV, ModLeftCtrl)
+	}
+}

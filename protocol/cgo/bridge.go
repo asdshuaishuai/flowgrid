@@ -571,6 +571,30 @@ func fg_remap_modifiers(mods C.uint8_t, fromPlatform C.uint8_t, toPlatform C.uin
 	return C.uint8_t(result)
 }
 
+//export fg_input_remap_key
+func fg_input_remap_key(hidKey C.uint16_t, modifiers C.uint8_t, fromPlatform C.uint8_t, toPlatform C.uint8_t, tableHandle unsafe.Pointer, context *C.char, outKey *C.uint16_t, outMods *C.uint8_t) C.int {
+	var table *protocol.KeyMapTable
+	if uintptr(tableHandle) != 0 {
+		t, ok := keymapTables.get(uintptr(tableHandle))
+		if !ok {
+			return -1
+		}
+		table = t
+	}
+	ctx := protocol.ContextGlobal
+	if s := goString(context); s != "" {
+		ctx = protocol.KeyMapContext(s)
+	}
+	key, mods := protocol.RemapCapturedKey(
+		uint16(hidKey), uint8(modifiers),
+		protocol.Platform(fromPlatform), protocol.Platform(toPlatform),
+		table, ctx,
+	)
+	*outKey = C.uint16_t(key)
+	*outMods = C.uint8_t(mods)
+	return 0
+}
+
 //export fg_keymap_free
 func fg_keymap_free(handle unsafe.Pointer) {
 	keymapTables.remove(uintptr(handle))

@@ -10,6 +10,18 @@ public enum GoProtocol {
         fg_remap_modifiers(modifiers, from.rawValue, to.rawValue)
     }
 
+    /// 发送侧重映射（协议 §6.3/§11）：把一个捕获的键（HID usage + 修饰掩码）从源
+    /// 平台重映射到目标平台，键码与掩码一起换——先用户 keymap 规则后平台默认
+    /// Ctrl⇄Meta。能力全在协议层（fg_input_remap_key），客户端不再各自实现。
+    /// table 传 nil（句柄 0）走平台默认；context 传 nil 即 global。
+    public static func remapCapturedKey(_ hidKey: UInt16, modifiers: UInt8, from: FGPlatform, to: FGPlatform) -> (key: UInt16, mods: UInt8) {
+        var outKey: UInt16 = 0
+        var outMods: UInt8 = 0
+        let rc = fg_input_remap_key(hidKey, modifiers, from.rawValue, to.rawValue, nil, nil, &outKey, &outMods)
+        guard rc == 0 else { return (hidKey, modifiers) }
+        return (outKey, outMods)
+    }
+
     public static func classifyRSSI(_ rssi: Int) -> FGSignalQuality? {
         let raw = fg_classify_rssi(Int32(rssi))
         return FGSignalQuality(rawValue: Int(raw))

@@ -120,17 +120,16 @@ final class InputCaptureTap {
             guard let rawUsage = KeyCodeTable.hidUsage(forVirtualKey: virtualKey) else {
                 return true // 未知键吞掉，避免本机与对端行为分叉
             }
-            // 修饰键本身也是 KEY_DOWN/UP 事件：位掩码换了平台，键位也得换
-            // （mac 的 Cmd ↔ Windows 的 Ctrl/Win 语义，见 §6.3）。
-            let usage = KeyCodeTable.remapModifierKey(rawUsage, from: .macOS, to: target)
-            let modifiers = GoProtocol.remapModifiers(
-                KeyCodeTable.modifierMask(from: flags), from: .macOS, to: target)
+            // 修饰键本身也是 KEY_DOWN/UP 事件：位掩码换了平台，键位也得换。键码 +
+            // 掩码一起按目标平台重映射，能力全在协议层（fg_input_remap_key，§6.3/§11）。
+            let remapped = GoProtocol.remapCapturedKey(
+                rawUsage, modifiers: KeyCodeTable.modifierMask(from: flags), from: .macOS, to: target)
             if case .keyDown = sample.kind {
-                if let payload = try? GoPayloads.keyDown(keyCode: usage, modifiers: modifiers) {
+                if let payload = try? GoPayloads.keyDown(keyCode: remapped.key, modifiers: remapped.mods) {
                     send?(FGFrameType.keyDown, payload)
                 }
             } else {
-                if let payload = try? GoPayloads.keyUp(keyCode: usage) {
+                if let payload = try? GoPayloads.keyUp(keyCode: remapped.key) {
                     send?(FGFrameType.keyUp, payload)
                 }
             }
@@ -141,9 +140,12 @@ final class InputCaptureTap {
             guard let rawUsage = KeyCodeTable.hidUsage(forVirtualKey: virtualKey) else {
                 return false
             }
-            let usage = KeyCodeTable.remapModifierKey(rawUsage, from: .macOS, to: target)
-            let modifiers = GoProtocol.remapModifiers(
-                KeyCodeTable.modifierMask(from: flags), from: .macOS, to: target)
+            // 键码 + 掩码一起按目标平台重映射（协议层 fg_input_remap_key）；pressed
+            // 判断仍用未换位的 rawUsage（见下）。
+            let remapped = GoProtocol.remapCapturedKey(
+                rawUsage, modifiers: KeyCodeTable.modifierMask(from: flags), from: .macOS, to: target)
+            let usage = remapped.key
+            let modifiers = remapped.mods
             // Caps Lock 是 toggle：每次 flagsChanged 都是一次「按下」，不按
             // 物理键的 down/up 成对发送，目标端会一直停在按下状态。
             if rawUsage == 0x39 {

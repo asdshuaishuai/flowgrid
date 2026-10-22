@@ -46,9 +46,6 @@ type InputEvent struct {
 // It returns an ErrInvalidPayload error for a malformed payload and for a frame
 // type that is not an input frame.
 func DecodeInputFrame(frameType uint8, payload []byte, from, to Platform, table *KeyMapTable, context KeyMapContext) (InputEvent, error) {
-	if context == "" {
-		context = ContextGlobal
-	}
 	ev := InputEvent{Type: frameType, FromPlatform: from, ToPlatform: to}
 	switch frameType {
 	case FrameKeyDown, FrameKeyUp:
@@ -68,7 +65,7 @@ func DecodeInputFrame(frameType uint8, payload []byte, from, to Platform, table 
 			code = ku.KeyCode // KEY_UP carries no modifier mask (§5.3)
 		}
 		ev.OrigKeyCode, ev.OrigModifiers = code, mods
-		rk, rm := remapKey(code, mods, from, to, table, context)
+		rk, rm := RemapCapturedKey(code, mods, from, to, table, context)
 		ev.KeyCode, ev.Modifiers = rk, rm
 		ev.Remapped = rk != code || rm != mods
 	case FrameMouseMove:
@@ -95,19 +92,28 @@ func DecodeInputFrame(frameType uint8, payload []byte, from, to Platform, table 
 	return ev, nil
 }
 
-// remapKey applies an explicit keymap rule (if any) then the platform-default
-// modifier conversion, keeping the key code and modifier mask consistent
-// (§6.3 / §11). from == to is a no-op.
-func remapKey(code uint16, mods uint8, from, to Platform, table *KeyMapTable, context KeyMapContext) (uint16, uint8) {
+// RemapCapturedKey remaps a captured key event (HID Usage ID + modifier mask)
+// from the source platform to the target for transmission. It honors an
+// explicit KeyMapTable rule first (context-scoped, §11.2) then falls back to
+// the platform-default Ctrl↔Meta conversion (RemapModifierKey / RemapModifiers,
+// §6.3). table may be nil (platform default only); from == to is a no-op.
+//
+// This is the send-side counterpart to DecodeInputFrame: capturing clients call
+// it instead of reimplementing §6.3/§11 remap. Mouse/scroll carry no key
+// semantics and need no remap.
+func RemapCapturedKey(hidKey uint16, modifiers uint8, from, to Platform, table *KeyMapTable, context KeyMapContext) (uint16, uint8) {
+	if context == "" {
+		context = ContextGlobal
+	}
 	if from == to {
-		return code, mods
+		return hidKey, modifiers
 	}
 	if table != nil {
-		if rk, rm, ok := table.Lookup(from, to, code, mods, context); ok {
+		if rk, rm, ok := table.Lookup(from, to, hidKey, modifiers, context); ok {
 			return rk, rm
 		}
 	}
-	return RemapModifierKey(code, from, to), RemapModifiers(mods, from, to)
+	return RemapModifierKey(hidKey, from, to), RemapModifiers(modifiers, from, to)
 }
 
 // Describe renders a short human-readable summary for logs / UI.

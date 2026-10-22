@@ -9,19 +9,28 @@ import FlowGridGo
 @Suite
 struct InputMappingTests {
 
-    @Test func remapModifierKeyAcrossPlatforms() {
-        // mac -> Windows/Linux：Cmd 必须变 Ctrl，否则复制粘贴全废。
-        #expect(KeyCodeTable.remapModifierKey(0xE3, from: .macOS, to: .windows) == 0xE0)
-        #expect(KeyCodeTable.remapModifierKey(0xE7, from: .macOS, to: .linux) == 0xE4)
-        // Windows/Linux -> mac：Ctrl 必须变 Cmd。
-        #expect(KeyCodeTable.remapModifierKey(0xE0, from: .windows, to: .macOS) == 0xE3)
-        #expect(KeyCodeTable.remapModifierKey(0xE4, from: .linux, to: .macOS) == 0xE7)
-        // 非 Ctrl/Meta 的修饰键与普通键不动。
-        #expect(KeyCodeTable.remapModifierKey(0xE1, from: .windows, to: .macOS) == 0xE1)
-        #expect(KeyCodeTable.remapModifierKey(0x04, from: .windows, to: .macOS) == 0x04)
-        // 同为 Ctrl 系或同为 Meta 系：不换。
-        #expect(KeyCodeTable.remapModifierKey(0xE0, from: .windows, to: .linux) == 0xE0)
-        #expect(KeyCodeTable.remapModifierKey(0xE0, from: .macOS, to: .iOS) == 0xE0)
+    @Test func remapCapturedKeyAcrossPlatforms() {
+        // 键码 + 掩码一起按目标平台重映射，能力在协议层（fg_input_remap_key → RemapCapturedKey）。
+        // mac -> Linux：Cmd+C 必须变 Ctrl+C，否则复制粘贴全废。
+        let cc = GoProtocol.remapCapturedKey(0x06, modifiers: FGModifier.leftMeta, from: .macOS, to: .linux)
+        #expect(cc.key == 0x06)
+        #expect(cc.mods == FGModifier.leftCtrl)
+        // 修饰键本身也是 KEY_DOWN：LMeta -> LCtrl，掩码 Meta -> Ctrl。
+        let meta = GoProtocol.remapCapturedKey(0xE3, modifiers: FGModifier.leftMeta, from: .macOS, to: .linux)
+        #expect(meta.key == 0xE0)
+        #expect(meta.mods == FGModifier.leftCtrl)
+        // Linux -> mac：Ctrl+C 必须变 Cmd+C。
+        let back = GoProtocol.remapCapturedKey(0x06, modifiers: FGModifier.leftCtrl, from: .linux, to: .macOS)
+        #expect(back.key == 0x06)
+        #expect(back.mods == FGModifier.leftMeta)
+        // 非 Ctrl/Meta 的修饰键与普通键不动；Shift/Alt 掩码直通。
+        let shift = GoProtocol.remapCapturedKey(0x04, modifiers: FGModifier.leftShift, from: .windows, to: .macOS)
+        #expect(shift.key == 0x04)
+        #expect(shift.mods == FGModifier.leftShift)
+        // 同为 Ctrl 系（Windows↔Linux）：不换。
+        let same = GoProtocol.remapCapturedKey(0xE0, modifiers: FGModifier.leftCtrl, from: .windows, to: .linux)
+        #expect(same.key == 0xE0)
+        #expect(same.mods == FGModifier.leftCtrl)
     }
 
     @Test func modifierGroups() {
