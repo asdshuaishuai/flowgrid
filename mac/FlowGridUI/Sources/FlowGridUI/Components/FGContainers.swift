@@ -85,28 +85,6 @@ public struct FGSection<Content: View>: View {
     }
 }
 
-// MARK: - 列表（radius 10 卡片；行 10/12 + 底部 hairline；分组标题）
-
-public struct FGList<Content: View>: View {
-    private let content: Content
-
-    public init(@ViewBuilder content: () -> Content) {
-        self.content = content()
-    }
-
-    public var body: some View {
-        VStack(spacing: 0) {
-            content
-        }
-        .background(FGColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: FGRadius.card, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: FGRadius.card, style: .continuous)
-                .strokeBorder(FGColor.line2, lineWidth: 1)
-        )
-    }
-}
-
 public struct FGListRow<Trailing: View>: View {
     private let label: String
     private let hint: String?
