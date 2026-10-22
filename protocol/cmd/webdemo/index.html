@@ -47,14 +47,15 @@
   <h1>FlowGrid 协议层 Demo</h1>
   <p>设备发现走真实 UDP 组播，但「发现协议」全在 <code>protocol</code> ／ lanid.go
      （ECDSA 身份 / 签名通告 / 验签聚合 / 信任链）；demo 只额外加一个 ~30 行 UDP 字节泵，
-     不含 HAL（输入注入）、GUI。同网段跑两个实例即可互相发现、握手。</p>
+     不含 HAL（输入注入）、GUI。换一台机器跑另一个实例即可互相发现、握手；
+     <b>同一台机器上的另一个实例默认不算「周围设备」</b>（源 IP 就是本机地址）。</p>
 </header>
 <main>
   <section class="card">
     <h2>① 设备发现 <span class="tag" id="disc-live">● 组播监听中</span></h2>
-    <p class="sub">IntelligentLink 私有链：本节点 ECDSA 身份 + 签名组播通告；同网段同协议设备自动出现（验签通过 + 指纹 + 握手）。</p>
+    <p class="sub">IntelligentLink 私有链：本节点 ECDSA 身份 + 签名组播通告；局域网另一台机器上的同协议设备自动出现（验签通过 + 指纹 + 握手）。</p>
     <pre id="identity-out">本节点身份加载中…</pre>
-    <pre id="peers-out">扫描局域网同协议设备中…（同网段再跑一个 demo 实例即可出现）</pre>
+    <pre id="peers-out">扫描周围同协议设备中…（同机另一实例默认不计）</pre>
     <ul class="steps" id="discover-events"></ul>
   </section>
 
@@ -107,12 +108,15 @@ async function refreshDiscovery() {
   let id;
   try { id = await getJSON("/api/identity"); } catch (e) { return; }
   show("identity-out",
-    `本节点：${id.name}\n平台：${id.platform}\n指纹：${id.fingerprint}\n组播：${id.group}:${id.port}\n信任链记录：${id.trustCount} 条`);
+    `本节点：${id.name}\n平台：${id.platform}\n指纹：${id.fingerprint}\n组播：${id.group}:${id.port}\n信任链记录：${id.trustCount} 条\n本机实例：${id.allowLocal ? "计入周围设备" : "不计入周围设备"}`);
   showSteps("discover-events", (id.events || []).slice(-6).reverse());
 
   const d = await getJSON("/api/peers");
+  const excluded = d.filteredLocal || 0;
   if (!d.peers || d.peers.length === 0) {
-    show("peers-out", "尚未发现同协议设备…（同网段再跑一个 demo 实例即可自动出现）");
+    let out = "尚未发现周围的同协议设备…（换一台机器再跑一个 demo 实例即可自动出现）";
+    if (excluded > 0) out += `\n已排除本机上的 ${excluded} 个 FlowGrid 实例（同机不算周围设备）`;
+    show("peers-out", out);
   } else {
     let out = `发现 ${d.peers.length} 台同协议设备：`;
     for (const p of d.peers) {
@@ -120,6 +124,7 @@ async function refreshDiscovery() {
       out += `\n   指纹 ${p.fingerprint}`;
       out += `\n   caps ${p.caps} · 首见 ${p.firstSeen} · 握手 ${p.handshake ? "已发起 ✔" : "待"}`;
     }
+    if (excluded > 0) out += `\n\n（已排除本机上的 ${excluded} 个 FlowGrid 实例：同机不算周围设备）`;
     show("peers-out", out);
   }
 }

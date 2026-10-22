@@ -31,6 +31,12 @@ var indexHTML embed.FS
 // demoHMACKey 仅用于演示帧的 HMAC 完整性（§8.3），非真实会话密钥。
 var demoHMACKey = []byte("flowgrid-webdemo-hmac-key-32b!")
 
+// allowLocalPeers 决定「扫描周围设备」要不要把本机上的另一个 FlowGrid 实例
+// 也算进来。默认不算：demo 与 DDE 客户端同机运行时，两边都往同一个组播端口
+// 发通告，demo 会把「自己这台机器」列进周围设备——用户看到的就是扫到了自己。
+// 置 1 可在同机联调（同机跑两个实例互相发现），代价正是上面这个问题。
+var allowLocalPeers = os.Getenv("FLOWGRID_DEMO_ALLOW_LOCAL") == "1"
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -99,6 +105,14 @@ type discNode struct {
 	mu        sync.Mutex
 	connected map[string]bool // 对端 fingerprint → 已发起 identify 握手
 	events    []string        // 发现/握手事件流水（供前端展示）
+
+	// 本机接口地址集合（判「同机另一实例」用），带 TTL 缓存。
+	ipMu    sync.Mutex
+	ipCache map[string]bool
+	ipAt    time.Time
+
+	// 已记过「同机实例」的指纹：每 2s 一条通告，不去重的话事件流水会被刷爆。
+	skippedLocal map[string]bool
 }
 
 var node *discNode
@@ -143,9 +157,15 @@ func startDiscovery() {
 		selfPlatform:    platform,
 		selfFingerprint: fp,
 		connected:       map[string]bool{},
+		skippedLocal:    map[string]bool{},
 	}
 	node.addEvent(fmt.Sprintf("本节点就绪：%s [%s] 指纹 %s（组播 %s:%d，每 %s 通告）",
 		name, platform, node.selfFingerprint, protocol.LanIDGroup, protocol.LanIDPort, protocol.LanIDAnnouncePeriod))
+	if allowLocalPeers {
+		node.addEvent("同机实例计入周围设备（FLOWGRID_DEMO_ALLOW_LOCAL=1）")
+	} else {
+		node.addEvent("周围设备不含本机：同机另一实例的通告按源 IP 排除")
+	}
 	log.Printf("discovery: %s [%s] 指纹 %s @ %s:%d", name, platform, node.selfFingerprint, protocol.LanIDGroup, protocol.LanIDPort)
 	go radioLoop()
 }
@@ -157,6 +177,62 @@ func (n *discNode) addEvent(s string) {
 		n.events = n.events[len(n.events)-50:]
 	}
 	n.mu.Unlock()
+}
+
+// localIPs 返回本机所有接口的单播地址（含回环）。
+//
+// 带 5s 缓存：DHCP 续租换了 IP 后判定要跟上，不能只在启动时算一次；而每次
+// 通告都去遍历接口也没必要。
+func (n *discNode) localIPs() map[string]bool {
+	n.ipMu.Lock()
+	defer n.ipMu.Unlock()
+	if n.ipCache != nil && time.Since(n.ipAt) < 5*time.Second {
+		return n.ipCache
+	}
+	ips := map[string]bool{"127.0.0.1": true, "::1": true}
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, ifi := range ifaces {
+			addrs, err := ifi.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, a := range addrs {
+				if ipn, ok := a.(*net.IPNet); ok && ipn.IP != nil {
+					ips[ipn.IP.String()] = true
+				}
+			}
+		}
+	}
+	n.ipCache, n.ipAt = ips, time.Now()
+	return ips
+}
+
+// isLocalPeer 判断对端是不是「本机上的另一个 FlowGrid 实例」。
+//
+// 判定依据是通告的来源 IP（LanIDPeer.Addr）落在本机接口地址里：组播是全网段
+// 广播的，同机实例和真正在局域网另一台机器上的对端，在协议层看不出差别，
+// 只有源 IP 能区分。
+func (n *discNode) isLocalPeer(p protocol.LanIDPeer) bool {
+	if p.Addr == nil {
+		return false
+	}
+	return n.localIPs()[p.Addr.String()]
+}
+
+// noteLocalPeer 在事件流水里记一笔「同机实例已排除」。
+//
+// 要留痕：用户看到某台机器没进列表，应该知道是被同机规则排掉了，而不是凭空
+// 消失。每台只记一次——通告每 2s 一条，不去重的话流水会被同一条刷爆。
+func (n *discNode) noteLocalPeer(p protocol.LanIDPeer) {
+	n.mu.Lock()
+	if n.skippedLocal[p.Fingerprint] {
+		n.mu.Unlock()
+		return
+	}
+	n.skippedLocal[p.Fingerprint] = true
+	n.mu.Unlock()
+	n.addEvent(fmt.Sprintf("已排除同机实例 %s（源 IP %s 即本机地址，不属于「周围设备」；"+
+		"同机联调设 FLOWGRID_DEMO_ALLOW_LOCAL=1 重启）", p.Name, p.Addr))
 }
 
 // radioLoop 是唯一的「radio adapter」：一个 UDP 组播 socket，把 lanid.go 的
@@ -218,6 +294,10 @@ func radioLoop() {
 			if p.Fingerprint == node.selfFingerprint {
 				continue // 组播回环：收到自己的通告
 			}
+			if !allowLocalPeers && node.isLocalPeer(p) {
+				node.noteLocalPeer(p)
+				continue // 同机另一实例：不算「周围设备」
+			}
 			node.onPeerDiscovered(p)
 		}
 	}
@@ -263,6 +343,7 @@ func handleIdentity(w http.ResponseWriter, r *http.Request) {
 		"group":       protocol.LanIDGroup,
 		"port":        protocol.LanIDPort,
 		"trustCount":  len(node.trust.Records()),
+		"allowLocal":  allowLocalPeers,
 		"events":      events,
 	})
 }
@@ -275,12 +356,22 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 	}
 	node.mu.Lock()
 	events := append([]string(nil), node.events...)
-	connected := node.connected
+	// 复制一份再解锁：直接持有 map 引用的话，后台 onPeerDiscovered 写 map 与
+	// 这里读 map 并发，Go 的 map 并发读写会直接 panic。
+	connected := make(map[string]bool, len(node.connected))
+	for k, v := range node.connected {
+		connected[k] = v
+	}
 	node.mu.Unlock()
 
 	out := []map[string]any{}
+	filteredLocal := 0
 	for _, p := range node.listener.Peers() {
 		if p.Fingerprint == node.selfFingerprint {
+			continue
+		}
+		if !allowLocalPeers && node.isLocalPeer(p) {
+			filteredLocal++
 			continue
 		}
 		out = append(out, map[string]any{
@@ -294,7 +385,7 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 			"handshake":   connected[p.Fingerprint],
 		})
 	}
-	writeJSON(w, map[string]any{"peers": out, "events": events})
+	writeJSON(w, map[string]any{"peers": out, "events": events, "filteredLocal": filteredLocal})
 }
 
 // ── ② 链接：identify 握手（§4.2）+ 链路规划（PlanLinks）───────────────────
