@@ -123,7 +123,9 @@ func startDiscovery() {
 		return
 	}
 	host, _ := os.Hostname()
-	name := host + " (webdemo)"
+	fp := protocol.PublicKeyFingerprintFromBytes(protocol.IdentityPublicKeyBytes(ident))
+	// 名字带指纹短码：同主机跑多个实例时可区分，且一眼看出哪个不是自己
+	name := fmt.Sprintf("%s · %s", host, fp[:8])
 	platform := platformFromGOOS()
 	caps := protocol.CapIntelligentLink | protocol.CapDirectLink | protocol.CapDTLS13 |
 		protocol.CapClipboard | protocol.CapFileTransfer
@@ -139,7 +141,7 @@ func startDiscovery() {
 		trust:           protocol.NewTrustChain(ident),
 		selfName:        name,
 		selfPlatform:    platform,
-		selfFingerprint: protocol.PublicKeyFingerprintFromBytes(protocol.IdentityPublicKeyBytes(ident)),
+		selfFingerprint: fp,
 		connected:       map[string]bool{},
 	}
 	node.addEvent(fmt.Sprintf("本节点就绪：%s [%s] 指纹 %s（组播 %s:%d，每 %s 通告）",
@@ -191,6 +193,16 @@ func radioLoop() {
 				_, _ = sendConn.Write(wire)
 			}
 			<-t.C
+		}
+	}()
+
+	// 周期清理失联对端：超过 3 个通告周期没再见到的 peer 移除（死实例不留幽灵）
+	go func() {
+		t := time.NewTicker(protocol.LanIDAnnouncePeriod)
+		defer t.Stop()
+		for {
+			<-t.C
+			node.listener.Prune(3 * protocol.LanIDAnnouncePeriod)
 		}
 	}()
 
