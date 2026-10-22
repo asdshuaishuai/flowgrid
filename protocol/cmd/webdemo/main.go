@@ -57,7 +57,6 @@ func main() {
 	http.HandleFunc("/api/connect", handleConnect)
 	http.HandleFunc("/api/invites", handleInvites)
 	http.HandleFunc("/api/respond", handleRespond)
-	http.HandleFunc("/api/link", handleLink)
 	http.HandleFunc("/api/clipboard", handleClipboard)
 	http.HandleFunc("/api/command", handleCommand)
 	fmt.Printf("FlowGrid 协议层 web demo → http://localhost:%s（连接通道 TCP :%d，组播 %s:%d）\n",
@@ -680,73 +679,7 @@ func handleRespond(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
 }
 
-// ── ② 链接：identify 握手（§4.2）+ 链路规划（PlanLinks）───────────────────
-
-func handleLink(w http.ResponseWriter, r *http.Request) {
-	steps := []string{}
-
-	// A（Mac）→ B：IDENTIFY 载荷，打成帧上链，B 解帧 + 反序列化 + 校验
-	aID := &protocol.IdentifyPayload{
-		Version: protocol.ProtocolVersion, Platform: protocol.PlatformMacOS, Role: protocol.RoleBoth,
-		Caps: protocol.CapIntelligentLink | protocol.CapDirectLink | protocol.CapDTLS13 | protocol.CapClipboard,
-		SeqInit: 0x1A2B3C4D, Name: "Kelthas的Mac mini",
-	}
-	if err := aID.Validate(); err != nil {
-		fail(w, err)
-		return
-	}
-	idWire := encodeFrame(protocol.FrameIdentify, 1, aID.Marshal())
-	steps = append(steps, fmt.Sprintf("Mac → Linux IDENTIFY 帧 %d B（含 8B HMAC）", len(idWire)))
-	idDecoded, _, err := protocol.DecodeFrameBytesWithHMAC(idWire, demoHMACKey)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	bGotID, err := protocol.UnmarshalIdentify(idDecoded.Payload)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	steps = append(steps, fmt.Sprintf("Linux 校验通过：version=%d platform=%s role=%d name=%q",
-		bGotID.Version, bGotID.Platform, bGotID.Role, bGotID.Name))
-
-	// B（Linux）→ A：IDENTIFY_RESPONSE（status 0x00 接受）
-	bResp := &protocol.IdentifyResponsePayload{
-		Status: 0x00, Platform: protocol.PlatformLinux,
-		Caps: protocol.CapIntelligentLink | protocol.CapDirectLink | protocol.CapDTLS13 | protocol.CapClipboard,
-		Name: "deepin 工作站",
-	}
-	respWire := encodeFrame(protocol.FrameIdentifyRes, 2, bResp.Marshal())
-	respDecoded, _, err := protocol.DecodeFrameBytesWithHMAC(respWire, demoHMACKey)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	aGotResp, err := protocol.UnmarshalIdentifyResponse(respDecoded.Payload)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	steps = append(steps, fmt.Sprintf("Mac 收到 IDENTIFY_RESPONSE：status=%d（0=接受）platform=%s name=%q",
-		aGotResp.Status, aGotResp.Platform, aGotResp.Name))
-
-	// 链路规划：智能连接优先，且两种对端都可见
-	plan := protocol.PlanLinks(protocol.PreferredIntelligentFirst, 1, 1, false)
-	order := []string{}
-	for _, m := range plan.Order {
-		order = append(order, m.String())
-	}
-	steps = append(steps, "PlanLinks(智能优先, mdns=1, lan=1) → 连接计划 "+fmt.Sprint(order))
-
-	writeJSON(w, map[string]any{
-		"steps":    steps,
-		"accepted": aGotResp.Status == 0x00,
-		"peer":     map[string]any{"name": bGotID.Name, "platform": bGotID.Platform.String(), "caps": fmt.Sprintf("0x%02x", uint8(bGotID.Caps))},
-		"linkPlan": map[string]any{"order": order, "exhausted": plan.Exhausted},
-	})
-}
-
-// ── ③ 剪切板：两个 ClipboardSession 经真实帧往返（§5.3）─────────────────
+// ── ② 剪切板：两个 ClipboardSession 经真实帧往返（§5.3）─────────────────
 
 func handleClipboard(w http.ResponseWriter, r *http.Request) {
 	text := r.URL.Query().Get("text")
@@ -795,7 +728,7 @@ func handleClipboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
-// ── ④ 命令识别：键鼠 payload 编解码往返 + 跨平台键位重映射 ────────────────
+// ── ③ 命令识别：键鼠 payload 编解码往返 + 跨平台键位重映射 ────────────────
 
 func handleCommand(w http.ResponseWriter, r *http.Request) {
 	cmd := r.URL.Query().Get("cmd")
