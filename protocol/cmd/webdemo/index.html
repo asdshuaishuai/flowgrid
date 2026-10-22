@@ -84,7 +84,7 @@
 
   <section class="card">
     <h2>② 剪切板</h2>
-    <p class="sub">两个 ClipboardSession 经真实帧往返（§5.3 分段 / 重组）。</p>
+    <p class="sub">经已建立连接把剪贴板发给对端（§5.3 分段 / 重组）；对端事件流水会显示收到的内容。</p>
     <div class="row">
       <input id="clip-text" type="text" value="Hello from FlowGrid 协议层 🚀">
       <button onclick="runClipboard()">发送</button>
@@ -94,7 +94,7 @@
 
   <section class="card">
     <h2>③ 命令识别</h2>
-    <p class="sub">键鼠 payload 编解码往返 + 跨平台键位重映射（Cmd → Ctrl）。</p>
+    <p class="sub">键鼠命令经连接发给对端；识别 + 跨平台重映射（Cmd → Ctrl）由协议层 DecodeInputFrame 完成，对端事件流水可见。</p>
     <div class="row">
       <button class="ghost" onclick="runCommand('cmd+c')">Cmd+C</button>
       <button class="ghost" onclick="runCommand('move')">鼠标移动</button>
@@ -194,17 +194,18 @@ setInterval(refreshDiscovery, 2000);
 async function runClipboard() {
   const text = encodeURIComponent(document.getElementById("clip-text").value);
   const d = await getJSON("/api/clipboard?text=" + text);
-  let out = `发送：${d.sent}\n帧数：${d.frameCount}\n线上字节（前两帧 HEX）：\n${(d.wireSamples||[]).join("\n")}\n\n对端重组：`;
-  if (d.received) out += `\n  mime = ${d.received.mime}\n  data = ${d.received.data}\n  一致 = ${d.match}`;
-  else out += "\n  " + (d.error || "失败");
-  show("clip-out", out);
+  if (d.error) { show("clip-out", "⚠️ " + d.error); return; }
+  show("clip-out",
+    `发送内容：${d.sent}\n发送到对端：${d.to}\n帧数：${d.frameCount}\n\n${d.note || ""}`);
 }
 
 async function runCommand(cmd) {
   const d = await getJSON("/api/command?cmd=" + cmd);
-  let out = `命令：${d.desc}\n线上帧（${d.wireLen} B，含 8B HMAC）：\n  ${d.wireHex}\n\n对端识别：\n`;
-  for (const [k, v] of Object.entries(d.recognized)) out += `  ${k} = ${v}\n`;
-  out += `\n跨平台重映射：\n  ${d.remap["修饰掩码"]}\n  ${d.remap["修饰键码"]}`;
+  let out = `命令：${d.desc}\n线上帧（${d.wireLen} B，含 8B HMAC）：\n  ${d.wireHex}\n\n本机识别（协议层 DecodeInputFrame）：\n`;
+  for (const [k, v] of Object.entries(d.recognized || {})) out += `  ${k} = ${v}\n`;
+  out += `\n跨平台重映射：\n  ${d.remap["修饰掩码"]}\n  ${d.remap["修饰键码"]}\n`;
+  if (d.error) out += `\n⚠️ ${d.error}`;
+  else out += `\n✔ 已发送到 ${d.to}；${d.note || ""}`;
   show("cmd-out", out);
 }
 </script>

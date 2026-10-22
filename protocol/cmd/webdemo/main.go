@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/flowgrid/protocol"
@@ -157,9 +158,48 @@ func (n *discNode) identifyResponseFrame(status uint8) []byte {
 type invite struct {
 	fromName string
 	fromFp   string
+	fromPlat protocol.Platform
 	fromAddr string
 	conn     net.Conn
 	at       time.Time
+}
+
+// demoseq 给经连接发出的帧一个自增 seq（demo 读取侧不跑 SequenceTracker，仅求线上真实）。
+var demoseq atomic.Uint32
+
+// sendFrame 把一帧编码（含 HMAC）+ 长度前缀写到连接。
+func sendFrame(conn net.Conn, ft uint8, payload []byte) error {
+	wire := encodeFrame(ft, uint16(demoseq.Add(1)), payload)
+	if wire == nil {
+		return fmt.Errorf("encode frame 0x%02x failed", ft)
+	}
+	return writeFrame(conn, wire)
+}
+
+// link 是一条握手后保留的持久连接：剪贴板/命令都经它收发。
+type link struct {
+	conn     net.Conn
+	fp       string
+	name     string
+	peerPlat protocol.Platform
+	clip     *protocol.ClipboardSession
+	sent     atomic.Int64 // 经本连接发出的帧数（发送接缝里自增）
+}
+
+// newLink 建一条持久连接：剪贴板会话的发送接缝写到对端 conn；重组完成回调记入事件流水。
+func (n *discNode) newLink(conn net.Conn, fp, name string, peerPlat protocol.Platform) *link {
+	l := &link{conn: conn, fp: fp, name: name, peerPlat: peerPlat}
+	l.clip = protocol.NewClipboardSession(func(ft uint8, payload []byte) error {
+		if err := sendFrame(conn, ft, payload); err != nil {
+			return err
+		}
+		l.sent.Add(1)
+		return nil
+	})
+	l.clip.OnClipboard = func(c protocol.Clipboard) {
+		n.addEvent(fmt.Sprintf("📋 收到来自 %s 的剪贴板（%s，%d B）：%s", name, c.MIMEType, len(c.Data), string(c.Data)))
+	}
+	return l
 }
 
 // discNode 是本节点在私有链上的身份与发现状态。发现「协议」全在 protocol 包
@@ -179,6 +219,7 @@ type discNode struct {
 	connected map[string]bool    // 对端 fingerprint → 已建立连接
 	connState map[string]string  // 对端 fingerprint → connecting/connected/rejected/failed
 	invites   map[string]*invite // 收到的待接受连接邀请（key = 对端 name，含指纹短码故唯一）
+	links     map[string]*link   // 对端 fingerprint → 已建立的持久连接（剪贴板/命令通道）
 	events    []string           // 发现/连接事件流水（供前端展示）
 
 	// 本机接口地址集合（判「同机另一实例」用），带 TTL 缓存。
@@ -236,6 +277,7 @@ func startDiscovery(tcpPort int) {
 		connected:       map[string]bool{},
 		connState:       map[string]string{},
 		invites:         map[string]*invite{},
+		links:           map[string]*link{},
 		skippedLocal:    map[string]bool{},
 	}
 	node.addEvent(fmt.Sprintf("本节点就绪：%s [%s] 指纹 %s（组播 %s:%d，连接通道 TCP :%d，每 %s 通告）",
@@ -434,6 +476,7 @@ func handleInbound(conn net.Conn) {
 	inv := &invite{
 		fromName: id.Name,
 		fromFp:   node.matchPeerFingerprintByName(id.Name),
+		fromPlat: node.peerPlatformByName(id.Name),
 		fromAddr: conn.RemoteAddr().String(),
 		conn:     conn,
 		at:       time.Now(),
@@ -492,12 +535,11 @@ func (n *discNode) connectTo(fp string) error {
 	n.addEvent(fmt.Sprintf("→ 已向 %s 发起连接（TCP %s:%d），等待对端接受…", target.Name, target.Addr, target.Port))
 
 	go func() {
-		defer conn.Close()
-		// 等对端「接受/拒绝」要留足人类反应时间（切到对端页面再点），给 5 分钟；
-		// 超时只是放弃等待并关闭本条 conn，对端若稍后接受会写失败、不会误标已连接。
+		// 等对端「接受/拒绝」要留足人类反应时间（切到对端页面再点），给 5 分钟。
 		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 		wire, err := readFrame(conn)
 		if err != nil {
+			conn.Close()
 			n.mu.Lock()
 			n.connState[fp] = "failed"
 			n.mu.Unlock()
@@ -506,6 +548,7 @@ func (n *discNode) connectTo(fp string) error {
 		}
 		frame, _, err := protocol.DecodeFrameBytesWithHMAC(wire, demoHMACKey)
 		if err != nil || frame.Header.FrameType != protocol.FrameIdentifyRes {
+			conn.Close()
 			n.mu.Lock()
 			n.connState[fp] = "failed"
 			n.mu.Unlock()
@@ -514,24 +557,30 @@ func (n *discNode) connectTo(fp string) error {
 		}
 		resp, err := protocol.UnmarshalIdentifyResponse(frame.Payload)
 		if err != nil {
+			conn.Close()
 			n.mu.Lock()
 			n.connState[fp] = "failed"
 			n.mu.Unlock()
 			return
 		}
-		n.mu.Lock()
-		if resp.Status == 0 {
-			n.connState[fp] = "connected"
-			n.connected[fp] = true
-		} else {
+		if resp.Status != 0 {
+			conn.Close()
+			n.mu.Lock()
 			n.connState[fp] = "rejected"
-		}
-		n.mu.Unlock()
-		if resp.Status == 0 {
-			n.addEvent(fmt.Sprintf("✔ %s 已接受，连接建立（对端 %s）", target.Name, resp.Name))
-		} else {
+			n.mu.Unlock()
 			n.addEvent(fmt.Sprintf("✗ %s 拒绝了连接请求", target.Name))
+			return
 		}
+		// 接受：保留 conn 作持久连接，注册 link 并起读取循环（剪贴板/命令通道）。
+		_ = conn.SetReadDeadline(time.Time{})
+		l := n.newLink(conn, fp, target.Name, target.Platform)
+		n.mu.Lock()
+		n.connState[fp] = "connected"
+		n.connected[fp] = true
+		n.links[fp] = l
+		n.mu.Unlock()
+		n.addEvent(fmt.Sprintf("✔ %s 已接受，连接建立（对端 %s）；可发剪贴板/命令", target.Name, resp.Name))
+		go n.readLoop(l)
 	}()
 	return nil
 }
@@ -552,19 +601,96 @@ func (n *discNode) respondInvite(name string, accept bool) error {
 		status = 0x01
 	}
 	err := writeFrame(inv.conn, n.identifyResponseFrame(status))
-	inv.conn.Close()
-	if accept {
-		if err == nil && inv.fromFp != "" {
-			n.mu.Lock()
-			n.connected[inv.fromFp] = true
-			n.connState[inv.fromFp] = "connected"
-			n.mu.Unlock()
-		}
-		n.addEvent(fmt.Sprintf("✔ 已接受 %s 的连接", name))
-	} else {
+	if !accept {
+		inv.conn.Close()
 		n.addEvent(fmt.Sprintf("✗ 已拒绝 %s 的连接", name))
+		return err
 	}
+	// 接受：保留 conn 作持久连接，注册 link 并起读取循环（剪贴板/命令通道）。
+	_ = inv.conn.SetReadDeadline(time.Time{})
+	fp := inv.fromFp
+	l := n.newLink(inv.conn, fp, name, inv.fromPlat)
+	n.mu.Lock()
+	if fp != "" {
+		n.connected[fp] = true
+		n.connState[fp] = "connected"
+		n.links[fp] = l
+	}
+	n.mu.Unlock()
+	n.addEvent(fmt.Sprintf("✔ 已接受 %s 的连接；可发剪贴板/命令", name))
+	go n.readLoop(l)
 	return err
+}
+
+// readLoop 在持久连接上循环读帧并按类型分发：剪贴板→重组（完成时 OnClipboard 记日志）；
+// 键鼠命令→识别记日志。读出错/对端关闭时清理 link 并把连接标记为断开。
+func (n *discNode) readLoop(l *link) {
+	defer func() {
+		l.conn.Close()
+		n.mu.Lock()
+		if n.links[l.fp] == l {
+			delete(n.links, l.fp)
+		}
+		if n.connState[l.fp] == "connected" {
+			n.connState[l.fp] = "closed"
+			n.connected[l.fp] = false
+		}
+		n.mu.Unlock()
+		n.addEvent("✗ 与 " + l.name + " 的连接已断开")
+	}()
+	for {
+		wire, err := readFrame(l.conn)
+		if err != nil {
+			return
+		}
+		frame, _, err := protocol.DecodeFrameBytesWithHMAC(wire, demoHMACKey)
+		if err != nil {
+			continue
+		}
+		switch frame.Header.FrameType {
+		case protocol.FrameClipboard:
+			_, _ = l.clip.HandleFrame(frame.Payload) // 完成时 OnClipboard 记日志
+		case protocol.FrameKeyDown, protocol.FrameKeyUp, protocol.FrameMouseMove,
+			protocol.FrameMouseButton, protocol.FrameScroll:
+			n.logInboundCommand(l, frame.Header.FrameType, frame.Payload)
+		}
+	}
+}
+
+// logInboundCommand 用协议层识别器把收到的键鼠命令解码 + 跨平台重映射，记入事件
+// 流水（对端「日志可见」）。识别/重映射能力全在 protocol 包（DecodeInputFrame），
+// 这里只贴日志，不再各端各写 decode/remap。
+func (n *discNode) logInboundCommand(l *link, ft uint8, payload []byte) {
+	ev, err := protocol.DecodeInputFrame(ft, payload, l.peerPlat, n.selfPlatform, nil, protocol.ContextGlobal)
+	if err != nil {
+		n.addEvent(fmt.Sprintf("⚠️ 来自 %s 的输入帧无法识别：%v", l.name, err))
+		return
+	}
+	icon := "🖱️"
+	if ft == protocol.FrameKeyDown || ft == protocol.FrameKeyUp {
+		icon = "⌨️"
+	}
+	n.addEvent(fmt.Sprintf("%s 收到来自 %s 的命令：%s", icon, l.name, ev.Describe()))
+}
+
+// firstLink 返回第一条已建立的持久连接（demo 通常只连一个对端；多连时任取一条）。
+func (n *discNode) firstLink() *link {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, l := range n.links {
+		return l
+	}
+	return nil
+}
+
+// peerPlatformByName 用对端 name 在已发现列表里找平台（找不到回退本机平台）。
+func (n *discNode) peerPlatformByName(name string) protocol.Platform {
+	for _, p := range n.listener.Peers() {
+		if p.Name == name {
+			return p.Platform
+		}
+	}
+	return n.selfPlatform
 }
 
 // GET /api/identity — 本节点身份（名称/平台/指纹/组播地址/信任链长度/事件流水）
@@ -681,120 +807,109 @@ func handleRespond(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true})
 }
 
-// ── ② 剪切板：两个 ClipboardSession 经真实帧往返（§5.3）─────────────────
+// ── ② 剪切板：经已建立连接发给对端（§5.3 分段/重组）─────────────────────
 
 func handleClipboard(w http.ResponseWriter, r *http.Request) {
 	text := r.URL.Query().Get("text")
 	if text == "" {
 		text = "Hello from FlowGrid 协议层 🚀"
 	}
-
-	var received *protocol.Clipboard
-	frameCount := 0
-	wireSamples := []string{}
-
-	sessionB := protocol.NewClipboardSession(func(ft uint8, payload []byte) error { return nil })
-	// A 的发送接缝 = FrameStream；每发出一帧就上链（编码→解码）喂给 B。
-	stream := protocol.NewFrameStream(func(f *protocol.HIDFrame) error {
-		wire, err := f.EncodeBytesWithHMAC(demoHMACKey)
-		if err != nil {
-			return err
-		}
-		if len(wireSamples) < 2 {
-			wireSamples = append(wireSamples, hex.EncodeToString(wire))
-		}
-		decoded, _, err := protocol.DecodeFrameBytesWithHMAC(wire, demoHMACKey)
-		if err != nil {
-			return err
-		}
-		frameCount++
-		if c, err := sessionB.HandleFrame(decoded.Payload); err == nil && c != nil {
-			received = c
-		}
-		return nil
-	}, protocol.NewSequenceTracker(0))
-
-	sessionA := protocol.NewClipboardSession(stream.Emit)
-	if err := sessionA.SendClipboard("text/plain", []byte(text)); err != nil {
+	l := node.firstLink()
+	if l == nil {
+		fail(w, fmt.Errorf("尚未建立连接：请先在①里点对端「连接」并让对端接受，再发剪贴板"))
+		return
+	}
+	before := l.sent.Load()
+	if err := l.clip.SendClipboard("text/plain", []byte(text)); err != nil {
 		fail(w, err)
 		return
 	}
-
-	resp := map[string]any{"sent": text, "frameCount": frameCount, "wireSamples": wireSamples}
-	if received != nil {
-		resp["received"] = map[string]any{"mime": received.MIMEType, "data": string(received.Data)}
-		resp["match"] = string(received.Data) == text
-	} else {
-		resp["error"] = "对端未重组出剪贴板"
-	}
-	writeJSON(w, resp)
+	writeJSON(w, map[string]any{
+		"sent":       text,
+		"to":         l.name,
+		"frameCount": l.sent.Load() - before,
+		"note":       "已经连接发给对端；对端事件流水会显示收到的剪贴板",
+	})
 }
 
-// ── ③ 命令识别：键鼠 payload 编解码往返 + 跨平台键位重映射 ────────────────
+// ── ③ 命令识别：键鼠 payload 编解码 + 跨平台重映射，并经连接发给对端 ──────
+
+// commandPayload 把一个演示命令编成线上帧（帧类型 / payload / 描述）。键码与
+// 重映射表都在 protocol 包（§6.1/§6.2），这里只组测试输入。
+func commandPayload(cmd string) (uint8, []byte, string) {
+	switch cmd {
+	case "move":
+		p := &protocol.MouseMovePayload{DeltaX: 120, DeltaY: -45}
+		return protocol.FrameMouseMove, p.Marshal(), "鼠标移动 ΔX=+120 ΔY=-45"
+	case "click":
+		p := &protocol.MouseButtonPayload{ButtonID: protocol.MouseButtonLeft, State: 0x01}
+		return protocol.FrameMouseButton, p.Marshal(), "鼠标左键按下"
+	case "scroll":
+		p := &protocol.ScrollPayload{DeltaY: 3, DeltaX: 0}
+		return protocol.FrameScroll, p.Marshal(), "滚轮向上 3 格"
+	default: // "cmd+c"
+		p := &protocol.KeyDownPayload{KeyCode: protocol.HIDKeyC, Modifiers: protocol.ModLeftMeta}
+		return protocol.FrameKeyDown, p.Marshal(), "按下 Cmd+C（Mac 复制）"
+	}
+}
 
 func handleCommand(w http.ResponseWriter, r *http.Request) {
 	cmd := r.URL.Query().Get("cmd")
-	var ft uint8
-	var payload []byte
-	var desc string
-	switch cmd {
-	case "cmd+c":
-		p := &protocol.KeyDownPayload{KeyCode: protocol.HIDKeyC, Modifiers: protocol.ModLeftMeta}
-		ft, payload, desc = protocol.FrameKeyDown, p.Marshal(), "按下 Cmd+C（Mac 复制）"
-	case "move":
-		p := &protocol.MouseMovePayload{DeltaX: 120, DeltaY: -45}
-		ft, payload, desc = protocol.FrameMouseMove, p.Marshal(), "鼠标移动 ΔX=+120 ΔY=-45"
-	case "click":
-		p := &protocol.MouseButtonPayload{ButtonID: protocol.MouseButtonLeft, State: 0x01}
-		ft, payload, desc = protocol.FrameMouseButton, p.Marshal(), "鼠标左键按下"
-	case "scroll":
-		p := &protocol.ScrollPayload{DeltaY: 3, DeltaX: 0}
-		ft, payload, desc = protocol.FrameScroll, p.Marshal(), "滚轮向上 3 格"
-	default:
-		cmd = "cmd+c"
-		p := &protocol.KeyDownPayload{KeyCode: protocol.HIDKeyC, Modifiers: protocol.ModLeftMeta}
-		ft, payload, desc = protocol.FrameKeyDown, p.Marshal(), "按下 Cmd+C（Mac 复制）"
-	}
+	ft, payload, desc := commandPayload(cmd)
 
 	wire := encodeFrame(ft, 1, payload)
-	decoded, _, err := protocol.DecodeFrameBytesWithHMAC(wire, demoHMACKey)
+
+	// 识别（协议层单一能力 DecodeInputFrame）：这条演示命令是 Mac 键鼠操作，按
+	// 「Mac → 本机平台」解码 + 跨平台重映射。recognized 显示原始（Mac）侧，remap
+	// 显示落到本机平台的结果。识别/重映射逻辑全在 protocol 包，这里只组装展示。
+	ev, err := protocol.DecodeInputFrame(ft, payload, protocol.PlatformMacOS, node.selfPlatform, nil, protocol.ContextGlobal)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-
 	recognized := map[string]any{}
-	switch ft {
-	case protocol.FrameKeyDown:
-		kp, _ := protocol.UnmarshalKeyDown(decoded.Payload)
-		recognized = map[string]any{"事件": "keydown", "键码": fmt.Sprintf("0x%04x", kp.KeyCode), "修饰": fmt.Sprintf("0x%02x", kp.Modifiers)}
+	switch ev.Type {
+	case protocol.FrameKeyDown, protocol.FrameKeyUp:
+		verb := "keyup"
+		if ev.Type == protocol.FrameKeyDown {
+			verb = "keydown"
+		}
+		recognized = map[string]any{"事件": verb, "键码": fmt.Sprintf("0x%04x", ev.OrigKeyCode), "修饰": fmt.Sprintf("0x%02x", ev.OrigModifiers)}
 	case protocol.FrameMouseMove:
-		mp, _ := protocol.UnmarshalMouseMove(decoded.Payload)
-		recognized = map[string]any{"事件": "mousemove", "ΔX": mp.DeltaX, "ΔY": mp.DeltaY}
+		recognized = map[string]any{"事件": "mousemove", "ΔX": ev.DeltaX, "ΔY": ev.DeltaY}
 	case protocol.FrameMouseButton:
-		bp, _ := protocol.UnmarshalMouseButton(decoded.Payload)
 		state := "释放"
-		if bp.State == 0x01 {
+		if ev.Pressed {
 			state = "按下"
 		}
-		recognized = map[string]any{"事件": "mousebutton", "按键": bp.ButtonID, "状态": state}
+		recognized = map[string]any{"事件": "mousebutton", "按键": ev.Button, "状态": state}
 	case protocol.FrameScroll:
-		sp, _ := protocol.UnmarshalScroll(decoded.Payload)
-		recognized = map[string]any{"事件": "scroll", "ΔY": sp.DeltaY, "ΔX": sp.DeltaX}
+		recognized = map[string]any{"事件": "scroll", "ΔY": ev.DeltaY, "ΔX": ev.DeltaX}
 	}
-
-	// 跨平台重映射：Mac 的 Cmd(Meta) 到 Linux 落成 Ctrl
 	remap := map[string]any{
-		"修饰掩码": fmt.Sprintf("Mac 0x%02x(Meta) → Linux 0x%02x(Ctrl)", protocol.ModLeftMeta, protocol.RemapModifiers(protocol.ModLeftMeta, protocol.PlatformMacOS, protocol.PlatformLinux)),
-		"修饰键码": fmt.Sprintf("Mac 0x%04x(LMeta) → Linux 0x%04x(LCtrl)", protocol.HIDKeyLMeta, protocol.RemapModifierKey(protocol.HIDKeyLMeta, protocol.PlatformMacOS, protocol.PlatformLinux)),
+		"修饰掩码": fmt.Sprintf("Mac 0x%02x(Meta) → %s 0x%02x", ev.OrigModifiers, node.selfPlatform, ev.Modifiers),
+		"修饰键码": fmt.Sprintf("Mac 0x%04x(LMeta) → %s 0x%04x", ev.OrigKeyCode, node.selfPlatform, ev.KeyCode),
 	}
 
-	writeJSON(w, map[string]any{
+	resp := map[string]any{
 		"command":    cmd,
 		"desc":       desc,
 		"wireHex":    hex.EncodeToString(wire),
 		"wireLen":    len(wire),
 		"recognized": recognized,
 		"remap":      remap,
-	})
+		"remapped":   ev.Remapped,
+	}
+	// 经已建立连接发给对端
+	l := node.firstLink()
+	if l == nil {
+		resp["error"] = "尚未建立连接：请先在①里点对端「连接」并让对端接受（本地识别/重映射仍可见）"
+	} else if err := sendFrame(l.conn, ft, payload); err != nil {
+		resp["error"] = "发送失败：" + err.Error()
+	} else {
+		l.sent.Add(1)
+		resp["to"] = l.name
+		resp["note"] = "已发给对端；对端事件流水会显示收到的命令"
+	}
+	writeJSON(w, resp)
 }
