@@ -62,7 +62,35 @@ Ctrl），用户还能自定义键位规则（§11）。这套「识别一帧输
 
 ### deepin 客户端（`deepin`）
 输入 HAL 已是薄的（`input_engine` 只做 evdev 捕获/注入），**无内联重映射可删**；
-捕获→对端的转发通路待补（见「五、后续」）。
+捕获→对端的转发通路已补齐（见下）。
+
+#### 能力接入：`deepin/src/core/protocolapi.{h,cpp}`
+- `remapCapturedKey(hidKey, modifiers, from, to, keymap, context, out*)` —— 包 `fg_input_remap_key`，
+  对应 mac 的 `GoProtocol.remapCapturedKey`；`keymap` 传 null = 只走平台默认。
+- `class KeyMap` —— 键位规则句柄（`fg_keymap_load_file` / `fg_keymap_lookup` / `fg_keymap_free`），
+  规则本体（YAML）在协议层解析，客户端只持句柄；加载失败时 `lastError()` 给出原因，
+  **不静默按默认值跑**（那等于用户配的映射悄悄失效）。
+- `identifyPayload()` / `identifyResponsePayload()` —— 握手载荷（§4.2）。
+- 平台/角色/能力位常量（`platform::` / `role::` / `caps::`）镜像 `protocol/platform.go`，
+  不各写各的字面量。
+
+#### 转发通路：`deepin/src/core/input/input_forwarder.{h,cpp}`
+- `Forwarder`：控制端 `forwardCaptured()` = 捕获事件 → **协议层重映射** → 载荷 → 发送回调；
+  接收端 `handleInbound()` = 入站帧 → 解析 → HAL 注入。
+  分工与 mac 的 `send?(type, payload)` / Windows 的 `SendToPeer(type, payload)` 一致：
+  本层只产出「帧类型 + 载荷」，帧头由传输层补。
+- `Injector` 抽象（在 `input_engine.h`）：生产环境是 `Engine` 本身，单测里是假实现——
+  这样「入站帧 → 注入动作」的决策能脱离 `/dev/uinput` 权限被验证。
+
+#### 对端会话：`deepin/src/core/input/peer_session.{h,cpp}`
+- `PeerSession`：QTcpSocket + **§7.2 长度前缀**（Length 2B BE + HID Frame [+8B HMAC]）+
+  IDENTIFY 握手（§4.2：发起方发 IDENTIFY，被控端弹邀请，接受/拒绝后回 IDENTIFY_RESPONSE）。
+- 会话 HMAC 密钥由**配对码派生**，算法与 mac 的 `SessionKey.derive` 一致：
+  `SHA256("FlowGrid-mvp-session|" + 归一化码)`。两端算不出同一把密钥时收不到对方的帧，
+  症状是「连上了却一条帧都收不到」——所以这步不能省，也不能各自发挥。
+- 会话端口 `kPeerSessionPort = 34801`：**不能**与 LAN ID 的组播 UDP 端口 24801 相同。
+  通告里报的就是这个端口（对端据此 dial），与 web demo 的做法一致；
+  mac 目前通告的仍是 24801（UDP 端口，拨不通），等 mac 侧也改成报会话端口才能互通。
 
 ## 三、测试
 
@@ -72,22 +100,39 @@ Ctrl），用户还能自定义键位规则（§11）。这套「识别一帧输
 | cgo FFI | 建 c-archive 后写 C `main` 调 `fg_input_remap_key` 编译链接运行 | C 标量进 / out 参数出 / 句柄 0 / 跨平台重映射结果 |
 | mac | `cd mac/FlowGridCore && swift test` | `remapCapturedKeyAcrossPlatforms`（证明 mac 重映射走协议层）；全量 62 绿 |
 | Windows | Windows 机上 `cd windows && go test ./...`；任意机 `cd windows && GOOS=windows go build ./...` | hub 收敛后编译/回归 |
+| deepin 转发通路 | `./deepin/dev.sh --check`（或 `flowgrid-inputforwardtest`） | 跨平台重映射（Linux Ctrl→macOS Meta）、KEY_UP 键码仍重映射、鼠标按下/松开可区分、滚轮 delta 不错位、入站帧分发到假 Injector、非输入帧不误注入 |
+| deepin 对端会话 | `flowgrid-peersessiontest` | 回环 TCP 上完成 IDENTIFY 握手（接受/拒绝两条路）、业务帧往返载荷一致、配对码不一致时帧被丢弃 |
 | 真实注入（HAL） | `cd protocol && go build -o /tmp/fg-realinput ./cmd/realinput && /tmp/fg-realinput` | 协议 HID → `DecodeInputFrame` → cgo CoreGraphics 注入：`CGWarp` 真实移动光标（无需权限）、`CGEvent` 真实按键（需辅助功能权限）；带「读回光标位置」诊断 |
 
 `realinput` 是 `//go:build darwin` 的最小 HAL 演示：能力（编/识）在协议层，注入在 HAL。
+
+deepin 的两个单测**都不需要 `/dev/uinput` 权限**：注入侧用假 `Injector`，
+会话侧用回环 socket（被控端与控制端都在本进程里）。真机权限只影响
+「能不能真的注入」，不影响「逻辑对不对」——单测要验的是后者。
 
 ## 四、当前状态
 - 协议层：`DecodeInputFrame` / `RemapCapturedKey` + 单测，`fg_input_remap_key` + 双头同步 —— 完成。
 - mac：发送侧重映射走协议层，删 Swift 重复实现，`swift test` 62 绿 —— 完成。
 - Windows：`hub.go` 收敛到 `RemapCapturedKey`，`GOOS=windows go build` 通过 —— 完成。
-- deepin：无重复可删；转发通路待补。
+- deepin：能力接入 + 转发通路 + 对端会话 + 两个单测 —— 完成；
+  **界面接线待补**（见「五、后续」3）。
 
 ## 五、后续（follow-up）
 1. **mac 捕获路径接用户 keymap 规则**：目前 `InputCaptureTap` 传 `nil` table（只走平台默认
    Ctrl⇄Meta），而 Windows 已传 `h.keymap`。要接上需：持有一个长生命周期 `GoKeyMap` 句柄 →
    经 `PeerSession` 透传给 `InputCaptureTap` → `GoProtocol.remapCapturedKey` 增 `tableHandle` 形参
    透传 `fg_input_remap_key`（并处理 keymap 热重载时的句柄更新）。
-2. **deepin 转发通路**：把 `input_engine` 捕获的 `CapturedEvent` 经 cgo `fg_input_remap_key`
-   重映射 + 组帧发送，客户端仍只留 evdev HAL + UI。
-3. 接收侧若未来改为「发原始键、收端重映射」，收端即用 `DecodeInputFrame(from=对端, to=本机)`；
-   当前 mac 采用「发前重映射」，收端只解析注入（勿二次重映射）。
+   deepin 侧已备好 `proto::KeyMap` 句柄，`Forwarder::setKeyMap()` 可直接注入。
+2. **协议层补 IDENTIFY 反序列化导出**：cgo 侧只有 `fg_identify_payload_encode` /
+   `fg_identify_response_encode`，没有对应的 unmarshal 导出，所以 deepin 的 `PeerSession`
+   拿不到对端在 IDENTIFY 里报的名字（现在用 socket 的对端地址兜底）。
+   要补就得动 `protocol/cgo/bridge.go` + `cgo.h`，**并按 AGENTS.md 同步
+   `mac/FlowGridCore/Sources/CFlowGrid/include/flowgrid.h`**（macOS 重建会剥掉 Go 文档注释，
+   不要提交剥壳版）。
+3. **deepin 界面接线**：`Forwarder` / `PeerSession` 已就绪，但还没接到界面上——
+   设备发现 → 连接对端 → 开始捕获（`Engine::startCapture`）→ 开始注入
+   （`Engine::startInjection`）这条链要补，以及邀请的「接受/拒绝」入口。
+   另外 LAN ID 通告的端口要从 24801（UDP 组播端口）改成会话端口 34801，
+   对端才知道往哪儿 dial；改之前 deepin 与 mac 的 LAN ID 发现无法直接互通。
+4. 接收侧若未来改为「发原始键、收端重映射」，收端即用 `DecodeInputFrame(from=对端, to=本机)`；
+   当前 mac 与 deepin 都采用「发前重映射」，收端只解析注入（勿二次重映射）。

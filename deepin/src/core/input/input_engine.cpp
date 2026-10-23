@@ -560,6 +560,7 @@ void Engine::captureLoop() {
                             CapturedEvent event;
                             event.kind = EventKind::MouseButton;
                             event.button = button;
+                            event.pressed = down; // 不带这一位，对端分不清按下/松开
                             event.modifiers = modifiers;
                             emit(event);
                             continue;

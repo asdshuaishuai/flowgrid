@@ -126,6 +126,98 @@ bool parseMouseMove(const QByteArray &payload, MouseMovePayload *out);
 bool parseMouseButton(const QByteArray &payload, MouseButtonPayload *out);
 bool parseScroll(const QByteArray &payload, ScrollPayload *out);
 
+// ── 平台枚举（§3.1.2）：与 protocol/platform.go 同值 ──────────────────────
+// 键鼠重映射要按「本机平台 → 对端平台」换算修饰键，两端的取值必须一致，
+// 所以这里镜像协议层常量而不是各写各的字面量。
+namespace platform {
+inline constexpr std::uint8_t kMacOS = 0x01;
+inline constexpr std::uint8_t kWindows = 0x02;
+inline constexpr std::uint8_t kLinux = 0x03;
+} // namespace platform
+
+// ── 协议版本（§2.2）：与 protocol/frame.go 的 ProtocolVersion 同值 ────────
+inline constexpr std::uint8_t kProtocolVersion = 1;
+
+// ── 角色与能力位（§3.1.2 / §4.2）：与 protocol/platform.go 同值 ──────────
+namespace role {
+inline constexpr std::uint8_t kHost = 0x01;   // 键鼠发送端
+inline constexpr std::uint8_t kTarget = 0x02; // 键鼠接收端
+inline constexpr std::uint8_t kBoth = 0x03;   // 双向
+} // namespace role
+
+namespace caps {
+inline constexpr std::uint8_t kIntelligentLink = 0x01;
+inline constexpr std::uint8_t kDirectLink = 0x02;
+inline constexpr std::uint8_t kWiFiDirect = 0x04;
+inline constexpr std::uint8_t kDTLS13 = 0x08;
+inline constexpr std::uint8_t kClipboard = 0x10;
+inline constexpr std::uint8_t kFileTransfer = 0x20;
+// deepin 客户端报的能力：智能连接 + 直连 + 剪贴板 + 文件传输。
+inline constexpr std::uint8_t kDeepinDefault =
+    kIntelligentLink | kDirectLink | kClipboard | kFileTransfer;
+} // namespace caps
+
+// ── 键位规则表（§11）：句柄 + 查询，规则本体在协议层的 YAML 解析里 ──────
+//
+// 客户端只持有句柄：规则文件的读盘、解析、匹配全在协议层
+// （fg_keymap_load_file / fg_keymap_lookup）。句柄从 1 起，0 是失败哨兵，
+// 所以 isValid() 等价于 handle_ != nullptr。
+class KeyMap {
+public:
+    // path 指向 YAML 规则文件；文件不存在或解析失败时对象不可用，
+    // lastError() 给出原因——规则坏了不能静默按默认值跑（那等于用户
+    // 配的映射悄悄失效）。
+    explicit KeyMap(const QString &path);
+    ~KeyMap();
+
+    KeyMap(const KeyMap &) = delete;
+    KeyMap &operator=(const KeyMap &) = delete;
+    KeyMap(KeyMap &&o) noexcept;
+    KeyMap &operator=(KeyMap &&o) noexcept;
+
+    bool isValid() const { return handle_ != nullptr; }
+    // 裸句柄：只有需要直接调 cgo 的地方才用（remapCapturedKey）。
+    void *handle() const { return handle_; }
+    QString version() const { return version_; }
+    int ruleCount() const { return ruleCount_; }
+    QString lastError() const { return lastError_; }
+
+    // context 传空 = 全局规则；应用上下文用 "app:<bundleID>"，游戏用 "game"。
+    bool lookup(std::uint8_t fromPlatform, std::uint8_t toPlatform,
+                std::uint16_t keyCode, std::uint8_t modifiers,
+                const QString &context, std::uint16_t *outKeyCode,
+                std::uint8_t *outModifiers) const;
+
+private:
+    void release();
+
+    void *handle_ = nullptr;
+    QString version_;
+    int ruleCount_ = 0;
+    QString lastError_;
+};
+
+// ── 键鼠发送侧重映射（§6.3 / §11）──────────────────────────────────────
+//
+// 能力在协议层（protocol.RemapCapturedKey，经 cgo fg_input_remap_key）：
+// 掩码先按规则感知换算、主键再走显式规则（未命中才用平台默认 Ctrl⇄Meta），
+// 保证「按的是 Alt、掩码却说 Ctrl」不会发生。客户端只调这一个入口，
+// 禁止自己再写一份跨平台修饰键换算（AGENTS.md §29）。
+//
+// keymap 传 nullptr = 只用平台默认（无用户规则）；context 传空 = 全局规则。
+bool remapCapturedKey(std::uint16_t hidKey, std::uint8_t modifiers,
+                       std::uint8_t fromPlatform, std::uint8_t toPlatform,
+                       const KeyMap *keymap, const QString &context,
+                       std::uint16_t *outKey, std::uint8_t *outModifiers);
+
+// ── IDENTIFY 握手载荷（§4.2）────────────────────────────────────────────
+// version 传 kProtocolVersion；role 取 role:: 里的值。
+GoBuffer identifyPayload(std::uint8_t platform, std::uint8_t role, std::uint8_t caps,
+                         std::uint32_t seqInit, const QString &name,
+                         std::uint8_t version = kProtocolVersion);
+GoBuffer identifyResponsePayload(std::uint8_t status, std::uint8_t platform,
+                                 std::uint8_t caps, const QString &name);
+
 // ── 延迟监控：Go 侧维护采样环形缓冲，这里只做句柄与读数封装 ───────────
 class LatencyMonitor {
 public:

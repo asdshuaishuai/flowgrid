@@ -299,3 +299,63 @@ primaryMac()/screenLabel()`、`Surface::bandHeight()/footHeight()`、
   15 张无头快照、协议层 go vet + go test）；真桌面 1920×1080 实测明暗切换后
   同一个托盘浮层实例跟随换色（两个方向各验一次），设置屏「安全」页的
   「端到端加密」徽章取真值。
+
+---
+
+## 追加：键鼠方案改造中发现并修掉的缺陷（2026-10-23）
+
+补 deepin 的捕获→对端转发通路时，撞出三个此前没暴露的缺陷。它们潜伏的原因是
+**键鼠通路此前根本没接线**（`input_engine` 在 `main.cpp` 里一次都没被引用），
+没人跑过，自然没人撞上。
+
+### D1（High）载荷构造器返回空载荷 —— 7 处
+
+`protocolapi.cpp` 的载荷构造器都写成一行：
+
+```cpp
+return GoBuffer(fg_payload_keydown(keyCode, modifiers, &outLen), outLen);
+```
+
+C++ 里**函数实参的求值顺序是未指定的**，GCC 从右往左求值，于是 `outLen`
+会在 cgo 函数写它之前就被读走（恒为 0）——构造出来的 `GoBuffer` 长度是 0，
+载荷成了空字节。症状是「帧发出去了，对端什么都收不到」，而且不报错。
+
+涉及 `latencyPingPayload` / `latencyPongPayload` / `keyDownPayload` /
+`keyUpPayload` / `mouseMovePayload` / `mouseButtonPayload` / `scrollPayload`
+共 7 处。已全部拆成「先取指针、再构造」两行，并在段首写明**不能**合并回去。
+
+### D2（High）鼠标按钮丢掉按下/松开状态
+
+`input::CapturedEvent` 没有「按下/松开」这一位，而 `EventKind::MouseButton`
+又不区分按下与松开——捕获线程对两种情况产出**完全相同**的事件。对端收到后
+分不清「按下去」和「松开来」，按下态会一直卡住。
+
+已给 `CapturedEvent` 补 `pressed` 位并在捕获侧写入。注入侧
+`injectMouseButton(button, down)` 本来就要 `down`，只是捕获侧一直没给。
+
+### D3（Med）对端会话析构期的空指针解引用
+
+`PeerSession::close()` 里 `socket_->abort()` 会**同步**发出 `disconnected`，
+槽函数随即把 `socket_` 置空；回到 `close()` 再执行 `socket_->deleteLater()`
+就是空指针解引用 → 段错误（崩在 Go runtime 的 `runtime.sigfwd`）。
+
+已抽出 `dropSocket()`：先把指针摘掉、断开回调，再 `abort()` + `deleteLater()`，
+切断重入路径。
+
+### 连带修的会话行为
+
+- **拒绝路径的回应被自己丢掉**：拒绝时先 `abort()` 会丢弃发送缓冲区里尚未
+  冲出的 IDENTIFY_RESPONSE，对端只会看到「连接被掐断」而收不到「拒绝」。
+  改成 `flush()` + `disconnectFromHost()` 优雅断开。
+- **已拒绝 ≠ 连接已断开**：断开回调原本会把 `Rejected` 覆写成 `Failed`，
+  两者语义不同（前者是对端明确答复，后者是传输异常），已分开。
+
+### 验证
+
+- `flowgrid-inputforwardtest`：跨平台重映射（Linux Ctrl → macOS Meta）、
+  KEY_UP 键码同样重映射、鼠标按下/松开可区分、滚轮 delta 不错位、
+  入站帧分发到假 Injector、非输入帧不误注入、坏载荷被拒。
+- `flowgrid-peersessiontest`：回环 TCP 上完成 IDENTIFY 握手（接受 / 拒绝两条路）、
+  业务帧往返载荷一致、配对码不一致时帧被丢弃。
+- 两者都不需要 `/dev/uinput` 权限（注入用假 `Injector`、会话用回环 socket），
+  已并入 `deepin/dev.sh --check`。

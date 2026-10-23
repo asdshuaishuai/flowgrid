@@ -119,47 +119,60 @@ bool decodeFrameWithHmac(const QByteArray &wire, const QByteArray &hmacKey, Fram
 }
 
 // ── 载荷构造器 ────────────────────────────────────────────────────────
+//
+// 每个构造器都写成「先取指针、再构造 GoBuffer」两行，**不能**合并成一行：
+// GoBuffer(fg_xxx(..., &outLen), outLen) 里两个实参的求值顺序在 C++ 中是
+// 未指定的，GCC 从右往左求值，于是 outLen 会在 cgo 函数写它之前就被读走
+// （恒为 0）——构造出来的 GoBuffer 长度是 0，载荷成了空字节，症状是
+// 「帧发出去了，对端什么都收不到」。合并成一行看着更简洁，但那是错的。
 GoBuffer latencyPingPayload(std::uint64_t timestampUs)
 {
     std::size_t outLen = 0;
-    return GoBuffer(fg_payload_latency_ping(timestampUs, &outLen), outLen);
+    auto *raw = fg_payload_latency_ping(timestampUs, &outLen);
+    return GoBuffer(raw, outLen);
 }
 
 GoBuffer latencyPongPayload(std::uint64_t timestampUs)
 {
     std::size_t outLen = 0;
-    return GoBuffer(fg_payload_latency_pong(timestampUs, &outLen), outLen);
+    auto *raw = fg_payload_latency_pong(timestampUs, &outLen);
+    return GoBuffer(raw, outLen);
 }
 
 // ── HID 载荷（§5.3）────────────────────────────────────────────────────
 GoBuffer keyDownPayload(std::uint16_t keyCode, std::uint8_t modifiers)
 {
     std::size_t outLen = 0;
-    return GoBuffer(fg_payload_keydown(keyCode, modifiers, &outLen), outLen);
+    auto *raw = fg_payload_keydown(keyCode, modifiers, &outLen);
+    return GoBuffer(raw, outLen);
 }
 
 GoBuffer keyUpPayload(std::uint16_t keyCode)
 {
     std::size_t outLen = 0;
-    return GoBuffer(fg_payload_keyup(keyCode, &outLen), outLen);
+    auto *raw = fg_payload_keyup(keyCode, &outLen);
+    return GoBuffer(raw, outLen);
 }
 
 GoBuffer mouseMovePayload(std::int16_t deltaX, std::int16_t deltaY)
 {
     std::size_t outLen = 0;
-    return GoBuffer(fg_payload_mousemove(deltaX, deltaY, &outLen), outLen);
+    auto *raw = fg_payload_mousemove(deltaX, deltaY, &outLen);
+    return GoBuffer(raw, outLen);
 }
 
 GoBuffer mouseButtonPayload(std::uint8_t buttonId, bool down)
 {
     std::size_t outLen = 0;
-    return GoBuffer(fg_payload_mousebtn(buttonId, down ? 1 : 0, &outLen), outLen);
+    auto *raw = fg_payload_mousebtn(buttonId, down ? 1 : 0, &outLen);
+    return GoBuffer(raw, outLen);
 }
 
 GoBuffer scrollPayload(std::int16_t deltaY, std::int16_t deltaX)
 {
     std::size_t outLen = 0;
-    return GoBuffer(fg_payload_scroll(deltaY, deltaX, &outLen), outLen);
+    auto *raw = fg_payload_scroll(deltaY, deltaX, &outLen);
+    return GoBuffer(raw, outLen);
 }
 
 namespace {
@@ -229,6 +242,135 @@ bool parseScroll(const QByteArray &payload, ScrollPayload *out)
                payloadBytes(payload), static_cast<std::size_t>(payload.size()),
                &out->deltaY, &out->deltaX)
         == 0;
+}
+
+// ── 键位规则表与跨平台重映射（§6.3 / §11）──────────────────────────────
+
+KeyMap::KeyMap(const QString &path)
+{
+    char *rawVersion = nullptr;
+    std::size_t ruleCount = 0;
+    const auto handle = fg_keymap_load_file(
+        const_cast<char *>(path.toUtf8().constData()), &rawVersion, &ruleCount);
+    if (handle == 0) {
+        // 句柄 0 = 加载失败。规则坏了必须让调用方知道：静默按默认值跑等于
+        // 用户配的映射悄悄失效，而界面看不出任何异样。
+        lastError_ = QStringLiteral("键位规则文件无法加载：%1").arg(path);
+        if (rawVersion != nullptr) {
+            fg_keymap_free_string(rawVersion);
+        }
+        return;
+    }
+    handle_ = reinterpret_cast<void *>(handle);
+    ruleCount_ = static_cast<int>(ruleCount);
+    if (rawVersion != nullptr) {
+        version_ = QString::fromUtf8(rawVersion);
+        fg_keymap_free_string(rawVersion);
+    }
+}
+
+KeyMap::~KeyMap()
+{
+    release();
+}
+
+KeyMap::KeyMap(KeyMap &&o) noexcept
+    : handle_(o.handle_), version_(std::move(o.version_)),
+      ruleCount_(o.ruleCount_), lastError_(std::move(o.lastError_))
+{
+    o.handle_ = nullptr;
+    o.ruleCount_ = 0;
+}
+
+KeyMap &KeyMap::operator=(KeyMap &&o) noexcept
+{
+    if (this != &o) {
+        release();
+        handle_ = o.handle_;
+        version_ = std::move(o.version_);
+        ruleCount_ = o.ruleCount_;
+        lastError_ = std::move(o.lastError_);
+        o.handle_ = nullptr;
+        o.ruleCount_ = 0;
+    }
+    return *this;
+}
+
+void KeyMap::release()
+{
+    if (handle_ != nullptr) {
+        fg_keymap_free(handle_);
+        handle_ = nullptr;
+    }
+}
+
+bool KeyMap::lookup(std::uint8_t fromPlatform, std::uint8_t toPlatform,
+                    std::uint16_t keyCode, std::uint8_t modifiers,
+                    const QString &context, std::uint16_t *outKeyCode,
+                    std::uint8_t *outModifiers) const
+{
+    if (handle_ == nullptr || outKeyCode == nullptr || outModifiers == nullptr) {
+        return false;
+    }
+    const QByteArray ctx = context.toUtf8();
+    int found = 0;
+    const int rc = fg_keymap_lookup(
+        handle_, fromPlatform, toPlatform, keyCode, modifiers,
+        const_cast<char *>(ctx.constData()), outKeyCode, outModifiers, &found);
+    return rc == 0 && found != 0;
+}
+
+bool remapCapturedKey(std::uint16_t hidKey, std::uint8_t modifiers,
+                       std::uint8_t fromPlatform, std::uint8_t toPlatform,
+                       const KeyMap *keymap, const QString &context,
+                       std::uint16_t *outKey, std::uint8_t *outModifiers)
+{
+    if (outKey == nullptr || outModifiers == nullptr) {
+        return false;
+    }
+    // 规则句柄：keymap 为空时传 nullptr，协议层按「只有平台默认」处理。
+    void *handle = nullptr;
+    if (keymap != nullptr && keymap->isValid()) {
+        handle = keymap->handle();
+    }
+    const QByteArray ctx = context.toUtf8();
+    std::uint16_t key = hidKey;
+    std::uint8_t mods = modifiers;
+    const int rc = fg_input_remap_key(hidKey, modifiers, fromPlatform, toPlatform,
+                                       handle, const_cast<char *>(ctx.constData()),
+                                       &key, &mods);
+    if (rc != 0) {
+        // 协议层算不动（句柄失效一类）：保持原样并如实返回失败，让调用方
+        // 决定是丢弃这条事件还是降级直发——不能悄悄发一个没换算过的键。
+        return false;
+    }
+    *outKey = key;
+    *outModifiers = mods;
+    return true;
+}
+
+// ── IDENTIFY 握手载荷（§4.2）────────────────────────────────────────────
+
+GoBuffer identifyPayload(std::uint8_t platform, std::uint8_t role, std::uint8_t caps,
+                         std::uint32_t seqInit, const QString &name, std::uint8_t version)
+{
+    std::size_t outLen = 0;
+    const QByteArray nameBytes = name.toUtf8();
+    auto *raw = fg_identify_payload_encode(version, platform, role, caps, seqInit,
+                                           const_cast<char *>(nameBytes.constData()),
+                                           &outLen);
+    return GoBuffer(raw, outLen);
+}
+
+GoBuffer identifyResponsePayload(std::uint8_t status, std::uint8_t platform,
+                                 std::uint8_t caps, const QString &name)
+{
+    std::size_t outLen = 0;
+    const QByteArray nameBytes = name.toUtf8();
+    auto *raw = fg_identify_response_encode(status, platform, caps,
+                                            const_cast<char *>(nameBytes.constData()),
+                                            &outLen);
+    return GoBuffer(raw, outLen);
 }
 
 // ── LatencyMonitor ────────────────────────────────────────────────────

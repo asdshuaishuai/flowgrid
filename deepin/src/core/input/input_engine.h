@@ -41,9 +41,26 @@ struct CapturedEvent {
     std::int16_t deltaX = 0;
     std::int16_t deltaY = 0;
     std::uint8_t button = 0; // 协议 §6.4 按钮号
+    // 鼠标按钮的按下/松开。键事件靠 kind 区分，鼠标按钮没有对应 kind，
+    // 少了这一位对端就分不清「按下去」和「松开来」——按下态会一直卡住。
+    bool pressed = false;
 };
 
-class Engine {
+// 注入目标抽象：生产环境就是 Engine 本身，单测里可以是假实现。
+//
+// 抽这一层的理由：转发通路的「入站帧 → 注入动作」决策要能脱离
+// /dev/uinput 被验证——真机才有的 uinput 权限不该是单测的前提。
+class Injector {
+public:
+    virtual ~Injector() = default;
+
+    virtual bool injectKey(std::uint16_t hid, bool down, std::uint8_t modifiers) = 0;
+    virtual bool injectMouseMove(std::int16_t dx, std::int16_t dy) = 0;
+    virtual bool injectMouseButton(std::uint8_t button, bool down) = 0;
+    virtual bool injectScroll(std::int16_t deltaY, std::int16_t deltaX) = 0;
+};
+
+class Engine : public Injector {
 public:
     using Callback = std::function<void(const CapturedEvent &)>;
 
@@ -62,11 +79,11 @@ public:
 
     // modifiers 来自 KEY_DOWN 载荷；非修饰键按下时用它补齐修饰键，
     // 松开主键时释放「合成」的修饰键（与 Windows 注入侧同一套状态机）。
-    bool injectKey(std::uint16_t hid, bool down, std::uint8_t modifiers);
-    bool injectMouseMove(std::int16_t dx, std::int16_t dy);
-    bool injectMouseButton(std::uint8_t button, bool down);
+    bool injectKey(std::uint16_t hid, bool down, std::uint8_t modifiers) override;
+    bool injectMouseMove(std::int16_t dx, std::int16_t dy) override;
+    bool injectMouseButton(std::uint8_t button, bool down) override;
     // 单位是「格/行」（协议 P11 的结论），不是像素；evdev REL_WHEEL 原样写。
-    bool injectScroll(std::int16_t deltaY, std::int16_t deltaX);
+    bool injectScroll(std::int16_t deltaY, std::int16_t deltaX) override;
     // 松开本引擎注入且仍按着的键/鼠标键。会话断开或切换目标时必须调用：
     // uinput 设备不会因为“对端走了”自动收到 KEY_UP，不释放会一直卡住。
     void releaseAll();

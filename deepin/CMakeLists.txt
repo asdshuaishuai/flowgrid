@@ -145,6 +145,8 @@ set(FLOWGRID_SOURCES
     src/core/devicemanager.h      src/core/devicemanager.cpp
     src/core/input/input_keymap.h
     src/core/input/input_engine.h src/core/input/input_engine.cpp
+    src/core/input/input_forwarder.h src/core/input/input_forwarder.cpp
+    src/core/input/peer_session.h     src/core/input/peer_session.cpp
 
     src/ui/svgsubset.h            src/ui/svgsubset.cpp
     src/ui/icons.h                src/ui/icons.cpp
@@ -257,6 +259,36 @@ target_include_directories(flowgrid-inputtest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/input)
 target_compile_options(flowgrid-inputtest PRIVATE -Wall -Wextra)
 add_test(NAME inputkeymap COMMAND flowgrid-inputtest)
+
+# 键鼠转发通路单测：重映射（协议层）、组帧、注入分发。
+# 注入侧用假 Injector，因此**不需要 /dev/uinput 权限**——真机才有的权限
+# 不该是单测的前提（这正是把 Injector 抽成接口的原因）。
+add_executable(flowgrid-inputforwardtest tests/input_forwarder_test.cpp
+    src/core/input/input_forwarder.h src/core/input/input_forwarder.cpp
+    src/core/input/input_engine.h
+    src/core/protocolapi.h src/core/protocolapi.cpp
+    ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
+target_include_directories(flowgrid-inputforwardtest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${GO_PROTOCOL_DIR}/cgo)
+target_link_libraries(flowgrid-inputforwardtest PRIVATE
+    Qt6::Core ${GO_PROTOCOL_A} Threads::Threads)
+target_compile_options(flowgrid-inputforwardtest PRIVATE -Wall -Wextra)
+add_test(NAME inputforward COMMAND flowgrid-inputforwardtest)
+
+# 对端会话端到端单测：真实 TCP（回环）+ IDENTIFY 握手 + 帧往返。
+# 不需要第二台机器、不需要 uinput 权限——被控端与控制端都在本进程里。
+add_executable(flowgrid-peersessiontest tests/peer_session_test.cpp
+    src/core/input/peer_session.h src/core/input/peer_session.cpp
+    src/core/protocolapi.h src/core/protocolapi.cpp
+    ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
+target_include_directories(flowgrid-peersessiontest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${GO_PROTOCOL_DIR}/cgo)
+target_link_libraries(flowgrid-peersessiontest PRIVATE
+    Qt6::Core Qt6::Network ${GO_PROTOCOL_A} Threads::Threads)
+target_compile_options(flowgrid-peersessiontest PRIVATE -Wall -Wextra)
+add_test(NAME peersession COMMAND flowgrid-peersessiontest)
 
 install(TARGETS flowgrid-deepin RUNTIME DESTINATION bin)
 install(FILES resources/flowgrid-deepin.desktop

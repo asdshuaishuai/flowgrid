@@ -32,6 +32,12 @@ TEST_NAME="flowgrid-uitest"
 # 所以在容器/CI 里也能跑。跟界面自检一起进体检——不然这份单测只存在于
 # 仓库里，永远没人跑它，映射表错了也没人知道。
 INPUT_TEST_NAME="flowgrid-inputtest"
+# 键鼠转发通路单测：重映射（协议层）+ 组帧 + 注入分发。
+# 注入侧用假 Injector，所以同样不需要 /dev/uinput 权限。
+FORWARD_TEST_NAME="flowgrid-inputforwardtest"
+# 对端会话端到端单测：真实 TCP（回环）+ IDENTIFY 握手 + 帧往返。
+# 不需要第二台机器——被控端与控制端都在本进程里。
+PEER_TEST_NAME="flowgrid-peersessiontest"
 
 BUILD=1
 BUILD_TYPE="Debug"
@@ -187,6 +193,12 @@ case "${MODE}" in
 
         ok "键鼠映射表单测（HID↔evdev 映射表）"
         "${BUILD_DIR}/${INPUT_TEST_NAME}"
+
+        ok "键鼠转发通路单测（重映射 + 组帧 + 注入分发）"
+        "${BUILD_DIR}/${FORWARD_TEST_NAME}"
+
+        ok "对端会话单测（TCP 握手 + 帧往返）"
+        "${BUILD_DIR}/${PEER_TEST_NAME}"
 
         ok "无头快照"
         snapshot "${THEME}" "${SNAPSHOT_DIR}"
