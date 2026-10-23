@@ -121,6 +121,16 @@ AI 能写代码不代表你可以不懂代码。把 AI 当加速器，审查输�
 ### 28. 跨平台兼容
 Go 协议库是 wire format 的唯一权威实现。未来任何平台的客户端都必须经 `protocol/cgo`（或直接引用 Go 库）消费协议，禁止自行实现帧编解码。协议版本号语义见 PROTOCOL.md §2.3：版本 1 即当前线格式（v1.0 从未对外发布），不兼容变更必须升号或加能力位。
 
+### 29. 能力在协议层，客户端只做 UI + HAL
+键鼠控制、剪贴板、文件传输等**能力逻辑**都在 `protocol/`（Go）实现；客户端只是 **UI 形态 + OS HAL + 传输 + 可视化配置**，禁止在客户端重写能力逻辑——每个平台各写一遍就是跨平台行为分叉 + 重复维护（原则 9 DRY 的项目实例）。
+- **客户端专属（无法上移）**：OS HAL——输入注入（CGEventTap/SendInput/uinput）、剪贴板读写、文件磁盘 IO、OS 键码 ↔ HID Usage 的翻译表；传输（TCP/UDP 字节搬运，§28 归客户端）；GUI 与键位映射的可视化配置。
+- **协议层唯一真相源**：发现/握手/帧编解码、`ClipboardSession`、`FileSender/FileReceiver`、键鼠线上格式 + 键码表 + 跨平台重映射、输入识别。
+- **输入能力两个入口**（客户端只调这两个，勿自行 decode/remap）：
+  - 接收侧 `protocol.DecodeInputFrame(ft, payload, from, to, table, ctx)` → 已按目标平台重映射的 `InputEvent`（客户端只做 `InputEvent → OS 注入`）。
+  - 发送侧 `protocol.RemapCapturedKey(hidKey, modifiers, from, to, table, ctx)` → 重映射后的 (键码, 掩码)；掩码规则感知、键码规则优先否则平台默认 Ctrl↔Meta，掩码与键保持一致（§6.3/§11）。`table` 可空（仅平台默认）。
+- **客户端接线**：Go 客户端（windows fgcore）直接调 `protocol.RemapCapturedKey`；原生客户端（mac/deepin）经 cgo `fg_input_remap_key`（句柄 0=nil、context 空=global）。各端内联重映射一律删除。
+- **现状**：mac（已删 `KeyCodeTable.remapModifierKey`）、Windows（`hub.go` 已收敛到 `RemapCapturedKey`）完成；deepin 输入 HAL 已薄、无内联重映射，捕获→对端转发通路待补。
+
 ---
 
 ## 九、仓库实况速览
@@ -135,7 +145,7 @@ FlowGrid 是一套键鼠共享软件（类 Synergy/Logitech Flow）。仓库现�
 - **Windows 客户端**（`windows/`）：Go 会话核心 fgcore + WPF UI，骨架阶段；
 - **deepin 客户端**（`deepin/`，DTK6 C++，8 屏）。
 
-客户端一律直接消费 protocol 的会话 API（FrameStream / ClipboardSession / FileSender / FileReceiver），只写 GUI 与传输绑定；协议库不写平台逻辑。旧 kde 客户端实现可从 git 历史（e8d205c / d1e71e4）找回。`CLAUDE.md` 保留设计期架构文档（双协议、五层模型仍有效），实现现状以本文件和实际代码为准。
+客户端一律直接消费 protocol 的会话 API（FrameStream / ClipboardSession / FileSender / FileReceiver）与输入能力（DecodeInputFrame / RemapCapturedKey，见原则 29），只写 GUI + OS HAL + 传输绑定；协议库不写平台逻辑。旧 kde 客户端实现可从 git 历史（e8d205c / d1e71e4）找回。`CLAUDE.md` 保留设计期架构文档（双协议、五层模型仍有效），实现现状以本文件和实际代码为准。
 
 ### 目录地图
 ```
@@ -145,6 +155,7 @@ protocol/                 — Go 协议库（github.com/flowgrid/protocol），�
 protocol/session.go       — FrameStream：会话层发送接缝（seq/时钟/transport sink）
 protocol/clipboard.go     — ClipboardSession：剪贴板收发会话（§5.3 分段/重组/超时）
 protocol/filetransfer.go  — FileSender/FileReceiver：文件传输状态机（§7.4，SHA-256 校验）
+protocol/input.go         — InputEvent / DecodeInputFrame / RemapCapturedKey：键鼠识别 + 跨平台重映射（原则 29）
 protocol/cgo/bridge.go    — cgo 桥，构建产物 c-archive；句柄从 1 起，缓冲经 fg_free_buffer 释放
 mac/                      — macOS 客户端（XcodeGen + SPM；构建入口与坑见 mac/README.md）
 mac/FlowGridCore/         — SPM 包：CFlowGrid（cgo 头）/ FlowGridCore（域模型）/ FlowGridGo（FFI + 传输 + HAL）
@@ -157,6 +168,7 @@ openspec/                 — 规格驱动开发：changes/archive/<日期-名�
 ### 会话层链路（未来客户端的对接面）
 - **发送**：客户端把传输 send 函数接成 `FrameSink` → `NewFrameStream` → `ClipboardSession.SendClipboard` / `FileSender.OfferFile` + `Pump`
 - **接收**：传输收到的字节 → `DecodeFrameBytesWithHMAC` → `SequenceTracker.Check`（返回错误即丢帧，stale 帧不回 ERROR）→ 按 FrameType 分发：`CLIPBOARD` → `ClipboardSession.HandleFrame`；`FILE_*` → `FileReceiver.HandleFrame`
+- **键鼠（能力在协议层，见原则 29）**：发送侧捕获事件 → `protocol.RemapCapturedKey`（原生客户端经 cgo `fg_input_remap_key`）→ 组帧发送；接收侧 `KEY_*/MOUSE_*/SCROLL` 帧 → `protocol.DecodeInputFrame` → `InputEvent` → OS 注入。客户端只做 OS HAL，不自行 decode/remap。
 
 ### 构建与测试
 ```bash
