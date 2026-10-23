@@ -142,6 +142,7 @@ set(FLOWGRID_SOURCES
     src/core/protocolapi.h        src/core/protocolapi.cpp
     src/core/lanidlink.h          src/core/lanidlink.cpp
     src/core/laniddiscovery.h     src/core/laniddiscovery.cpp
+    src/core/peercontroller.h     src/core/peercontroller.cpp
     src/core/devicemanager.h      src/core/devicemanager.cpp
     src/core/input/input_keymap.h
     src/core/input/input_engine.h src/core/input/input_engine.cpp
@@ -289,6 +290,42 @@ target_link_libraries(flowgrid-peersessiontest PRIVATE
     Qt6::Core Qt6::Network ${GO_PROTOCOL_A} Threads::Threads)
 target_compile_options(flowgrid-peersessiontest PRIVATE -Wall -Wextra)
 add_test(NAME peersession COMMAND flowgrid-peersessiontest)
+
+# 协议级真实操作测试：真实捕获事件序列 → 协议层重映射 → 真实 TCP → 对端解析。
+# 走完整条链路，只把 OS HAL（evdev/uinput）换成假的——那两样要 root 权限，
+# 由 input_hal_test 单独验（权限不足时它如实报跳过）。
+add_executable(flowgrid-inpute2etest tests/input_protocol_e2e_test.cpp
+    src/core/input/input_forwarder.h src/core/input/input_forwarder.cpp
+    src/core/input/input_engine.h
+    src/core/input/peer_session.h src/core/input/peer_session.cpp
+    src/core/protocolapi.h src/core/protocolapi.cpp
+    ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
+target_include_directories(flowgrid-inpute2etest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${GO_PROTOCOL_DIR}/cgo)
+target_link_libraries(flowgrid-inpute2etest PRIVATE
+    Qt6::Core Qt6::Network ${GO_PROTOCOL_A} Threads::Threads)
+target_compile_options(flowgrid-inpute2etest PRIVATE -Wall -Wextra)
+add_test(NAME inpute2e COMMAND flowgrid-inpute2etest)
+
+# HAL 层真机测试：真实 evdev 捕获 → 真实 uinput 注入 → 读回验证。
+# 需要 /dev/uinput 可写 + /dev/input/event* 可读；权限不足时**如实报跳过**
+# （退出码 77），不假装通过。
+add_executable(flowgrid-inputhaltest tests/input_hal_test.cpp
+    src/core/input/input_forwarder.h src/core/input/input_forwarder.cpp
+    src/core/input/input_engine.h src/core/input/input_engine.cpp
+    src/core/input/peer_session.h src/core/input/peer_session.cpp
+    src/core/protocolapi.h src/core/protocolapi.cpp
+    ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
+target_include_directories(flowgrid-inputhaltest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${GO_PROTOCOL_DIR}/cgo)
+target_link_libraries(flowgrid-inputhaltest PRIVATE
+    Qt6::Core Qt6::Network ${GO_PROTOCOL_A} Threads::Threads)
+target_compile_options(flowgrid-inputhaltest PRIVATE -Wall -Wextra)
+add_test(NAME inputhal COMMAND flowgrid-inputhaltest)
+# 退出码 77 = skip：ctest 与 dev.sh 都要认这个约定，别把它当成失败。
+set_tests_properties(inputhal PROPERTIES SKIP_RETURN_CODE 77)
 
 install(TARGETS flowgrid-deepin RUNTIME DESTINATION bin)
 install(FILES resources/flowgrid-deepin.desktop

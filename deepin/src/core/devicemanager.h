@@ -66,6 +66,10 @@ public:
 // 传输层落地前的数据源：延迟读数仍经 Go 的 LatencyMonitor 计算。
 DeviceSource *makeLocalSampleSource(QObject *parent);
 
+// 真实数据源：本机 + LAN 私有链（§3.1）发现到的对端。
+// 对端的延迟这一项没有真值（LinkProbe 只测本机到默认网关），故为 -1。
+DeviceSource *makeLanIdDeviceSource(QObject *parent);
+
 class DeviceManager : public QObject {
     Q_OBJECT
 public:
@@ -99,6 +103,11 @@ Q_SIGNALS:
 
 private slots:
     void onSampleTick();
+
+    // 重新发现设备：对端集合是会变的（有人开机、有人关机、组播通告有增有减），
+    // 只在 setSource 时取一次的话，列表会永远停在启动那一刻——后来的对端不
+    // 出现，走掉的也不消失。
+    void refreshDevices();
 
 private:
     DeviceManager();

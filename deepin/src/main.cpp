@@ -12,6 +12,7 @@
 #include "core/devicemanager.h"
 #include "core/hosttheme.h"
 #include "core/laniddiscovery.h"
+#include "core/peercontroller.h"
 #include "core/settings.h"
 #include "core/theme.h"
 #include "ui/clipboardpanel.h"
@@ -380,7 +381,8 @@ int main(int argc, char *argv[])
     app.installEventFilter(&fontGuard);
 
     auto &manager = DeviceManager::instance();
-    manager.setSource(makeLocalSampleSource(&app));
+    // 真实数据源：本机 + LAN 私有链发现到的对端（不再只有本机一条）。
+    manager.setSource(makeLanIdDeviceSource(&app));
 
     g_trayPopup = new TrayPopup;
     g_connections = new ConnectionsPanel;
@@ -399,6 +401,10 @@ int main(int argc, char *argv[])
     //
     // 起不来也不拦着应用：起不来只是列表一直空，界面会照实说明原因。
     LanIdDiscovery::instance().start();
+
+    // 键鼠控制会话：发现 + 监听会话端口 + 接管/注入的编排都在这儿。
+    // 它是全局状态（同一时刻只有一个控制会话），所以也走单例。
+    PeerController::instance().start();
 
     // context 用 sender 自己而非 &app：本 TU 里 DApplication 到 const QObject*
     // 的隐式转换不成立，而连接本来也该随浮板一起消失。

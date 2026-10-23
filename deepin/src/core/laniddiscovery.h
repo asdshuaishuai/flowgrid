@@ -48,7 +48,10 @@ public:
     struct Peer {
         QString name;        // 对端自报的名字（一般是主机名）
         QString platform;    // 「macOS」/「Windows」/「Linux」…
-        QString address;     // 「192.168.1.50:24801」，点「连接」时用
+        // 平台**字节**（协议 §3.1.2）：键鼠重映射要按「本机平台 → 对端平台」
+        // 换算修饰键，只有人读的字符串不够用。
+        quint8 platformId = 0;
+        QString address;     // 「192.168.1.50:34801」，点「连接」时用
         QString fingerprint; // 32 hex 公钥指纹，信任链的键
         quint16 port = 0;
         bool trusted = false;

@@ -92,6 +92,28 @@ Ctrl），用户还能自定义键位规则（§11）。这套「识别一帧输
   通告里报的就是这个端口（对端据此 dial），与 web demo 的做法一致；
   mac 目前通告的仍是 24801（UDP 端口，拨不通），等 mac 侧也改成报会话端口才能互通。
 
+#### 界面接线：`core/peercontroller.{h,cpp}` + `ui/connectionspanel.{h,cpp}`
+- `PeerController`（单例）把「发现 → 连接 → 捕获/注入」串成一条链：持有
+  `Engine` / `PeerSession` / `Forwarder`，界面只跟它打交道，不直接碰 socket。
+- 连接屏：对端卡片带**「连接」/「断开」**按钮（形态跟真实连接状态走），
+  顶部有**连接邀请条**（接受 / 拒绝），状态胶囊显示真实会话阶段
+  （未连接 · 监听 34801 / 正在连接 X / 等待对方接受 / 已连接 X）。
+- 接管开关真正生效：开 → `Engine::startCapture` + 转发；关 → 停捕获并把
+  **还按着的键松开**（对端在另一台机器上，keyUp 不发出去那边的键会一直卡着）。
+- 设备清单改用 `makeLanIdDeviceSource`（本机 + LAN 发现到的真实对端）；
+  `DeviceManager` 现在**定期重新发现**（以前只在 setSource 时取一次，
+  后来的对端永远不出现）。
+
+#### web demo 的分帧对齐（§7.2）
+demo 原先自己手写了一套 **4 字节**长度前缀，而协议 §7.2 与 mac / deepin 都是
+**2 字节** —— 两端对不上帧长，demo 与真客户端直接互通不了。已改成 2 字节。
+demo 的会话 HMAC 密钥也改成**由配对码派生**（算法同 mac 的 `SessionKey.derive`），
+不再是一把写死的密钥（写死的只有 demo 自己知道，跟真客户端永远对不上）。
+联调时用 `FLOWGRID_DEMO_PAIRING=<对端配对码>` 让两端算出同一把密钥。
+
+**真机实测**（deepin 客户端 ↔ web demo，两个进程、真实 TCP）：
+发现对端 → 点「连接」→ demo 侧验签通过并生成邀请 → 接受 → 双方 `已连接`。
+
 ## 三、测试
 
 | 层 | 命令 / 方式 | 覆盖 |
@@ -114,8 +136,9 @@ deepin 的两个单测**都不需要 `/dev/uinput` 权限**：注入侧用假 `I
 - 协议层：`DecodeInputFrame` / `RemapCapturedKey` + 单测，`fg_input_remap_key` + 双头同步 —— 完成。
 - mac：发送侧重映射走协议层，删 Swift 重复实现，`swift test` 62 绿 —— 完成。
 - Windows：`hub.go` 收敛到 `RemapCapturedKey`，`GOOS=windows go build` 通过 —— 完成。
-- deepin：能力接入 + 转发通路 + 对端会话 + 两个单测 —— 完成；
-  **界面接线待补**（见「五、后续」3）。
+- deepin：能力接入 + 转发通路 + 对端会话 + 界面接线 + 四个单测 —— 完成；
+  真机实测已跑通「发现 → 连接 → 握手 → 已连接 → 接管开关」。
+  evdev/uinput 那一层的真机单测需要 root 权限（见「三、测试」）。
 
 ## 五、后续（follow-up）
 1. **mac 捕获路径接用户 keymap 规则**：目前 `InputCaptureTap` 传 `nil` table（只走平台默认
@@ -129,10 +152,12 @@ deepin 的两个单测**都不需要 `/dev/uinput` 权限**：注入侧用假 `I
    要补就得动 `protocol/cgo/bridge.go` + `cgo.h`，**并按 AGENTS.md 同步
    `mac/FlowGridCore/Sources/CFlowGrid/include/flowgrid.h`**（macOS 重建会剥掉 Go 文档注释，
    不要提交剥壳版）。
-3. **deepin 界面接线**：`Forwarder` / `PeerSession` 已就绪，但还没接到界面上——
-   设备发现 → 连接对端 → 开始捕获（`Engine::startCapture`）→ 开始注入
-   （`Engine::startInjection`）这条链要补，以及邀请的「接受/拒绝」入口。
-   另外 LAN ID 通告的端口要从 24801（UDP 组播端口）改成会话端口 34801，
-   对端才知道往哪儿 dial；改之前 deepin 与 mac 的 LAN ID 发现无法直接互通。
-4. 接收侧若未来改为「发原始键、收端重映射」，收端即用 `DecodeInputFrame(from=对端, to=本机)`；
+3. **deepin 与 mac 的 LAN ID 互通**：deepin 的通告已改报会话端口 34801，
+   但 mac 侧仍通告 24801（UDP 端口，拨不通）。mac 侧也改成报会话端口后，
+   两端才能仅靠 LAN ID 发现就连上（现在 mac 走的是 DirectLinkManager 的
+   BLE / Wi-Fi Direct / mDNS 通路）。
+4. **deepin 的键位规则接线**：`proto::KeyMap` 句柄与 `Forwarder::setKeyMap()`
+   都已备好，但 deepin 客户端还没把自己的 `keymap.yaml` 加载进来——
+   与 mac 的后续项 1 是同一件事。
+5. 接收侧若未来改为「发原始键、收端重映射」，收端即用 `DecodeInputFrame(from=对端, to=本机)`；
    当前 mac 与 deepin 都采用「发前重映射」，收端只解析注入（勿二次重映射）。

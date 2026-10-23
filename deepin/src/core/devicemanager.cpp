@@ -1,9 +1,11 @@
 #include "devicemanager.h"
 #include "designtokens.h"
 #include "hostinfo.h"
+#include "laniddiscovery.h"
 #include "linkprobe.h"
 
 #include <QDateTime>
+#include <QHash>
 #include <QElapsedTimer>
 
 namespace fg {
@@ -188,9 +190,67 @@ void DeviceManager::setSource(DeviceSource *source)
     Q_EMIT devicesChanged();
 }
 
+void DeviceManager::refreshDevices()
+{
+    if (source_ == nullptr) {
+        return;
+    }
+    const QList<Device> fresh = source_->discover();
+
+    // 保留上一轮的延迟历史：id 相同就是同一台机器，延迟曲线不该因为
+    // 「重新发现」而断掉。
+    QHash<QString, Device> previous;
+    previous.reserve(devices_.size());
+    for (const Device &d : devices_) {
+        previous.insert(d.id, d);
+    }
+
+    QList<Device> merged;
+    merged.reserve(fresh.size());
+    for (const Device &d : fresh) {
+        Device item = d;
+        const auto it = previous.constFind(d.id);
+        if (it != previous.constEnd()) {
+            item.latencyMs = it->latencyMs;
+            item.packetLoss = it->packetLoss;
+            item.lastSeenMs = it->lastSeenMs;
+        }
+        merged.append(item);
+    }
+
+    // 设备集合变了没有（数量或顺序/身份）？变了才重建采样器并通知界面。
+    bool changed = merged.size() != devices_.size();
+    if (!changed) {
+        for (int i = 0; i < merged.size(); ++i) {
+            if (merged.at(i).id != devices_.at(i).id) {
+                changed = true;
+                break;
+            }
+        }
+    }
+
+    devices_ = merged;
+    if (!changed) {
+        return;
+    }
+
+    while (monitors_.size() > devices_.size()) {
+        delete monitors_.takeLast();
+    }
+    while (monitors_.size() < devices_.size()) {
+        monitors_.append(new proto::LatencyMonitor(tokens::kChartBars + 18));
+    }
+    Q_EMIT devicesChanged();
+}
+
 void DeviceManager::onSampleTick()
 {
-    if (source_ == nullptr || monitors_.size() != devices_.size()) {
+    if (source_ == nullptr) {
+        return;
+    }
+    // 先重新发现：设备集合变了的话，采样器数量要跟着变。
+    refreshDevices();
+    if (monitors_.size() != devices_.size()) {
         return;
     }
 
@@ -316,6 +376,113 @@ namespace fg {
 DeviceSource *makeLocalSampleSource(QObject *parent)
 {
     return new LocalSampleSource(parent);
+}
+
+// ── 真实数据源：本机 + LAN 私有链发现到的对端 ──────────────────────────
+//
+// 传输层落地后，「有哪些对端」不再靠猜：LAN 私有链发现到的每一台机器就是
+// 一条设备记录（名字、平台、地址全是对端自己通告的，不是本机编的）。
+//
+// 对端的**延迟没有真值**：LinkProbe 只测「本机 → 默认网关」的 ICMP 往返，
+// 到具体某台对端的往返要走传输层的心跳。所以这里留 -1（界面显示「--」），
+// 而不是拿网关延迟冒充对端延迟——那会让用户以为量到了，其实量的是网关。
+class LanIdDeviceSource : public DeviceSource {
+public:
+    using DeviceSource::DeviceSource;
+
+    QList<Device> discover() override
+    {
+        QList<Device> list;
+
+        // 本机：与 LocalSampleSource 同一份真实身份信息。
+        Device local;
+        local.id = QStringLiteral("local");
+        local.name = hostinfo::hostName();
+        local.abbrev = abbrevOf(local.name);
+        local.platformLabel = hostinfo::osLabel();
+        local.address = hostinfo::primaryIPv4();
+        local.icon = QStringLiteral("monitor");
+        local.isLocal = true;
+        local.isActive = true;
+        const bool hasNet = !hostinfo::primaryIPv4().isEmpty();
+        local.online = hasNet;
+        local.link = hasNet ? Link::DirectLink : Link::Offline;
+        local.hotkeyIndex = 0;
+        local.latencyMs = -1.0;
+        local.packetLoss = -1.0;
+        list.append(local);
+
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        const QList<LanIdDiscovery::Peer> peers = LanIdDiscovery::instance().peers();
+        for (const LanIdDiscovery::Peer &peer : peers) {
+            Device d;
+            // 指纹当 id：主机名会变，身份公钥不会。
+            d.id = peer.fingerprint.isEmpty()
+                       ? QStringLiteral("peer:") + peer.address
+                       : peer.fingerprint;
+            d.name = peer.name;
+            d.abbrev = abbrevOf(peer.name);
+            d.platformLabel = peer.platform;
+            d.address = peer.address;
+            d.icon = QStringLiteral("laptop");
+            // 能被组播发现 = 这一轮它还在发通告 = 在线。
+            d.link = Link::DirectLink;
+            d.isLocal = false;
+            d.isActive = false;
+            d.online = true;
+            d.hotkeyIndex = 0;
+            d.latencyMs = -1.0;    // 没有真值：界面显示「--」
+            d.packetLoss = -1.0;
+            d.lastSeenMs = nowMs;
+            list.append(d);
+        }
+        return list;
+    }
+
+    bool sample(Device *device, proto::LatencyMonitor &monitor) override
+    {
+        // 只给本机出样本：对端的往返要走传输层心跳，量不到就不报。
+        if (!device->isLocal) {
+            return false;
+        }
+        const qint64 rttUs = LinkProbe::instance()->lastRttUs();
+        if (rttUs < 0) {
+            return false;
+        }
+        const quint64 nowUs =
+            static_cast<quint64>(QDateTime::currentMSecsSinceEpoch() * 1000LL);
+        const quint64 sendUs = nowUs > static_cast<quint64>(rttUs) ? nowUs - static_cast<quint64>(rttUs) : 1;
+        monitor.recordPing(sendUs);
+        double ms = 0.0;
+        double jitter = 0.0;
+        if (!monitor.recordPong(sendUs, nowUs, &ms, &jitter)) {
+            return false;
+        }
+        device->latencyMs = ms;
+        device->packetLoss = LinkProbe::instance()->lossPercent();
+        device->lastSeenMs = nowUs / 1000;
+        return true;
+    }
+
+private:
+    static QString abbrevOf(const QString &name)
+    {
+        QString letters;
+        for (const QChar &c : name) {
+            if (c.isLetterOrNumber()) {
+                letters.append(c);
+                if (letters.size() >= 2) {
+                    break;
+                }
+            }
+        }
+        return letters.isEmpty() ? QStringLiteral("本") : letters.left(2);
+    }
+};
+
+DeviceSource *makeLanIdDeviceSource(QObject *parent)
+{
+    return new LanIdDeviceSource(parent);
 }
 
 } // namespace fg

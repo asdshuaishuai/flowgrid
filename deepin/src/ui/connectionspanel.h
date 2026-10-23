@@ -61,6 +61,7 @@ Q_SIGNALS:
 
 private:
     QWidget *buildHeader();
+    QWidget *buildInviteRow();
     QWidget *buildCaptureRow();
     QWidget *buildDeviceList();
     QWidget *buildQuickLinks();
@@ -68,11 +69,16 @@ private:
 
     void rebuildDeviceCards();
 
-    // 当前控制的对端（在线的非本机设备）。没有对端时返回 nullptr。
+    // 当前**连上了**的对端。没有时返回 nullptr。
     //
-    // 「有没有对端」在这屏有三处要用：状态胶囊、接管行、设备列表的空态提示，
-    // 各写一遍判断早晚会不一致，所以收成一个口子。
+    // 连接状态只有 PeerController 知道（传输层在那儿），界面不自己推断——
+    // 否则会出现「界面写着已连接、实际没连上」这种自相矛盾的状态。
     const Device *activePeer() const;
+
+    // 设备列表里有没有对端（发现了但还没连上也算）。空态提示用这个：
+    // 「连接设备后，对端会出现在这里」只在**一个对端都没发现**时说，
+    // 已经发现了却提示「连接后会出现」是自相矛盾。
+    bool hasAnyPeer() const;
 
     // 给界面用的设备副本：只有在线的对端才标成「当前控制端」。
     //
@@ -91,6 +97,8 @@ private:
     QVBoxLayout *deviceListLayout_ = nullptr;
     QWidget *deviceList_ = nullptr;
     QWidget *captureRow_ = nullptr;
+    QWidget *inviteRow_ = nullptr;
+    QLabel *inviteLabel_ = nullptr;
     QWidget *statusPill_ = nullptr;
     StatusDot *statusDot_ = nullptr;
     QLabel *statusLabel_ = nullptr;

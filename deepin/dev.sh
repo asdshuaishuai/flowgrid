@@ -38,6 +38,12 @@ FORWARD_TEST_NAME="flowgrid-inputforwardtest"
 # 对端会话端到端单测：真实 TCP（回环）+ IDENTIFY 握手 + 帧往返。
 # 不需要第二台机器——被控端与控制端都在本进程里。
 PEER_TEST_NAME="flowgrid-peersessiontest"
+# 协议级真实操作单测：真实捕获序列 → 协议层重映射 → 真实 TCP → 对端解析。
+E2E_TEST_NAME="flowgrid-inpute2etest"
+# HAL 真机单测：真实 evdev 捕获 → 真实 uinput 注入 → 读回验证。
+# 需要 uinput/evdev 权限；没有就报跳过（退出码 77），不算失败——
+# 「没跑」和「跑过了」必须分得清。
+HAL_TEST_NAME="flowgrid-inputhaltest"
 
 BUILD=1
 BUILD_TYPE="Debug"
@@ -199,6 +205,20 @@ case "${MODE}" in
 
         ok "对端会话单测（TCP 握手 + 帧往返）"
         "${BUILD_DIR}/${PEER_TEST_NAME}"
+
+        ok "协议级真实操作单测（捕获序列 → 重映射 → TCP → 对端解析）"
+        "${BUILD_DIR}/${E2E_TEST_NAME}"
+
+        if "${BUILD_DIR}/${HAL_TEST_NAME}"; then
+            ok "HAL 真机单测（真实 evdev 捕获 → 真实 uinput 注入）"
+        else
+            rc=$?
+            if [ "${rc}" -eq 77 ]; then
+                note "HAL 真机单测跳过：需要 uinput / evdev 权限"
+            else
+                die "HAL 真机单测失败（退出码 ${rc}）"
+            fi
+        fi
 
         ok "无头快照"
         snapshot "${THEME}" "${SNAPSHOT_DIR}"

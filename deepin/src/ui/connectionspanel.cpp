@@ -13,6 +13,7 @@
 #include "core/designtokens.h"
 #include "core/devicemanager.h"
 #include "core/laniddiscovery.h"
+#include "core/peercontroller.h"
 #include "core/theme.h"
 #include "icons.h"
 #include "widgets.h"
@@ -48,6 +49,28 @@ QString metaFor(const Device &d)
     return QObject::tr("%1 · DirectLink · 已连接").arg(d.platformLabel);
 }
 
+// 取对端的连接端点：地址 + 平台字节。
+//
+// 平台字节不能省：键鼠重映射要知道对端是 macOS（Cmd）还是 Windows/Linux
+//（Ctrl），否则 Ctrl+C 过去就变成了 Cmd+C，对端按的键完全不对。
+bool peerEndpoint(const QString &name, QString *outAddress, quint8 *outPlatform)
+{
+    const QList<LanIdDiscovery::Peer> peers = LanIdDiscovery::instance().peers();
+    for (const LanIdDiscovery::Peer &peer : peers) {
+        if (peer.name != name) {
+            continue;
+        }
+        if (outAddress != nullptr) {
+            *outAddress = peer.address;
+        }
+        if (outPlatform != nullptr) {
+            *outPlatform = peer.platformId;
+        }
+        return !peer.address.isEmpty();
+    }
+    return false;
+}
+
 // 本机有没有接管键鼠所需的权限。
 //
 // mac 上这一步是「辅助功能权限」，Linux 这边对应的是 uinput：
@@ -70,7 +93,30 @@ ConnectionsPanel::ConnectionsPanel(QWidget *parent) : Panel(tr("设备与连接"
     contentLayout_ = qobject_cast<QVBoxLayout *>(content()->layout());
 
     contentLayout_->addWidget(buildHeader());
+    contentLayout_->addWidget(buildInviteRow());
     contentLayout_->addWidget(buildDeviceList());
+
+    // 传输层的状态变化统一走 PeerController 的信号，界面只管刷新。
+    PeerController &controller = PeerController::instance();
+    connect(&controller, &PeerController::stateChanged, this, [this]() {
+        captureEnabled_ = PeerController::instance().captureEnabled();
+        refresh();
+    });
+    connect(&controller, &PeerController::inviteReceived, this,
+            [this](const QString &name, const QString &address) {
+                if (inviteRow_ != nullptr) {
+                    inviteRow_->setVisible(true);
+                }
+                if (inviteLabel_ != nullptr) {
+                    inviteLabel_->setText(tr("%1 请求连接本机").arg(name));
+                }
+                qCInfo(lcConnections) << "收到连接请求" << name << address;
+                toast(tr("%1 请求连接本机，请在设备与连接里应答").arg(name), ToastKind::Info);
+            });
+    connect(&controller, &PeerController::errorRaised, this,
+            [](const QString &message) {
+                toast(message, ToastKind::Danger);
+            });
     contentLayout_->addWidget(buildQuickLinks());
     setFooterWidget(buildFooter());
 
@@ -253,33 +299,79 @@ QWidget *ConnectionsPanel::buildFooter()
     return foot;
 }
 
+// ── 连接邀请 ───────────────────────────────────────────────────────────
+//
+// 对端发起连接后，这里冒出一条「XX 请求连接本机」+ 接受/拒绝。
+// 放在连接屏是因为「应答连接请求」属于连接操作；而托盘浮层是常驻的、
+// 一直在眼前，那边另有 toast 提示，用户点进来就能答。
+QWidget *ConnectionsPanel::buildInviteRow()
+{
+    inviteRow_ = new QWidget(this);
+    auto *hl = new QHBoxLayout(inviteRow_);
+    hl->setContentsMargins(0, tokens::kS2, 0, tokens::kS2);
+    hl->setSpacing(tokens::kS2);
+
+    inviteLabel_ = new QLabel(inviteRow_);
+    inviteLabel_->setFont(uiFont(tokens::kFont11));
+    hl->addWidget(inviteLabel_, 1);
+
+    auto *accept = new FgButton(tr("接受"), FgButton::Variant::Accent, true, inviteRow_);
+    connect(accept, &FgButton::clicked, this, [this]() {
+        PeerController::instance().respondInvite(true);
+        if (inviteRow_ != nullptr) {
+            inviteRow_->setVisible(false);
+        }
+    });
+    hl->addWidget(accept);
+
+    auto *reject = new FgButton(tr("拒绝"), FgButton::Variant::Ghost, true, inviteRow_);
+    connect(reject, &FgButton::clicked, this, [this]() {
+        PeerController::instance().respondInvite(false);
+        if (inviteRow_ != nullptr) {
+            inviteRow_->setVisible(false);
+        }
+    });
+    hl->addWidget(reject);
+
+    inviteRow_->setVisible(false);
+    return inviteRow_;
+}
+
 // ── 对端判定 ───────────────────────────────────────────────────────────
 
 const Device *ConnectionsPanel::activePeer() const
 {
-    // 「对端」= 在线且不是本机的设备。mac 那边对端恒为 AppModel.peerDevice；
-    // DDE 侧设备清单由 DeviceManager 给，目前只有本机——传输层落地后对端会
-    // 从这里冒出来。
+    // 连接状态只有 PeerController 知道（传输层在那儿）：按它报的对端名字
+    // 回设备列表里取那一条。不在这里自己推断「有对端就算连上了」——
+    // 那会让界面显示「已连接」，而实际上一次握手都没成功。
+    const QString connected = PeerController::instance().peerName();
+    if (connected.isEmpty()) {
+        return nullptr;
+    }
     for (const Device &d : DeviceManager::instance().devices()) {
-        if (!d.isLocal && d.online) {
+        if (!d.isLocal && d.online && d.name == connected) {
             return &d;
         }
     }
     return nullptr;
 }
 
+bool ConnectionsPanel::hasAnyPeer() const
+{
+    for (const Device &d : DeviceManager::instance().devices()) {
+        if (!d.isLocal && d.online) {
+            return true;
+        }
+    }
+    return false;
+}
+
 QString ConnectionsPanel::statusText() const
 {
-    const Device *peer = activePeer();
-    if (peer != nullptr) {
-        return tr("已连接 %1").arg(peer->name);
-    }
-    // 没连上，但局域网通告在监听：把端口写出来，让人知道这一侧是醒着的。
-    // mac 的 ConnectionStatus.listening(port:) 也是这么写的。
-    if (LanIdDiscovery::instance().isRunning()) {
-        return tr("未连接 · 监听 24801");
-    }
-    return tr("未连接");
+    // 状态文案由 PeerController 给（它知道会话到底处于哪个阶段：拨号中 /
+    // 等对方接受 / 已连接 / 被拒）。界面不自己拼——拼出来的文案与真实
+    // 会话状态对不上，比没有状态更糟。
+    return PeerController::instance().statusText();
 }
 
 // ── 接管键鼠 ───────────────────────────────────────────────────────────
@@ -314,12 +406,18 @@ void ConnectionsPanel::setCaptureEnabled(bool on)
         captureSwitch_->setChecked(false);
         return;
     }
-    // 权限与对端都齐了，但 DirectLink 的传输层尚未落地：捕获到的键鼠事件
-    // 没有可投递的链路。这时**不能**开捕获——开了会把本机的键鼠 grab 住，
-    // 事件却哪儿也去不了，本机直接失去输入。所以这里明确拒绝。
-    qCInfo(lcConnections) << "接管键鼠被拒：DirectLink 传输层尚未落地";
-    toast(tr("键鼠接管尚未接通"), ToastKind::Info);
-    captureSwitch_->setChecked(false);
+    // 三关都过了，真正去开捕获引擎并接上转发。
+    // 失败原因由 PeerController 经 errorRaised 报出来（那边已经 toast 过了），
+    // 这里只负责把开关拨回去。
+    if (!PeerController::instance().setCaptureEnabled(true)) {
+        captureEnabled_ = false;
+        captureSwitch_->setChecked(false);
+        return;
+    }
+    captureEnabled_ = true;
+    if (captureHint_ != nullptr) {
+        captureHint_->setText(tr("键鼠事件正发送到对端"));
+    }
 }
 
 // ── 设备卡 ─────────────────────────────────────────────────────────────
@@ -372,18 +470,32 @@ void ConnectionsPanel::rebuildDeviceCards()
             lat->setLatency(d.latencyMs, d.online && d.latencyMs >= 0.0);
             tl->addWidget(lat);
 
-            auto *btn = new IconButton(d.online ? QStringLiteral("unlink")
-                                                 : QStringLiteral("close"),
-                                       d.online ? tr("断开连接") : tr("移除离线设备"),
-                                       trailing);
-            connect(btn, &IconButton::clicked, this, [d]() {
-                // 断开 / 移除对端都要走传输层。DDE 侧传输层尚未落地，这里如实
-                // 记一条，不做点下去毫无反应的事。
-                qCInfo(lcConnections)
-                    << "对端操作" << d.name << QStringLiteral("尚未接通（传输层未落地）");
-                toast(tr("传输层尚未落地，暂不能断开对端"), ToastKind::Info);
-            });
-            tl->addWidget(btn);
+            // 连接 / 断开都走传输层（PeerSession → PeerController）。
+            // 按钮形态跟着真实连接状态走：没连上是「连接」，连上了是「断开」。
+            const bool connected = activePeer() != nullptr && activePeer()->name == d.name;
+            if (connected) {
+                auto *btn = new FgButton(tr("断开"), FgButton::Variant::Ghost, true, trailing);
+                connect(btn, &FgButton::clicked, this, [this, d]() {
+                    PeerController::instance().disconnectPeer();
+                    qCInfo(lcConnections) << "已断开对端" << d.name;
+                    toast(tr("已断开 %1").arg(d.name), ToastKind::Info);
+                });
+                tl->addWidget(btn);
+            } else if (d.online) {
+                auto *btn = new FgButton(tr("连接"), FgButton::Variant::Secondary, true, trailing);
+                connect(btn, &FgButton::clicked, this, [this, d]() {
+                    QString address;
+                    quint8 platformId = proto::platform::kLinux;
+                    if (!peerEndpoint(d.name, &address, &platformId)) {
+                        qCInfo(lcConnections) << "无法连接" << d.name << "：发现层没有它的端点";
+                        toast(tr("无法取得 %1 的连接地址").arg(d.name), ToastKind::Danger);
+                        return;
+                    }
+                    PeerController::instance().connectTo(address, d.name, platformId);
+                    qCInfo(lcConnections) << "向对端发起连接" << d.name << address;
+                });
+                tl->addWidget(btn);
+            }
         }
         tl->addStretch(1);
         card->setTrailingWidget(trailing);
@@ -396,8 +508,9 @@ void ConnectionsPanel::rebuildDeviceCards()
         deviceListLayout_->addWidget(card);
     }
 
-    // 没有对端时补一句轻量空态提示（mac 的 FGEmptyHint）。
-    if (activePeer() == nullptr) {
+    // 一个对端都没发现时才补空态提示（mac 的 FGEmptyHint）。
+    // 已经发现了对端还说「连接设备后，对端会出现在这里」是自相矛盾。
+    if (!hasAnyPeer()) {
         auto *hint = new QWidget(deviceList_);
         auto *hl = new QHBoxLayout(hint);
         hl->setContentsMargins(0, tokens::kS2, 0, tokens::kS2);

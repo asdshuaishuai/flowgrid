@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <set>
 
 namespace fg::input {
 
@@ -38,6 +39,10 @@ public:
     // injector：接收端注入目标（可为 nullptr——只做控制端转发时不需要）。
     // send：把线上帧交给传输层；为空时 forwardCaptured 只算不发。
     Forwarder(Injector *injector, SendFn send);
+
+    // 换发送通道（会话建立后才拿到通道时用）。
+    void setSendFn(SendFn send) { send_ = std::move(send); }
+    bool hasSendChannel() const { return static_cast<bool>(send_); }
 
     // 对端平台。跨平台时修饰键要按目标平台换算（§6.3 Ctrl⇄Meta）：
     // Linux→macOS 传 Ctrl，对端要收到 Cmd。
@@ -59,6 +64,13 @@ public:
     // 返回 false 表示这条帧不是输入帧或注入失败。
     bool handleInbound(std::uint8_t frameType, const QByteArray &payload);
 
+    // 停接管前把还按着的键与鼠标按钮松开。
+    //
+    // 为什么必须做：对端在**另一台机器**上。我们不再转发 keyUp 的话，那边的
+    // 键会一直停在按下态——本机这边松手了，对面还按着，典型症状是「远程
+    // 机器上有个键卡住了」。
+    void releasePressed();
+
     // 最近一次失败原因（诊断用；界面层只展示，不据此改行为）。
     QString lastError() const { return lastError_; }
 
@@ -69,6 +81,11 @@ private:
     const proto::KeyMap *keymap_ = nullptr;
     QString context_;
     QString lastError_;
+
+    // 还按着的键/按钮（存的是**重映射后**的键码，松开时发出去的必须与
+    // 按下时完全一致，否则对端会多出一个按下的键）。
+    std::set<std::uint16_t> pressedKeys_;
+    std::set<std::uint8_t> pressedButtons_;
 };
 
 } // namespace fg::input

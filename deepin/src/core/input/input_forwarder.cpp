@@ -25,6 +25,7 @@ bool Forwarder::forwardCaptured(const CapturedEvent &event)
         }
         frame.frameType = proto::frametype::kKeyDown;
         frame.payload = proto::keyDownPayload(key, mods).toByteArray();
+        pressedKeys_.insert(key);
         break;
     }
     case EventKind::KeyUp: {
@@ -41,6 +42,7 @@ bool Forwarder::forwardCaptured(const CapturedEvent &event)
         }
         frame.frameType = proto::frametype::kKeyUp;
         frame.payload = proto::keyUpPayload(key).toByteArray();
+        pressedKeys_.erase(key);
         break;
     }
     case EventKind::MouseMove:
@@ -51,6 +53,11 @@ bool Forwarder::forwardCaptured(const CapturedEvent &event)
         frame.frameType = proto::frametype::kMouseButton;
         frame.payload =
             proto::mouseButtonPayload(event.button, event.pressed).toByteArray();
+        if (event.pressed) {
+            pressedButtons_.insert(event.button);
+        } else {
+            pressedButtons_.erase(event.button);
+        }
         break;
     case EventKind::Scroll:
         frame.frameType = proto::frametype::kScroll;
@@ -64,6 +71,31 @@ bool Forwarder::forwardCaptured(const CapturedEvent &event)
     }
     send_(frame);
     return true;
+}
+
+void Forwarder::releasePressed()
+{
+    if (!send_) {
+        pressedKeys_.clear();
+        pressedButtons_.clear();
+        return;
+    }
+    // 松开用**按下时记下的那个键码**，不重新算：重映射的输入（掩码）不同，
+    // 算出来的键码可能对不上，对端就会多出一个按下的键。
+    for (std::uint16_t key : pressedKeys_) {
+        OutboundFrame frame;
+        frame.frameType = proto::frametype::kKeyUp;
+        frame.payload = proto::keyUpPayload(key).toByteArray();
+        send_(frame);
+    }
+    for (std::uint8_t button : pressedButtons_) {
+        OutboundFrame frame;
+        frame.frameType = proto::frametype::kMouseButton;
+        frame.payload = proto::mouseButtonPayload(button, false).toByteArray();
+        send_(frame);
+    }
+    pressedKeys_.clear();
+    pressedButtons_.clear();
 }
 
 bool Forwarder::handleInbound(std::uint8_t frameType, const QByteArray &payload)

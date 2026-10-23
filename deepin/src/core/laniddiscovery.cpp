@@ -1,5 +1,7 @@
 #include "laniddiscovery.h"
 
+#include "input/peer_session.h"
+
 #include "lanidlink.h"
 #include "protocolapi.h"
 
@@ -38,8 +40,10 @@ constexpr std::uint8_t kCapsFileTransfer = 0x20;
 constexpr std::uint8_t kCaps =
     static_cast<std::uint8_t>(kCapsDirectLink | kCapsClipboard | kCapsFileTransfer);
 
-// DirectLink 监听端口（§3.1.1，与 lanidlink.cpp 里的 kPort 一致）。
-constexpr quint16 kPort = 24801;
+// 通告里报的是**会话端口**（对端据此 dial 建连接），不是 LAN ID 的组播
+// UDP 端口 24801——那个端口是收发通告用的，TCP 连过去没人监听。
+// 与 web demo 的做法一致（demo 通告 httpPort+20000）。
+constexpr quint16 kAnnouncedPort = input::kPeerSessionPort;
 
 // 平台字节 → 界面上的名字。跟 mac 的 Platform.displayName 同一套叫法。
 QString platformName(std::uint8_t platform)
@@ -71,6 +75,17 @@ QString addressFromBytes(const QByteArray &raw)
             .arg(static_cast<quint8>(raw[3]));
     }
     if (raw.size() == 16) {
+        // IPv4 映射地址（::ffff:a.b.c.d）：Go 的 net.IP 对 IPv4 来源常以 16 字节
+        // 的映射形式给出。直接按 IPv6 展开会得到
+        // 「0000:0000:…:ffff:c0a8:1f90」这种没人看得懂的串——界面上要的是
+        // 「192.168.31.144」。所以先认出映射前缀，再按 IPv4 渲染。
+        bool mapped = true;
+        for (int i = 0; i < 10 && mapped; ++i) {
+            mapped = raw[i] == 0;
+        }
+        if (mapped && static_cast<quint8>(raw[10]) == 0xFF && static_cast<quint8>(raw[11]) == 0xFF) {
+            return addressFromBytes(raw.mid(12));
+        }
         QStringList parts;
         for (int i = 0; i < 16; i += 2) {
             parts << QStringLiteral("%1")
@@ -190,8 +205,8 @@ void LanIdDiscovery::start()
     const QString hostName = QSysInfo::machineHostName().isEmpty()
                                  ? QStringLiteral("Deepin")
                                  : QSysInfo::machineHostName();
-    announcer_ = std::make_unique<proto::Announcer>(*identity_, kPlatformLinux, kCaps, kPort,
-                                                     hostName);
+    announcer_ = std::make_unique<proto::Announcer>(*identity_, kPlatformLinux, kCaps,
+                                                     kAnnouncedPort, hostName);
     if (!announcer_->isValid()) {
         lastError_ = tr("无法创建通告器");
         qCWarning(lcLanId) << lastError_;
@@ -218,7 +233,7 @@ void LanIdDiscovery::start()
     link_->start();
 
     running_ = true;
-    qCInfo(lcLanId) << "智能连接发现已启动" << hostName << "端口" << kPort;
+    qCInfo(lcLanId) << "智能连接发现已启动" << hostName << "会话端口" << kAnnouncedPort;
 }
 
 void LanIdDiscovery::stop()
@@ -267,6 +282,7 @@ QList<LanIdDiscovery::Peer> LanIdDiscovery::peers() const
         Peer peer;
         peer.name = p.name.isEmpty() ? tr("未知设备") : p.name;
         peer.platform = platformName(p.platform);
+        peer.platformId = p.platform;
         peer.port = p.port;
         peer.fingerprint = p.fingerprint;
         peer.trusted = trust_ ? trust_->isTrusted(p.publicKey) : false;

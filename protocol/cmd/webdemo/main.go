@@ -10,6 +10,7 @@ package main
 
 import (
 	"crypto/ecdsa"
+	"crypto/sha256"
 	"embed"
 	"encoding/binary"
 	"encoding/hex"
@@ -22,6 +23,7 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,8 +34,28 @@ import (
 //go:embed index.html
 var indexHTML embed.FS
 
-// demoHMACKey 仅用于演示帧的 HMAC 完整性（§8.3），非真实会话密钥。
-var demoHMACKey = []byte("flowgrid-webdemo-hmac-key-32b!")
+// demoPairingCode 是 demo 的配对码：会话 HMAC 密钥由它派生。
+//
+// 派生算法与 mac 的 SessionKey.derive 完全一致：
+// SHA256("FlowGrid-mvp-session|" + 归一化码)，归一化 = 去首尾空白 + 转小写。
+// 两端算不出同一把密钥就收不到对方的帧（症状是「连上了却一条帧都收不到」），
+// 所以 demo 必须按配对码派生，而不是用一把写死的密钥——写死的密钥只有
+// demo 自己知道，跟真客户端永远对不上。
+var demoPairingCode = func() string {
+	if code := os.Getenv("FLOWGRID_DEMO_PAIRING"); code != "" {
+		return code
+	}
+	return "0000"
+}()
+
+// deriveSessionKey 配对码 → 会话 HMAC 密钥（§8.3）。
+func deriveSessionKey(code string) []byte {
+	normalized := strings.ToLower(strings.TrimSpace(code))
+	sum := sha256.Sum256([]byte("FlowGrid-mvp-session|" + normalized))
+	return sum[:]
+}
+
+var demoHMACKey = deriveSessionKey(demoPairingCode)
 
 // allowLocalPeers 决定「扫描周围设备」要不要把本机上的另一个 FlowGrid 实例
 // 也算进来。默认不算：demo 与 DDE 客户端同机运行时，两边都往同一个组播端口
@@ -100,10 +122,14 @@ func encodeFrame(ft uint8, seq uint16, payload []byte) []byte {
 	return wire
 }
 
-// writeFrame / readFrame 是 demo 的 TCP 传输framing：4 字节大端长度前缀 + 线上字节。
+// writeFrame / readFrame 是 DirectLink 的 TCP 传输分帧（§7.2）：
+// **2 字节**大端长度前缀 + 线上字节（帧体 + 8 字节 HMAC 尾）。
+//
+// 长度前缀是 2 字节而不是 4 字节：协议 §7.2 与 mac / deepin 客户端都是 2 字节，
+// 写成 4 字节的话两端对不上帧长，demo 与真客户端直接互通不了。
 func writeFrame(conn net.Conn, wire []byte) error {
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(wire)))
+	var hdr [2]byte
+	binary.BigEndian.PutUint16(hdr[:], uint16(len(wire)))
 	if _, err := conn.Write(hdr[:]); err != nil {
 		return err
 	}
@@ -112,12 +138,13 @@ func writeFrame(conn net.Conn, wire []byte) error {
 }
 
 func readFrame(conn net.Conn) ([]byte, error) {
-	var hdr [4]byte
+	var hdr [2]byte
 	if _, err := io.ReadFull(conn, hdr[:]); err != nil {
 		return nil, err
 	}
-	n := binary.BigEndian.Uint32(hdr[:])
-	if n == 0 || n > 1<<20 {
+	n := binary.BigEndian.Uint16(hdr[:])
+	// §7.2 的长度前缀是 2 字节，最大 65535；再大的记录不是这个协议的东西。
+	if n == 0 || int(n) < protocol.HeaderSize {
 		return nil, fmt.Errorf("bad frame length %d", n)
 	}
 	buf := make([]byte, n)
