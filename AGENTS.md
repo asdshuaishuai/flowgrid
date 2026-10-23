@@ -130,6 +130,7 @@ Go 协议库是 wire format 的唯一权威实现。未来任何平台的客户�
   - 发送侧 `protocol.RemapCapturedKey(hidKey, modifiers, from, to, table, ctx)` → 重映射后的 (键码, 掩码)；掩码规则感知、键码规则优先否则平台默认 Ctrl↔Meta，掩码与键保持一致（§6.3/§11）。`table` 可空（仅平台默认）。
 - **客户端接线**：Go 客户端（windows fgcore）直接调 `protocol.RemapCapturedKey`；原生客户端（mac/deepin）经 cgo `fg_input_remap_key`（句柄 0=nil、context 空=global）。各端内联重映射一律删除。
 - **现状**：mac（已删 `KeyCodeTable.remapModifierKey`）、Windows（`hub.go` 已收敛到 `RemapCapturedKey`）完成；deepin 输入 HAL 已薄、无内联重映射，捕获→对端转发通路待补。
+- **详见** `docs/INPUT-CAPABILITY.md`（输入能力的设计 / 实现 / 测试）。
 
 ---
 
