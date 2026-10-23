@@ -93,10 +93,12 @@ func DecodeInputFrame(frameType uint8, payload []byte, from, to Platform, table 
 }
 
 // RemapCapturedKey remaps a captured key event (HID Usage ID + modifier mask)
-// from the source platform to the target for transmission. It honors an
-// explicit KeyMapTable rule first (context-scoped, §11.2) then falls back to
-// the platform-default Ctrl↔Meta conversion (RemapModifierKey / RemapModifiers,
-// §6.3). table may be nil (platform default only); from == to is a no-op.
+// from the source platform to the target for transmission. The modifier mask
+// is remapped rule-aware first (each modifier key via an explicit KeyMapTable
+// rule, else the platform default), then the key itself honors an explicit rule
+// (context-scoped, §11.2) else the platform-default Ctrl↔Meta swap (§6.3) — so
+// the mask and the key stay consistent under user keymaps. table may be nil
+// (platform default only); from == to is a no-op.
 //
 // This is the send-side counterpart to DecodeInputFrame: capturing clients call
 // it instead of reimplementing §6.3/§11 remap. Mouse/scroll carry no key
@@ -108,12 +110,17 @@ func RemapCapturedKey(hidKey uint16, modifiers uint8, from, to Platform, table *
 	if from == to {
 		return hidKey, modifiers
 	}
+	// 掩码先按规则感知换算：每个修饰键走 keymap 规则、未命中走平台默认，保证掩码与
+	// 键一致（用户可能把 Win 映射成 Alt，只按平台默认换掩码会「按的是 Alt、掩码说
+	// Ctrl」，§6.3/§11）。table 为 nil 时退化为平台默认，与 RemapModifiers 等价。
+	mods := table.RemapModifierMask(from, to, modifiers, context)
+	// 主键：显式规则优先（用已换算的掩码匹配），未命中走平台默认修饰键换算。
 	if table != nil {
-		if rk, rm, ok := table.Lookup(from, to, hidKey, modifiers, context); ok {
-			return rk, rm
+		if nk, nm, ok := table.Lookup(from, to, hidKey, mods, context); ok {
+			return nk, nm
 		}
 	}
-	return RemapModifierKey(hidKey, from, to), RemapModifiers(modifiers, from, to)
+	return RemapModifierKey(hidKey, from, to), mods
 }
 
 // Describe renders a short human-readable summary for logs / UI.

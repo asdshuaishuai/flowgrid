@@ -372,24 +372,13 @@ func (h *Hub) consume(events <-chan wininput.InputEvent) {
 
 func (h *Hub) forward(hosting string, ev wininput.InputEvent) {
 	peerPlatform := h.eng.PeerPlatform(hosting)
-	hid := ev.HID
-	var mods uint8
+	var ctx protocol.KeyMapContext
 	if h.keymap != nil {
-		ctx := protocol.AppContext(appName(wininput.ForegroundApp()))
-		// 掩码和键位必须用同一套规则换算：用户可能把 Win 映射成 Alt，
-		// 只按平台默认换掩码会出现「按的是 Alt、掩码说 Ctrl」。
-		mods = h.keymap.RemapModifierMask(protocol.PlatformWindows, peerPlatform, ev.Modifiers, ctx)
-		if nk, nm, ok := h.keymap.Lookup(protocol.PlatformWindows, peerPlatform, ev.HID, mods, ctx); ok {
-			hid, mods = nk, nm
-		} else {
-			// 用户规则没命中时走平台默认换算：修饰键的 HID 也要换，
-			// 否则 mac 目标端收到的是 Control 键而不是 Command（§6.3）。
-			hid = protocol.RemapModifierKey(hid, protocol.PlatformWindows, peerPlatform)
-		}
-	} else {
-		mods = protocol.RemapModifiers(ev.Modifiers, protocol.PlatformWindows, peerPlatform)
-		hid = protocol.RemapModifierKey(hid, protocol.PlatformWindows, peerPlatform)
+		ctx = protocol.AppContext(appName(wininput.ForegroundApp()))
 	}
+	// 键码 + 掩码一起按目标平台重映射，能力全在协议层（RemapCapturedKey）：掩码规则
+	// 感知、主键规则优先否则平台默认 Ctrl↔Meta，掩码与键保持一致（§6.3/§11）。
+	hid, mods := protocol.RemapCapturedKey(ev.HID, ev.Modifiers, protocol.PlatformWindows, peerPlatform, h.keymap, ctx)
 
 	if ev.Kind == wininput.KindKey {
 		h.mu.Lock()
