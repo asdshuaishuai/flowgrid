@@ -248,23 +248,23 @@ func expectFor(ev VectorEvent, from, to Platform) VectorExpect {
 		panic("inputvectors: unknown event kind " + ev.Kind)
 	}
 
-	frameType, payload, err := EncodeInput(in, from, to, nil, ContextGlobal)
+	encoded, err := EncodeInput(in, from, to, nil, ContextGlobal)
 	if err != nil {
 		panic("inputvectors: encode failed: " + err.Error())
 	}
-	decoded, err := DecodeInput(frameType, payload)
+	decoded, err := DecodeInput(encoded.FrameType, encoded.Payload)
 	if err != nil {
 		panic("inputvectors: decode failed: " + err.Error())
 	}
 	return VectorExpect{
-		FrameType:  frameTypeName(frameType),
+		FrameType:  frameTypeName(encoded.FrameType),
 		Key:        decoded.Key,
 		Modifiers:  decoded.Modifiers,
 		DeltaX:     decoded.DeltaX,
 		DeltaY:     decoded.DeltaY,
 		Button:     decoded.Button,
 		Pressed:    decoded.Pressed,
-		PayloadHex: hex.EncodeToString(payload),
+		PayloadHex: hex.EncodeToString(encoded.Payload),
 	}
 }
 

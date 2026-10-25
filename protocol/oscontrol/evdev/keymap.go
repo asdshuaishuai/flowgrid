@@ -4,7 +4,8 @@ import "github.com/flowgrid/protocol"
 
 // HID Usage ID ↔ evdev keycode 的映射（§6.1 ↔ Linux input-event-codes）。
 //
-// 表是从 deepin/src/core/input/input_keymap.h 转过来的——**同一份映射只留一处**
+// 表是从 deepin 原先那份 C++ `input_keymap.h` 转过来的——**同一份映射只留一处**
+// （那份 C++ 头文件已随输入引擎一起删除，deepin 侧不再有第二份）。
 // （协议层的 oscontrol/evdev 是权威，那张 C++ 表在客户端迁完之前先留着）。
 var hidToEvdevTable = map[uint16]uint16{
 	0x04: KEY_A,

@@ -7,16 +7,23 @@
 //
 // 现在协议层把向量算好落到 protocol/testdata/input_vectors.json，各端读
 // **同一份文件**。本测试做两件事：
-//   1. 常量镜像对齐：deepin 代码里手抄的帧类型 / 平台 / 修饰位 / 角色 /
-//      能力位，逐个跟向量文件里的真值比对——协议层改了而客户端忘了改，
-//      这里立刻红（以前没有任何机制保证这件事）。
-//   2. 载荷字节对齐：把向量里的输入事件喂给转发通路，逐个核对产出的帧类型
-//      与载荷字节。
+//   1. 常量镜像对齐：deepin 代码里手抄的帧类型 / 平台 / 角色 / 能力位，逐个
+//      跟向量文件里的真值比对——协议层改了而客户端忘了改，这里立刻红
+//      （以前没有任何机制保证这件事）。
+//   2. 载荷字节对齐：把向量里的输入事件喂给 **cgo 边界**（fg_input_encode），
+//      逐个核对产出的帧类型与载荷字节。
+//
+// 迁移到 oscontrol 之后，本测试的覆盖范围**变窄了但更准了**：
+//   · 修饰位 / 鼠标按钮号这些常量，deepin 侧**不再镜像**了——它们随 C++ 的
+//     输入引擎一起删掉，改由协议层的 oscontrol/evdev 独家持有。所以这里
+//     不再比对它们（没有可比的了）；它们的真值由协议层的向量漂移守卫
+//     （protocol/input_vectors_test.go）盯着。
+//   · 剩下要盯的是 **FFI 边界**：C++ 调 fg_input_encode 拿到的字节，必须
+//     跟协议层自己算出来的一模一样。这一段以前没人盯——它是「各端各写一份
+//     载荷」时代的最后一道缝。
 //
 // 只跑 from_platform == "linux" 的用例（deepin 是 Linux 客户端）；
 // 其余平台的用例留给 mac / Windows 客户端读同一份文件。
-#include "core/input/input_forwarder.h"
-#include "core/input/input_keymap.h"
 #include "core/protocolapi.h"
 
 #include <QCoreApplication>
@@ -50,7 +57,6 @@ void check(bool condition, const char *what)
 }
 
 using namespace fg;
-using namespace fg::input;
 
 // 向量文件里的帧类型名 → deepin 的帧类型常量。
 std::uint8_t frameTypeOf(const QString &name)
@@ -101,30 +107,18 @@ void checkConstant(const QJsonObject &group, const QString &name, std::uint8_t m
     }
 }
 
-// 向量里的一个输入事件 → deepin 的捕获事件。
-bool buildEvent(const QJsonObject &object, CapturedEvent *out)
+// 向量里的一个输入事件 → 喂给 fg_input_encode 的字段。
+//
+// kind 传**帧类型**常量：协议层里操作类型与帧类型一一对应且同值，客户端
+// 因此不必再镜像一套「操作类型」常量。
+std::uint8_t kindToFrameType(const QString &kind)
 {
-    const QString kind = object.value(QStringLiteral("kind")).toString();
-    if (kind == QLatin1String("key_down")) {
-        out->kind = EventKind::KeyDown;
-    } else if (kind == QLatin1String("key_up")) {
-        out->kind = EventKind::KeyUp;
-    } else if (kind == QLatin1String("mouse_move")) {
-        out->kind = EventKind::MouseMove;
-    } else if (kind == QLatin1String("mouse_button")) {
-        out->kind = EventKind::MouseButton;
-    } else if (kind == QLatin1String("scroll")) {
-        out->kind = EventKind::Scroll;
-    } else {
-        return false;
-    }
-    out->keyCode = static_cast<std::uint16_t>(object.value(QStringLiteral("key")).toDouble());
-    out->modifiers = static_cast<std::uint8_t>(object.value(QStringLiteral("modifiers")).toDouble());
-    out->deltaX = static_cast<std::int16_t>(object.value(QStringLiteral("delta_x")).toDouble());
-    out->deltaY = static_cast<std::int16_t>(object.value(QStringLiteral("delta_y")).toDouble());
-    out->button = static_cast<std::uint8_t>(object.value(QStringLiteral("button")).toDouble());
-    out->pressed = object.value(QStringLiteral("pressed")).toBool();
-    return true;
+    if (kind == QLatin1String("key_down")) return proto::frametype::kKeyDown;
+    if (kind == QLatin1String("key_up")) return proto::frametype::kKeyUp;
+    if (kind == QLatin1String("mouse_move")) return proto::frametype::kMouseMove;
+    if (kind == QLatin1String("mouse_button")) return proto::frametype::kMouseButton;
+    if (kind == QLatin1String("scroll")) return proto::frametype::kScroll;
+    return 0;
 }
 
 } // namespace
@@ -171,20 +165,6 @@ int main(int argc, char **argv)
     checkConstant(platforms, QStringLiteral("windows"), proto::platform::kWindows, "platforms");
     checkConstant(platforms, QStringLiteral("linux"), proto::platform::kLinux, "platforms");
 
-    const QJsonObject modifiers = constantsGroup(constants, QStringLiteral("modifiers"));
-    checkConstant(modifiers, QStringLiteral("left_ctrl"), kModLeftCtrl, "modifiers");
-    checkConstant(modifiers, QStringLiteral("left_shift"), kModLeftShift, "modifiers");
-    checkConstant(modifiers, QStringLiteral("left_alt"), kModLeftAlt, "modifiers");
-    checkConstant(modifiers, QStringLiteral("left_meta"), kModLeftMeta, "modifiers");
-    checkConstant(modifiers, QStringLiteral("right_ctrl"), kModRightCtrl, "modifiers");
-    checkConstant(modifiers, QStringLiteral("right_shift"), kModRightShift, "modifiers");
-    checkConstant(modifiers, QStringLiteral("right_alt"), kModRightAlt, "modifiers");
-    checkConstant(modifiers, QStringLiteral("right_meta"), kModRightMeta, "modifiers");
-    checkConstant(modifiers, QStringLiteral("ctrl"), kModCtrl, "modifiers");
-    checkConstant(modifiers, QStringLiteral("shift"), kModShift, "modifiers");
-    checkConstant(modifiers, QStringLiteral("alt"), kModAlt, "modifiers");
-    checkConstant(modifiers, QStringLiteral("meta"), kModMeta, "modifiers");
-
     const QJsonObject roles = constantsGroup(constants, QStringLiteral("roles"));
     checkConstant(roles, QStringLiteral("host"), proto::role::kHost, "roles");
     checkConstant(roles, QStringLiteral("target"), proto::role::kTarget, "roles");
@@ -202,18 +182,6 @@ int main(int argc, char **argv)
     const auto protocolVersion =
         static_cast<std::uint8_t>(constants.value(QStringLiteral("protocol_version")).toDouble());
     check(protocolVersion == proto::kProtocolVersion, "协议版本镜像与协议层一致");
-
-    // 鼠标按钮号：协议 §6.4 的 1=左 2=右 3=中。
-    const QJsonObject buttons = constantsGroup(constants, QStringLiteral("mouse_buttons"));
-    checkConstant(buttons, QStringLiteral("left"), kMouseButtonLeft, "mouse_buttons");
-    checkConstant(buttons, QStringLiteral("right"), kMouseButtonRight, "mouse_buttons");
-    checkConstant(buttons, QStringLiteral("middle"), kMouseButtonMiddle, "mouse_buttons");
-    checkConstant(buttons, QStringLiteral("back"), kMouseButtonBack, "mouse_buttons");
-    checkConstant(buttons, QStringLiteral("forward"), kMouseButtonForward, "mouse_buttons");
-    // 按钮号 → evdev 键码的映射也得对（0x01 是左键，不是别的）。
-    check(mouseButtonToEvdev(kMouseButtonLeft) == BTN_LEFT, "左键映射到 BTN_LEFT");
-    check(mouseButtonToEvdev(kMouseButtonRight) == BTN_RIGHT, "右键映射到 BTN_RIGHT");
-    check(mouseButtonToEvdev(kMouseButtonMiddle) == BTN_MIDDLE, "中键映射到 BTN_MIDDLE");
 
     // ── 2. 载荷字节对齐 ────────────────────────────────────────────
     const QJsonArray cases = root.value(QStringLiteral("cases")).toArray();
@@ -237,32 +205,53 @@ int main(int argc, char **argv)
             continue;
         }
 
-        // 转发通路：把捕获事件转成线上帧。这里不接注入目标（只关心产出什么）。
-        Forwarder sender(nullptr, nullptr);
-        sender.setPeerPlatform(peerPlatform);
-        std::vector<OutboundFrame> sent;
-        sender.setSendFn([&sent](const OutboundFrame &frame) { sent.push_back(frame); });
+        const std::uint8_t fromPlatform = platformOf(from);
+        if (fromPlatform == 0) {
+            std::fprintf(stderr, "FAIL: 用例 %s 的本机平台 %s 不认识\n", name.toUtf8().constData(),
+                         from.toUtf8().constData());
+            ++failures;
+            continue;
+        }
 
+        // FFI 边界：把向量里的输入事件喂给 fg_input_encode，核对产出的帧类型
+        // 与载荷字节。这正是「各端各写一份载荷」时代最后剩下的那条缝。
         const QJsonArray events = caseObject.value(QStringLiteral("events")).toArray();
         const QJsonArray expects = caseObject.value(QStringLiteral("expect")).toArray();
+        std::vector<std::uint8_t> sentTypes;
+        std::vector<QByteArray> sentPayloads;
         for (const QJsonValue &eventValue : events) {
-            CapturedEvent event;
-            if (!buildEvent(eventValue.toObject(), &event)) {
+            const QJsonObject event = eventValue.toObject();
+            const std::uint8_t kind = kindToFrameType(event.value(QStringLiteral("kind")).toString());
+            if (kind == 0) {
                 std::fprintf(stderr, "FAIL: 用例 %s 有不认识的事件\n", name.toUtf8().constData());
                 ++failures;
                 break;
             }
-            if (!sender.forwardCaptured(event)) {
-                std::fprintf(stderr, "FAIL: 用例 %s 转发失败：%s\n", name.toUtf8().constData(),
-                             sender.lastError().toUtf8().constData());
+            std::uint8_t frameType = 0;
+            std::uint16_t outKey = 0;
+            std::uint8_t outModifiers = 0;
+            const proto::GoBuffer payload = proto::encodeInput(
+                kind,
+                static_cast<std::uint16_t>(event.value(QStringLiteral("key")).toDouble()),
+                static_cast<std::uint8_t>(event.value(QStringLiteral("modifiers")).toDouble()),
+                static_cast<std::int16_t>(event.value(QStringLiteral("delta_x")).toDouble()),
+                static_cast<std::int16_t>(event.value(QStringLiteral("delta_y")).toDouble()),
+                static_cast<std::uint8_t>(event.value(QStringLiteral("button")).toDouble()),
+                event.value(QStringLiteral("pressed")).toBool(),
+                fromPlatform, peerPlatform, nullptr, QString(),
+                &frameType, &outKey, &outModifiers);
+            if (payload.isNull()) {
+                std::fprintf(stderr, "FAIL: 用例 %s 编码失败\n", name.toUtf8().constData());
                 ++failures;
                 break;
             }
+            sentTypes.push_back(frameType);
+            sentPayloads.push_back(payload.toByteArray());
         }
 
-        if (static_cast<int>(sent.size()) != static_cast<int>(expects.size())) {
+        if (static_cast<int>(sentTypes.size()) != static_cast<int>(expects.size())) {
             std::fprintf(stderr, "FAIL: 用例 %s 产出 %lld 帧，向量期望 %lld 帧\n",
-                         name.toUtf8().constData(), static_cast<long long>(sent.size()),
+                         name.toUtf8().constData(), static_cast<long long>(sentTypes.size()),
                          static_cast<long long>(expects.size()));
             ++failures;
             continue;
@@ -271,12 +260,12 @@ int main(int argc, char **argv)
             const QJsonObject want = expects.at(i).toObject();
             const std::uint8_t wantType = frameTypeOf(want.value(QStringLiteral("frame_type")).toString());
             const QString wantPayload = want.value(QStringLiteral("payload_hex")).toString();
-            if (sent.at(i).frameType != wantType) {
+            if (sentTypes.at(i) != wantType) {
                 std::fprintf(stderr, "FAIL: 用例 %s 第 %d 帧类型是 0x%02x，向量期望 0x%02x\n",
-                             name.toUtf8().constData(), i, sent.at(i).frameType, wantType);
+                             name.toUtf8().constData(), i, sentTypes.at(i), wantType);
                 ++failures;
             }
-            const QString gotPayload = QString::fromLatin1(sent.at(i).payload.toHex());
+            const QString gotPayload = QString::fromLatin1(sentPayloads.at(i).toHex());
             if (gotPayload != wantPayload) {
                 std::fprintf(stderr, "FAIL: 用例 %s 第 %d 帧载荷是 %s，向量期望 %s\n",
                              name.toUtf8().constData(), i, gotPayload.toUtf8().constData(),

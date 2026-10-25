@@ -633,24 +633,19 @@ func fg_input_encode(kind C.uint8_t, key C.uint16_t, modifiers C.uint8_t,
 		Button:    uint8(button),
 		Pressed:   uint8(pressed) != 0,
 	}
-	frameType, payload, err := protocol.EncodeInput(in,
+	encoded, err := protocol.EncodeInput(in,
 		protocol.Platform(fromPlatform), protocol.Platform(toPlatform), table, ctx)
 	if err != nil {
 		return nil
 	}
-	// 重映射后的键位与掩码回填给客户端（key_up 的载荷不带掩码，但键位是换过的，
-	// 所以它的重映射输入掩码也是 0——跟 EncodeInput 保持一致）。
-	remapModifiers := in.Modifiers
-	if in.Kind == protocol.InputKeyUp {
-		remapModifiers = 0
-	}
-	remappedKey, remappedMods := protocol.RemapCapturedKey(in.Key, remapModifiers,
-		protocol.Platform(fromPlatform), protocol.Platform(toPlatform), table, ctx)
-	*outFrameType = C.uint8_t(frameType)
-	*outKey = C.uint16_t(remappedKey)
-	*outMods = C.uint8_t(remappedMods)
-	*outLen = C.size_t(len(payload))
-	return cBuffer(payload)
+	// 重映射后的键位与掩码由编码器一起交出来（EncodedInput.Key/Modifiers），
+	// 客户端不用再自己算一遍——两遍算法一旦分叉，「按下」和「松开」就对不上，
+	// 而且极难查。
+	*outFrameType = C.uint8_t(encoded.FrameType)
+	*outKey = C.uint16_t(encoded.Key)
+	*outMods = C.uint8_t(encoded.Modifiers)
+	*outLen = C.size_t(len(encoded.Payload))
+	return cBuffer(encoded.Payload)
 }
 
 //export fg_keymap_free

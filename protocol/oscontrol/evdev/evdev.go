@@ -6,7 +6,7 @@
 // protocol.Input 翻译成 Linux 的动作。协议语义（帧怎么拼、键位怎么重映射）
 // 全在协议层——本包一行都不碰。
 //
-// 行为对齐 deepin 客户端现有那套 C++ 引擎（deepin/src/core/input/input_engine.cpp），
+// 行为对齐 deepin 客户端原先那套 C++ 引擎（已删除，deepin 侧现在直接用这一层），
 // 两边读的是同一份协议语义，所以结果必须一致——由协议层的黄金向量钉住。
 package evdev
 

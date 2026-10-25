@@ -1,11 +1,11 @@
 // HAL 层真机测试：真实 evdev 捕获 → 真实协议 → 真实 uinput 注入 → 读回验证。
 //
 // 这条链路里没有假的东西：
-//   · 用 uinput 造一个「物理键鼠」（名字与引擎自己的虚拟设备**故意不同**，
-//     否则捕获引擎会按名字把它当成自己的设备跳过），从它发出真实的
-//     REL_X/REL_Y 与 KEY_A；
-//   · 捕获引擎从 /dev/input/event* 读到真实事件（生产用的那条代码路径）；
-//   → 协议层重映射 → 真实 TCP（回环）→ 对端解析 → 注入引擎写进 /dev/uinput；
+//   · 用 uinput 造一个「物理键鼠」（名字与注入设备**故意不同**，否则捕获侧
+//     会按名字把它当成自己的设备跳过），从它发出真实的 REL_X/REL_Y 与 KEY_A；
+//   · 捕获侧从 /dev/input/event* 读到真实事件（生产用的那条代码路径）；
+//   → 协议层重映射并组帧 → 真实 TCP（回环）→ 对端 → 协议层解码 → 注入写进
+//     /dev/uinput；
 //   · 最后把「FlowGrid Virtual Input」那个设备节点的流读回来，确认移动与
 //     按键真的出现在 evdev 里（不是「调用没报错」就算过）。
 //
@@ -24,8 +24,9 @@
 // 照样把协议 → TCP → 注入这条路走完（光标会真的动），并如实说明哪几段
 // 没验——「没跑」和「跑过了」必须分得清。整条链路都跑不了时才报跳过
 // （退出码 77，automake 的 skip 约定）。
-#include "core/input/input_forwarder.h"
+#include "core/input/oscontrol.h"
 #include "core/input/peer_session.h"
+#include "core/protocolapi.h"
 
 #include <QCoreApplication>
 #include <QMetaObject>
@@ -62,7 +63,11 @@ void check(bool condition, const char *what)
     ++failures;
 }
 
-// 引擎自己的虚拟设备名（见 input_engine.cpp）。
+// 注入侧造出来的虚拟设备名。
+//
+// 真值在协议层（protocol/oscontrol/evdev 的 VirtualDeviceName）。这里手抄一
+// 份是因为测试要按名字找到它的 evdev 节点来读回验证；协议层改了名字这里
+// 要跟着改——所以下面那句断言会把两边对上（名字对不上，读回验证就废了）。
 constexpr char kEngineDevice[] = "FlowGrid Virtual Input";
 // 测试用的「物理键鼠」名字：与上面**故意不同**，否则会被捕获引擎按名字跳过。
 constexpr char kTestDevice[] = "FlowGrid HAL Test Device";
@@ -422,17 +427,25 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    // ② 注入引擎（真实的 uinput 虚拟键鼠）
-    input::Engine injector;
-    std::string error;
-    if (!injector.startInjection(&error)) {
-        std::fprintf(stderr, "FAIL: 注入引擎启动失败：%s\n", error.c_str());
+    // ② 注入侧（协议层的 oscontrol/evdev：真实的 uinput 虚拟键鼠）
+    input::OsControl injector;
+    QString injectionError;
+    if (!injector.startInjection(&injectionError)) {
+        std::fprintf(stderr, "FAIL: 注入侧启动失败：%s\n",
+                     injectionError.toUtf8().constData());
         ::close(physFd);
         return EXIT_FAILURE;
     }
 
-    // 捕获到的事件（主线程里才有；捕获线程的回调会排队回来）。
-    auto captured = std::make_shared<std::vector<input::CapturedEvent>>();
+    // 捕获到的**成品帧**（主线程里才有；捕获线程的回调会排队回来）。
+    //
+    // 迁移到 oscontrol 之后，捕获侧交出来的是**帧**而不是 OS 事件：重映射与
+    // 组帧已经在协议层做完了。所以这里记的是 (帧类型, 载荷)。
+    struct CapturedFrame {
+        std::uint8_t frameType = 0;
+        QByteArray payload;
+    };
+    auto captured = std::make_shared<std::vector<CapturedFrame>>();
     // 注入设备的 evdev 节点，读回验证时用。
     int injectFd = -1;
     // 测试设备的 evdev 节点（存在性由捕获引擎的枚举间接验证，这里只用来探测）。
@@ -442,9 +455,7 @@ int main(int argc, char **argv)
     std::string captureBlockReason;
     std::string readbackBlockReason;
 
-    input::Engine capture;
-    input::Forwarder sender(nullptr, nullptr);
-    input::Forwarder receiver(&injector, nullptr);
+    input::OsControl capture;
     input::PeerSession target;
     input::PeerSession controller;
     // 接管真实鼠标 + 记录注入前后的光标位置。
@@ -465,7 +476,7 @@ int main(int argc, char **argv)
     // ③ 等 udev 把两个设备节点建出来（uinput 造设备是异步的）。
     auto waitNodes = std::make_shared<std::function<void()>>();
     *waitNodes = [waitNodes, &app, &injectFd, &testFd, &waitAttempts, &captureBlockReason,
-                  &readbackBlockReason, captured, &capture, &sender, &receiver, &target,
+                  &readbackBlockReason, captured, &capture, &injector, &target,
                   &controller, physFd, grab, watch]() {
         std::string reason;
         bool pending = false;
@@ -514,20 +525,26 @@ int main(int argc, char **argv)
             std::printf("[HAL] 读回验证不可用：%s\n", readbackBlockReason.c_str());
         }
 
-        // ④ 捕获引擎（生产用的那条路径，不 grab：别把用户自己的键盘抢走）。
+        // ④ 捕获侧（生产用的那条路径；不 grab：别把用户自己的键盘抢走）。
         if (captureOk) {
-            std::string captureError;
+            // 对端平台 = Linux：同平台不换算，抓到的帧就是原样的键位与位移，
+            // 断言才对得上「dx=120 / dy=-60 / 键 A」。
+            capture.setPeer(proto::platform::kLinux, nullptr, QString());
+            QString captureError;
             if (!capture.startCapture(
-                    [captured, &app](const input::CapturedEvent &event) {
+                    [captured, &app](std::uint8_t frameType, const QByteArray &payload) {
                         // 捕获回调在捕获线程上：排队回主线程再落进 captured。
                         // 直接 push 是数据竞争——主线程正在遍历同一个 vector。
                         QMetaObject::invokeMethod(
                             &app,
-                            [captured, event]() { captured->push_back(event); },
+                            [captured, frameType, payload]() {
+                                captured->push_back(CapturedFrame{frameType, payload});
+                            },
                             Qt::QueuedConnection);
                     },
-                    false, &captureError)) {
-                std::fprintf(stderr, "FAIL: 捕获引擎启动失败：%s\n", captureError.c_str());
+                    &captureError)) {
+                std::fprintf(stderr, "FAIL: 捕获侧启动失败：%s\n",
+                             captureError.toUtf8().constData());
                 app.exit(1);
                 return;
             }
@@ -539,16 +556,11 @@ int main(int argc, char **argv)
         target.setPairingCode(QStringLiteral("6673"));
         controller.setPairingCode(QStringLiteral("6673"));
 
-        sender.setPeerPlatform(proto::platform::kLinux);
-        sender.setSendFn([&controller](const input::OutboundFrame &frame) {
-            controller.sendFrame(frame.frameType, frame.payload);
-        });
-
         QObject::connect(&target, &input::PeerSession::frameReceived, &app,
-                         [&receiver](std::uint8_t type, const QByteArray &payload) {
-                             if (!receiver.handleInbound(type, payload)) {
-                                 std::fprintf(stderr, "FAIL: 入站帧处理失败：%s\n",
-                                              receiver.lastError().toUtf8().constData());
+                         [&injector](std::uint8_t type, const QByteArray &payload) {
+                             // 解码与注入都在协议层：这里只把帧递进去。
+                             if (!injector.injectFrame(type, payload)) {
+                                 std::fprintf(stderr, "FAIL: 入站帧注入失败\n");
                                  ++failures;
                              }
                          });
@@ -558,8 +570,8 @@ int main(int argc, char **argv)
                          });
 
         QObject::connect(&controller, &input::PeerSession::stateChanged, &controller,
-                         [&app, captured, &sender, injectFd, physFd, captureOk, readbackOk,
-                          grab, watch](
+                         [&app, captured, &injector, &controller, injectFd, physFd, captureOk,
+                          readbackOk, grab, watch](
                              input::PeerSession::State state, const QString &detail) {
             if (state == input::PeerSession::State::Connected) {
                 // 测光标位移之前先接管真实鼠标：真实鼠标不再驱动光标，
@@ -596,75 +608,110 @@ int main(int argc, char **argv)
                     });
                 }
 
-                // ⑦ 挑出这次的三条事件，走协议发出去。
+                // ⑦ 挑出这次的三帧，走协议发出去。
+                //
+                // 捕获侧交出来的是**成品帧**（协议层已经重映射并组过帧），所以
+                // 这里挑的是帧：解一下载荷，确认是「这次的那三条」。
                 const int delay = captureOk ? 900 : 100;
-                QTimer::singleShot(delay, &app, [captured, &sender, &app, injectFd, captureOk,
+                QTimer::singleShot(delay, &app, [captured, &app, &controller, injectFd, captureOk,
                                                  readbackOk, grab, watch]() {
-                    input::CapturedEvent moveEvent;
-                    input::CapturedEvent downEvent;
-                    input::CapturedEvent upEvent;
-                    moveEvent.kind = input::EventKind::MouseMove;
-                    moveEvent.deltaX = kMoveX;
-                    moveEvent.deltaY = kMoveY;
-                    downEvent.kind = input::EventKind::KeyDown;
-                    downEvent.keyCode = kHidA;
-                    upEvent.kind = input::EventKind::KeyUp;
-                    upEvent.keyCode = kHidA;
-
+                    std::vector<CapturedFrame> chosen;
                     if (captureOk) {
-                        const input::CapturedEvent *foundMove = nullptr;
-                        const input::CapturedEvent *foundDown = nullptr;
-                        const input::CapturedEvent *foundUp = nullptr;
-                        for (const input::CapturedEvent &event : *captured) {
+                        const CapturedFrame *foundMove = nullptr;
+                        const CapturedFrame *foundDown = nullptr;
+                        const CapturedFrame *foundUp = nullptr;
+                        for (const CapturedFrame &frame : *captured) {
                             if (foundMove == nullptr
-                                && event.kind == input::EventKind::MouseMove
-                                && event.deltaX == kMoveX && event.deltaY == kMoveY) {
-                                foundMove = &event;
+                                && frame.frameType == proto::frametype::kMouseMove) {
+                                proto::MouseMovePayload move;
+                                if (proto::parseMouseMove(frame.payload, &move)
+                                    && move.deltaX == kMoveX && move.deltaY == kMoveY) {
+                                    foundMove = &frame;
+                                }
                             } else if (foundDown == nullptr
-                                       && event.kind == input::EventKind::KeyDown
-                                       && event.keyCode == kHidA) {
-                                foundDown = &event;
+                                       && frame.frameType == proto::frametype::kKeyDown) {
+                                proto::KeyDownPayload down;
+                                if (proto::parseKeyDown(frame.payload, &down)
+                                    && down.keyCode == kHidA) {
+                                    foundDown = &frame;
+                                }
                             } else if (foundUp == nullptr
-                                       && event.kind == input::EventKind::KeyUp
-                                       && event.keyCode == kHidA) {
-                                foundUp = &event;
+                                       && frame.frameType == proto::frametype::kKeyUp) {
+                                proto::KeyUpPayload up;
+                                if (proto::parseKeyUp(frame.payload, &up)
+                                    && up.keyCode == kHidA) {
+                                    foundUp = &frame;
+                                }
                             }
                         }
-                        std::printf("[HAL] 捕获到 %zu 条事件\n", captured->size());
-                        for (const input::CapturedEvent &event : *captured) {
-                            switch (event.kind) {
-                            case input::EventKind::MouseMove:
-                                std::printf("       mousemove ΔX=%d ΔY=%d\n", event.deltaX, event.deltaY);
+                        std::printf("[HAL] 捕获到 %zu 帧\n", captured->size());
+                        for (const CapturedFrame &frame : *captured) {
+                            switch (frame.frameType) {
+                            case proto::frametype::kMouseMove: {
+                                proto::MouseMovePayload move;
+                                if (proto::parseMouseMove(frame.payload, &move)) {
+                                    std::printf("       mousemove ΔX=%d ΔY=%d\n", move.deltaX,
+                                                move.deltaY);
+                                }
                                 break;
-                            case input::EventKind::KeyDown:
-                                std::printf("       keydown   hid=0x%04x\n", event.keyCode);
+                            }
+                            case proto::frametype::kKeyDown: {
+                                proto::KeyDownPayload down;
+                                if (proto::parseKeyDown(frame.payload, &down)) {
+                                    std::printf("       keydown   hid=0x%04x\n", down.keyCode);
+                                }
                                 break;
-                            case input::EventKind::KeyUp:
-                                std::printf("       keyup     hid=0x%04x\n", event.keyCode);
+                            }
+                            case proto::frametype::kKeyUp: {
+                                proto::KeyUpPayload up;
+                                if (proto::parseKeyUp(frame.payload, &up)) {
+                                    std::printf("       keyup     hid=0x%04x\n", up.keyCode);
+                                }
                                 break;
+                            }
                             default:
                                 break;
                             }
                         }
-                        check(foundMove != nullptr, "捕获到鼠标移动事件（ΔX=120 ΔY=-60）");
-                        check(foundDown != nullptr, "捕获到按键 A 按下");
-                        check(foundUp != nullptr, "捕获到按键 A 松开");
+                        check(foundMove != nullptr, "捕获到鼠标移动帧（ΔX=120 ΔY=-60）");
+                        check(foundDown != nullptr, "捕获到按键 A 按下帧");
+                        check(foundUp != nullptr, "捕获到按键 A 松开帧");
                         if (foundMove == nullptr || foundDown == nullptr || foundUp == nullptr) {
                             app.exit(1);
                             return;
                         }
-                        moveEvent = *foundMove;
-                        downEvent = *foundDown;
-                        upEvent = *foundUp;
+                        chosen.push_back(*foundMove);
+                        chosen.push_back(*foundDown);
+                        chosen.push_back(*foundUp);
                     } else {
-                        std::printf("[HAL] 构造输入事件：鼠标移动 dx=%+d dy=%+d，按键 A\n",
+                        // 捕获侧不可用：自己编三帧（同平台，不换算）。
+                        //
+                        // 组帧走协议层（fg_input_encode）——客户端不自己拼载荷。
+                        std::printf("[HAL] 构造输入帧：鼠标移动 dx=%+d dy=%+d，按键 A\n",
                                     kMoveX, kMoveY);
+                        const std::vector<std::pair<std::uint8_t, std::uint16_t>> kinds = {
+                            {proto::frametype::kMouseMove, 0},
+                            {proto::frametype::kKeyDown, kHidA},
+                            {proto::frametype::kKeyUp, kHidA},
+                        };
+                        for (const auto &entry : kinds) {
+                            std::uint8_t frameType = 0;
+                            std::uint16_t outKey = 0;
+                            std::uint8_t outModifiers = 0;
+                            const proto::GoBuffer payload = proto::encodeInput(
+                                entry.first, entry.second, 0,
+                                entry.first == proto::frametype::kMouseMove ? kMoveX : 0,
+                                entry.first == proto::frametype::kMouseMove ? kMoveY : 0,
+                                0, false, proto::platform::kLinux, proto::platform::kLinux,
+                                nullptr, QString(), &frameType, &outKey, &outModifiers);
+                            chosen.push_back(CapturedFrame{frameType, payload.toByteArray()});
+                        }
                     }
 
-                    // 只转发这次的三条：桌面上真实鼠标的噪声事件不影响归因。
-                    sender.forwardCaptured(moveEvent);
-                    sender.forwardCaptured(downEvent);
-                    sender.forwardCaptured(upEvent);
+                    // 只发这次的三帧：桌面上真实鼠标的噪声事件不影响归因。
+                    for (const CapturedFrame &frame : chosen) {
+                        controller.sendFrame(frame.frameType, frame.payload);
+                    }
 
                     // ⑧ 读回虚拟设备的事件流，验证真的落到了 uinput。
                     QTimer::singleShot(700, &app, [injectFd, &app, readbackOk, grab, watch]() {

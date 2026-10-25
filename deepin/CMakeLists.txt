@@ -144,9 +144,7 @@ set(FLOWGRID_SOURCES
     src/core/laniddiscovery.h     src/core/laniddiscovery.cpp
     src/core/peercontroller.h     src/core/peercontroller.cpp
     src/core/devicemanager.h      src/core/devicemanager.cpp
-    src/core/input/input_keymap.h
-    src/core/input/input_engine.h src/core/input/input_engine.cpp
-    src/core/input/input_forwarder.h src/core/input/input_forwarder.cpp
+    src/core/input/oscontrol.h     src/core/input/oscontrol.cpp
     src/core/input/peer_session.h     src/core/input/peer_session.cpp
 
     src/ui/svgsubset.h            src/ui/svgsubset.cpp
@@ -253,29 +251,25 @@ endif()
 enable_testing()
 add_test(NAME uitest COMMAND flowgrid-uitest)
 
-# 键鼠映射表单测：纯头文件，不依赖 Qt/DTK，也不需要 /dev/uinput。
-# 这样任何 Linux（含 CI/容器）都能验 HID↔evdev 表，不必等真机权限。
-add_executable(flowgrid-inputtest tests/input_keymap_test.cpp)
-target_include_directories(flowgrid-inputtest PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/input)
-target_compile_options(flowgrid-inputtest PRIVATE -Wall -Wextra)
-add_test(NAME inputkeymap COMMAND flowgrid-inputtest)
-
-# 键鼠转发通路单测：重映射（协议层）、组帧、注入分发。
-# 注入侧用假 Injector，因此**不需要 /dev/uinput 权限**——真机才有的权限
-# 不该是单测的前提（这正是把 Injector 抽成接口的原因）。
-add_executable(flowgrid-inputforwardtest tests/input_forwarder_test.cpp
-    src/core/input/input_forwarder.h src/core/input/input_forwarder.cpp
-    src/core/input/input_engine.h
+# OS 控制层（cgo 桥）单测：句柄建立与销毁、错误路径、错误信息可取。
+#
+# 只测**不需要 /dev/uinput、不需要 input 组**的那部分——真机才有的权限不该是
+# 单测的前提（真机那条在 input_hal_test.cpp）。
+#
+# 原来的「键鼠映射表单测」与「转发通路单测」都随 C++ 输入引擎一起删了：
+# HID↔evdev 表与重映射/组帧语义都搬到了协议层
+# （protocol/oscontrol/evdev + protocol/oscontrol），由 Go 侧的测试守着。
+add_executable(flowgrid-inputoscontroltest tests/input_oscontrol_test.cpp
+    src/core/input/oscontrol.h src/core/input/oscontrol.cpp
     src/core/protocolapi.h src/core/protocolapi.cpp
     ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
-target_include_directories(flowgrid-inputforwardtest PRIVATE
+target_include_directories(flowgrid-inputoscontroltest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${GO_PROTOCOL_DIR}/cgo)
-target_link_libraries(flowgrid-inputforwardtest PRIVATE
+target_link_libraries(flowgrid-inputoscontroltest PRIVATE
     Qt6::Core ${GO_PROTOCOL_A} Threads::Threads)
-target_compile_options(flowgrid-inputforwardtest PRIVATE -Wall -Wextra)
-add_test(NAME inputforward COMMAND flowgrid-inputforwardtest)
+target_compile_options(flowgrid-inputoscontroltest PRIVATE -Wall -Wextra)
+add_test(NAME inputoscontrol COMMAND flowgrid-inputoscontroltest)
 
 # 对端会话端到端单测：真实 TCP（回环）+ IDENTIFY 握手 + 帧往返。
 # 不需要第二台机器、不需要 uinput 权限——被控端与控制端都在本进程里。
@@ -291,12 +285,10 @@ target_link_libraries(flowgrid-peersessiontest PRIVATE
 target_compile_options(flowgrid-peersessiontest PRIVATE -Wall -Wextra)
 add_test(NAME peersession COMMAND flowgrid-peersessiontest)
 
-# 协议级真实操作测试：真实捕获事件序列 → 协议层重映射 → 真实 TCP → 对端解析。
-# 走完整条链路，只把 OS HAL（evdev/uinput）换成假的——那两样要 root 权限，
+# 协议级真实操作测试：捕获事件序列 → 协议层编码 → 真实 TCP → 对端解码。
+# 走完整条链路，只把 OS HAL（evdev/uinput）换成假的——那两样要权限，
 # 由 input_hal_test 单独验（权限不足时它如实报跳过）。
 add_executable(flowgrid-inpute2etest tests/input_protocol_e2e_test.cpp
-    src/core/input/input_forwarder.h src/core/input/input_forwarder.cpp
-    src/core/input/input_engine.h
     src/core/input/peer_session.h src/core/input/peer_session.cpp
     src/core/protocolapi.h src/core/protocolapi.cpp
     ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
@@ -312,11 +304,11 @@ add_test(NAME inpute2e COMMAND flowgrid-inpute2etest)
 #
 # 同一份文件（protocol/testdata/input_vectors.json）也给 mac / Windows 客户端用：
 # 「两端行为一致」从此由机器盯着，而不是靠各端单测里各写各的期望值。
-# 这条测试同时干两件事：核对 deepin 手抄的常量（帧类型/平台/修饰位/角色/能力位）
-# 与协议层一致，以及核对转发通路产出的载荷字节与向量一致。
+# 这条测试同时干两件事：核对 deepin 手抄的常量（帧类型/平台/角色/能力位）与
+# 协议层一致，以及核对 **cgo 边界**（fg_input_encode）产出的载荷字节与向量
+# 一致——迁移到 oscontrol 之后，deepin 侧不再镜像修饰位/按钮号，那份真值由
+# 协议层的向量漂移守卫盯着。
 add_executable(flowgrid-inputvectortest tests/input_vector_test.cpp
-    src/core/input/input_forwarder.h src/core/input/input_forwarder.cpp
-    src/core/input/input_engine.h src/core/input/input_keymap.h
     src/core/protocolapi.h src/core/protocolapi.cpp
     ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
 target_include_directories(flowgrid-inputvectortest PRIVATE
@@ -334,8 +326,7 @@ add_test(NAME inputvector COMMAND flowgrid-inputvectortest)
 # 需要 /dev/uinput 可写 + /dev/input/event* 可读；权限不足时**如实报跳过**
 # （退出码 77），不假装通过。
 add_executable(flowgrid-inputhaltest tests/input_hal_test.cpp
-    src/core/input/input_forwarder.h src/core/input/input_forwarder.cpp
-    src/core/input/input_engine.h src/core/input/input_engine.cpp
+    src/core/input/oscontrol.h src/core/input/oscontrol.cpp
     src/core/input/peer_session.h src/core/input/peer_session.cpp
     src/core/protocolapi.h src/core/protocolapi.cpp
     ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})

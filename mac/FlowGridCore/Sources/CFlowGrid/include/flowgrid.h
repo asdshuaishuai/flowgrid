@@ -286,6 +286,83 @@ extern int fg_lanid_trust_is_trusted(GoUintptr id, uint8_t* peerID, size_t peerI
 extern int fg_lanid_trust_verify(GoUintptr id);
 extern int fg_lanid_trust_count(GoUintptr id);
 extern void fg_lanid_trust_free(GoUintptr id);
+// ── OS 控制层（oscontrol）─────────────────────────────────────────────────
+//
+// 协议层拥有「事件 → 线上帧」的完整语义，平台层只提供「OS 原生事件 ↔ 规范
+// 模型」。这一组函数把两者接给客户端：客户端拿到的是**成品帧**，不写键位
+// 换算、不拼载荷、不管修饰键合成。
+//
+// Linux 的实现走 evdev（protocol/oscontrol/evdev）；其它平台目前只有桩，
+// 调用会得到明确的「该平台没编进来」。
+//
+
+// fg_oscontrol_new 造一个 OS 控制器。
+// platform 取协议层的平台号（§3.1.2）。返回句柄（从 1 起；0 = 失败，例如
+// 该平台没编进来）。
+//
+extern uintptr_t fg_oscontrol_new(uint8_t platform);
+
+// fg_oscontrol_free 释放句柄：停捕获、关设备。
+//
+extern void fg_oscontrol_free(uintptr_t handle);
+
+// fg_oscontrol_set_peer 设对端平台与键位规则。
+// 必须在 fg_oscontrol_start_capture 之前设：重映射的方向取决于对端平台
+// （§6.3 Ctrl⇄Meta）。tableHandle 是 fg_keymap_load_file 的句柄，NULL = 无
+// 用户规则；context 传空 = 全局规则。
+//
+extern int fg_oscontrol_set_peer(uintptr_t handle, uint8_t peerPlatform, void* tableHandle, char* context);
+
+// fg_oscontrol_start_capture 开始捕获。
+// 之后协议层把「捕获 → 重映射 → 组帧」整条走完，产出的帧进入出口队列，
+// 由 C 侧用 fg_oscontrol_next_frame 取走。返回 0 成功；非 0 表示打不开
+// 设备（原因见 fg_oscontrol_last_error）。
+//
+extern int fg_oscontrol_start_capture(uintptr_t handle);
+
+// fg_oscontrol_stop_capture 停止捕获。
+// 返回后捕获 goroutine 已经退出，不会再有新帧进队列；但队列里已有的帧仍然
+// 取得到（松键的 keyUp 帧就是靠这条通路送出去的）。
+//
+extern void fg_oscontrol_stop_capture(uintptr_t handle);
+
+// fg_oscontrol_next_frame 取一帧待发的输入帧。
+// 返回 1 = 取到；0 = 超时（没有新帧）；-1 = 出错。取到的载荷由 C 侧用
+// fg_free_buffer 释放。timeoutMs < 0 表示一直等。
+//
+extern int fg_oscontrol_next_frame(uintptr_t handle, int timeoutMs, uint8_t* outType, uint8_t** outPayload, size_t* outLen);
+
+// fg_oscontrol_release_captured 松开控制端还按着的键与鼠标按钮。
+// 它把 keyUp / mouseButton(up) 帧塞进出口队列——对端在另一台机器上，我们
+// 不再发松开帧的话那边的键会一直卡在按下态。停接管、对端断开时都要调。
+//
+extern int fg_oscontrol_release_captured(uintptr_t handle);
+
+// fg_oscontrol_start_injection 开始注入（打开 /dev/uinput）。
+// 返回 0 成功；非 0 表示没有 uinput 权限（原因见 fg_oscontrol_last_error）。
+//
+extern int fg_oscontrol_start_injection(uintptr_t handle);
+
+// fg_oscontrol_stop_injection 停注入并松开本机还按着的键。
+//
+extern void fg_oscontrol_stop_injection(uintptr_t handle);
+
+// fg_oscontrol_inject_frame 喂一帧入站输入帧：协议层解码 → 注入本机。
+// 收端**不二次重映射**（当前各端都是「发前重映射」）。非输入帧（剪贴板、
+// 文件）会失败——那是正常情况，不是错误。
+//
+extern int fg_oscontrol_inject_frame(uintptr_t handle, uint8_t frameType, uint8_t* payload, size_t length);
+
+// fg_oscontrol_release_injected 松开本机还按着的键与鼠标按钮。
+//
+extern int fg_oscontrol_release_injected(uintptr_t handle);
+
+// fg_oscontrol_last_error 取最近一次失败的说明（UTF-8，NUL 结尾）。
+// bufLen 是 buf 的字节数。返回写入的字节数（不含 NUL）；buf 为空或 bufLen
+// 为 0 时只返回长度，不写任何东西。
+//
+extern int fg_oscontrol_last_error(uintptr_t handle, char* buf, size_t bufLen);
+
 extern int fg_link_plan(uint8_t preferred, int mdnsPeers, int lanPeers, int hasManual);
 
 #ifdef __cplusplus

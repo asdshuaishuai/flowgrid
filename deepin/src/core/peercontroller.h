@@ -3,15 +3,17 @@
 // 各层职责（详见 docs/INPUT-CAPABILITY.md）：
 //   LanIdDiscovery        发现对端（UDP 组播，§3.1）
 //   input::PeerSession    TCP 通道 + IDENTIFY 握手（§7.2 / §4.2）
-//   input::Forwarder      捕获事件 ↔ 协议层重映射 ↔ 线上帧
-//   input::Engine         evdev 捕获 / uinput 注入（OS HAL）
+//   input::OsControl      捕获 / 注入的薄壳（真正的实现在协议层 oscontrol）
 //
 // 单例：同一时刻只有一个控制会话——跟 DeviceManager 一样是全局状态。
 // 界面只跟这一个对象打交道，不直接碰 socket 与引擎。
 //
-// 线程：捕获线程产出事件 → Forwarder 重映射 → **排队回主线程**再发。
+// 线程：捕获线程取出**成品帧** → **排队回主线程**再发。
 // QTcpSocket 不是线程安全的，捕获线程直接 write 会出事，所以那一跳必须走
 // 事件循环队列。
+//
+// 注意这里已经没有「重映射 / 组帧 / 键位表」了：那些在协议层
+// （protocol/oscontrol + protocol/oscontrol/evdev）。客户端只做 UI + 搬运。
 #ifndef FLOWGRID_PEERCONTROLLER_H
 #define FLOWGRID_PEERCONTROLLER_H
 
@@ -26,8 +28,7 @@
 namespace fg {
 
 namespace input {
-class Engine;
-class Forwarder;
+class OsControl;
 } // namespace input
 
 class PeerController : public QObject {
@@ -92,9 +93,8 @@ private:
     bool startInjection();
     void stopInjection();
 
-    std::unique_ptr<input::Engine> engine_;
+    std::unique_ptr<input::OsControl> osControl_;
     std::unique_ptr<input::PeerSession> session_;
-    std::unique_ptr<input::Forwarder> forwarder_;
 
     QString peerName_;
     QString peerAddress_;

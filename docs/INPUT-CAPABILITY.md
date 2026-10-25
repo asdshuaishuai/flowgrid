@@ -61,8 +61,10 @@ Ctrl），用户还能自定义键位规则（§11）。这套「识别一帧输
   （逐行等价；`ctx` 仅在有 keymap 时算，保留无 keymap 零开销）。
 
 ### deepin 客户端（`deepin`）
-输入 HAL 已是薄的（`input_engine` 只做 evdev 捕获/注入），**无内联重映射可删**；
-捕获→对端的转发通路已补齐（见下）。
+**已迁到 oscontrol**（2026-10-25）：C++ 侧的 `input_engine` / `input_forwarder` /
+`input_keymap.h` 全部删除，OS 机制独家归协议层的 `protocol/oscontrol/evdev`。
+deepin 只剩一个薄壳 `src/core/input/oscontrol.{h,cpp}`（起停捕获线程、取帧、
+递帧给注入），**客户端里不再有任何键鼠语义**。
 
 #### 能力接入：`deepin/src/core/protocolapi.{h,cpp}`
 - `remapCapturedKey(hidKey, modifiers, from, to, keymap, context, out*)` —— 包 `fg_input_remap_key`，
@@ -74,15 +76,33 @@ Ctrl），用户还能自定义键位规则（§11）。这套「识别一帧输
 - 平台/角色/能力位常量（`platform::` / `role::` / `caps::`）镜像 `protocol/platform.go`，
   不各写各的字面量。
 
-#### 转发通路：`deepin/src/core/input/input_forwarder.{h,cpp}`
-- `Forwarder`：控制端 `forwardCaptured()` = 捕获事件 → **协议层 `EncodeInput`**（重映射 +
-  选帧类型 + 拼载荷都在协议层）→ 发送回调；接收端 `handleInbound()` = 入站帧 → 解析 → HAL 注入。
-  分工与 mac 的 `send?(type, payload)` / Windows 的 `SendToPeer(type, payload)` 一致：
-  本层只产出「帧类型 + 载荷」，帧头由传输层补。
-  **客户端不再自己挑帧类型、自己拼载荷、自己调重映射**——那段语义以前在 deepin 与
+#### OS 控制层薄壳：`deepin/src/core/input/oscontrol.{h,cpp}`
+（替代原来的 `input_forwarder` + `input_engine`；2026-10-25）
+- `OsControl` 只做三件事：起停捕获线程、把产出的**成品帧**交给上层、把入站帧
+  递给协议层注入。**它不写键位换算、不拼载荷、不管修饰键合成**——那些在
+  协议层（`protocol/oscontrol` + `protocol/oscontrol/evdev`）。
+- 控制端：`startCapture()` → 协议层把「捕获 → 重映射 → 组帧」走完 → 帧从出口
+  队列取出来 → `PeerSession::sendFrame()`。
+- 停接管：`stopCapture()` 先停线程，再让协议层把**还按着的键松开**（keyUp 帧
+  照样送出去）——对端在另一台机器上，不发松开帧那边的键会一直卡着。
+- 被控端：`injectFrame()` 把入站帧递进协议层（解码 → 注入）。剪贴板、文件这些
+  不是输入帧，注入会失败——那是正常情况，不算错。
+- 客户端**不再自己挑帧类型、自己拼载荷、自己调重映射**——那段语义以前在 deepin 与
   mac 各写一份，正是行为分叉的根源；现在由协议层独占，跨端一致性由黄金向量钉住。
-- `Injector` 抽象（在 `input_engine.h`）：生产环境是 `Engine` 本身，单测里是假实现——
-  这样「入站帧 → 注入动作」的决策能脱离 `/dev/uinput` 权限被验证。
+
+#### cgo 桥：`protocol/cgo/oscontrol_linux.go`
+（2026-10-25 新增；非 Linux 平台有同名桩 `oscontrol_other.go`）
+
+- **为什么是「拉取」而不是「回调」**：控制端「停接管时把还按着的键松开」必须
+  **回发 keyUp 帧**，也就是捕获侧本身要有发帧的出口。回调模型下这个出口是
+  C 侧给的函数指针——而 **cgo 不支持 Go 去调一个 C 传来的函数指针**（typedef
+  出来的函数指针在 Go 侧是不透明类型，`C.fg_oscontrol_sink_t` 只能当指针存，
+  调不了）。拉取模型把这个出口做成 Go 侧的队列：C 侧取帧、送上网线；松键时
+  协议层把 keyUp 帧塞进同一个队列，C 侧照样取得到。语义一样，少一层 FFI 魔法。
+- 队列容量 256，**满了不丢帧**：发送方等。捕获侧慢下来是背压，不是丢事件——
+  丢一个 mouse_move 无所谓，丢一个 keyDown 就等于对端少按了一次键。
+- `fg_oscontrol_set_peer` 必须在 `fg_oscontrol_start_capture` **之前**调：
+  重映射的方向取决于对端平台（§6.3）。
 
 #### 对端会话：`deepin/src/core/input/peer_session.{h,cpp}`
 - `PeerSession`：QTcpSocket + **§7.2 长度前缀**（Length 2B BE + HID Frame [+8B HMAC]）+
@@ -96,11 +116,11 @@ Ctrl），用户还能自定义键位规则（§11）。这套「识别一帧输
 
 #### 界面接线：`core/peercontroller.{h,cpp}` + `ui/connectionspanel.{h,cpp}`
 - `PeerController`（单例）把「发现 → 连接 → 捕获/注入」串成一条链：持有
-  `Engine` / `PeerSession` / `Forwarder`，界面只跟它打交道，不直接碰 socket。
+  `OsControl` / `PeerSession`，界面只跟它打交道，不直接碰 socket。
 - 连接屏：对端卡片带**「连接」/「断开」**按钮（形态跟真实连接状态走），
   顶部有**连接邀请条**（接受 / 拒绝），状态胶囊显示真实会话阶段
   （未连接 · 监听 34801 / 正在连接 X / 等待对方接受 / 已连接 X）。
-- 接管开关真正生效：开 → `Engine::startCapture` + 转发；关 → 停捕获并把
+- 接管开关真正生效：开 → `OsControl::startCapture` + 转发；关 → 停捕获并把
   **还按着的键松开**（对端在另一台机器上，keyUp 不发出去那边的键会一直卡着）。
 - 设备清单改用 `makeLanIdDeviceSource`（本机 + LAN 发现到的真实对端）；
   `DeviceManager` 现在**定期重新发现**（以前只在 setSource 时取一次，
@@ -269,16 +289,16 @@ sudo usermod -aG input $USER     # 一次性；之后重新登录，或用 sg in
    但 mac 侧仍通告 24801（UDP 端口，拨不通）。mac 侧也改成报会话端口后，
    两端才能仅靠 LAN ID 发现就连上（现在 mac 走的是 DirectLinkManager 的
    BLE / Wi-Fi Direct / mDNS 通路）。
-4. **deepin 的键位规则接线**：`proto::KeyMap` 句柄与 `Forwarder::setKeyMap()`
+4. **deepin 的键位规则接线**：`proto::KeyMap` 句柄与 `OsControl::setPeer()`
    都已备好，但 deepin 客户端还没把自己的 `keymap.yaml` 加载进来——
    与 mac 的后续项 1 是同一件事。
 5. 接收侧若未来改为「发原始键、收端重映射」，收端即用 `DecodeInputFrame(from=对端, to=本机)`；
    当前 mac 与 deepin 都采用「发前重映射」，收端只解析注入（勿二次重映射）。
-6. **deepin 客户端迁到 Go 的 oscontrol**：协议层已有 `oscontrol/evdev`（Linux 实现）
-   与 `oscontrol.Forwarder/Injector`（流水线）。deepin 的 C++ 侧目前还是自己那套
-   `input_engine` + `input_forwarder`；下一步是用 cgo 把 Go 的 `oscontrol/evdev`
-   接进客户端，把 C++ 引擎与转发通路删掉（客户端只留传输与界面）。
-   期间两边行为由黄金向量钉住，迁移过程中不会出现静默的行为变化。
+6. ~~**deepin 客户端迁到 Go 的 oscontrol**~~ —— **已完成（2026-10-25）**。
+   cgo 桥在 `protocol/cgo/oscontrol_linux.go`（非 Linux 有同名桩），deepin 侧的
+   `input_engine` / `input_forwarder` / `input_keymap.h` 已删除，只剩
+   `src/core/input/oscontrol.{h,cpp}` 薄壳 + 传输 + 界面。
+   迁移期由黄金向量钉住：向量文件重生成后字节数不变（6034），行为等价。
 7. **mac 侧的 oscontrol 实现**：把 `InputCaptureTap` / `InputInjector` 按
    `oscontrol.Controller` 契约重写并注册，mac 侧也就能读同一份黄金向量文件。
 8. **uinput 虚拟设备的 uaccess 覆盖**：虚拟设备没有物理路径，systemd 的 uaccess

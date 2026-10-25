@@ -61,6 +61,22 @@ type Input struct {
 	Pressed   bool
 }
 
+// EncodedInput 是一次操作编成线上帧的结果。
+//
+// Key/Modifiers 是**重映射之后**的键位与掩码（只有键事件有值）。
+//
+// 为什么要把它们带出来：停接管时要把还按着的键松开，而 keyUp 必须跟
+// keyDown 用**同一个**键码——重映射的输入掩码不同，算出来的键码可能对不上，
+// 对端就会多出一个按下的键（那台机器上的键一直卡着）。编码器已经算过一次
+// 重映射，让它顺手把结果交出来，比让调用方再算一遍可靠——两遍算法一旦
+// 分叉，「按下」和「松开」就对不上了，而且极难查。
+type EncodedInput struct {
+	FrameType uint8
+	Payload   []byte
+	Key       uint16
+	Modifiers uint8
+}
+
 // EncodeInput 把一次操作编成线上帧（帧类型 + 载荷）。
 //
 // 这是 DecodeInputFrame 的对称函数：协议层因此拥有「操作 ↔ 线上字节」的完整
@@ -68,32 +84,50 @@ type Input struct {
 //
 // 重映射在这里做（**发前重映射**，§6.3）：键事件按 from→to 换算键位与掩码；
 // 鼠标与滚轮不参与跨平台换算，原样透传。
-func EncodeInput(in Input, from, to Platform, table *KeyMapTable, context KeyMapContext) (uint8, []byte, error) {
+func EncodeInput(in Input, from, to Platform, table *KeyMapTable, context KeyMapContext) (EncodedInput, error) {
 	if context == "" {
 		context = ContextGlobal
 	}
 	switch in.Kind {
 	case InputKeyDown:
 		key, mods := RemapCapturedKey(in.Key, in.Modifiers, from, to, table, context)
-		return FrameKeyDown, (&KeyDownPayload{KeyCode: key, Modifiers: mods}).Marshal(), nil
+		return EncodedInput{
+			FrameType: FrameKeyDown,
+			Payload:   (&KeyDownPayload{KeyCode: key, Modifiers: mods}).Marshal(),
+			Key:       key,
+			Modifiers: mods,
+		}, nil
 	case InputKeyUp:
 		// KEY_UP 载荷不带掩码（§5.3），但**键码仍然要重映射**：掩码没了，
 		// 键位换算照样得按目标平台走（对端是 macOS 时，松 Ctrl 必须发 Meta 的
 		// keyUp，否则对端的 Cmd 会一直按着）。
 		key, _ := RemapCapturedKey(in.Key, 0, from, to, table, context)
-		return FrameKeyUp, (&KeyUpPayload{KeyCode: key}).Marshal(), nil
+		return EncodedInput{
+			FrameType: FrameKeyUp,
+			Payload:   (&KeyUpPayload{KeyCode: key}).Marshal(),
+			Key:       key,
+		}, nil
 	case InputMouseMove:
-		return FrameMouseMove, (&MouseMovePayload{DeltaX: in.DeltaX, DeltaY: in.DeltaY}).Marshal(), nil
+		return EncodedInput{
+			FrameType: FrameMouseMove,
+			Payload:   (&MouseMovePayload{DeltaX: in.DeltaX, DeltaY: in.DeltaY}).Marshal(),
+		}, nil
 	case InputMouseButton:
 		state := uint8(0)
 		if in.Pressed {
 			state = 1
 		}
-		return FrameMouseButton, (&MouseButtonPayload{ButtonID: in.Button, State: state}).Marshal(), nil
+		return EncodedInput{
+			FrameType: FrameMouseButton,
+			Payload:   (&MouseButtonPayload{ButtonID: in.Button, State: state}).Marshal(),
+		}, nil
 	case InputScroll:
-		return FrameScroll, (&ScrollPayload{DeltaY: in.DeltaY, DeltaX: in.DeltaX}).Marshal(), nil
+		return EncodedInput{
+			FrameType: FrameScroll,
+			Payload:   (&ScrollPayload{DeltaY: in.DeltaY, DeltaX: in.DeltaX}).Marshal(),
+		}, nil
 	default:
-		return 0, nil, NewError(ErrInvalidPayload, fmt.Sprintf("unknown input kind %d", uint8(in.Kind)))
+		return EncodedInput{}, NewError(ErrInvalidPayload, fmt.Sprintf("unknown input kind %d", uint8(in.Kind)))
 	}
 }
 

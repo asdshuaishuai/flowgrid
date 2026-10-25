@@ -1,12 +1,13 @@
 #include "core/peercontroller.h"
 
 #include "core/hostinfo.h"
-#include "core/input/input_forwarder.h"
+#include "core/input/oscontrol.h"
 #include "core/laniddiscovery.h"
 #include "core/settings.h"
 
 #include <QHostAddress>
 #include <QMetaObject>
+#include <QThread>
 #include <QTimer>
 
 namespace fg {
@@ -45,22 +46,8 @@ PeerController &PeerController::instance()
 
 PeerController::PeerController()
 {
-    engine_ = std::make_unique<input::Engine>();
+    osControl_ = std::make_unique<input::OsControl>();
     session_ = std::make_unique<input::PeerSession>();
-    forwarder_ = std::make_unique<input::Forwarder>(engine_.get(), nullptr);
-
-    // 发送回调：捕获线程 → 主线程。QTcpSocket 不是线程安全的，
-    // 捕获线程直接 write 会出事，这一跳必须走事件循环队列。
-    forwarder_->setSendFn([this](const input::OutboundFrame &frame) {
-        QMetaObject::invokeMethod(
-            this,
-            [this, frame]() {
-                if (session_->isConnected()) {
-                    session_->sendFrame(frame.frameType, frame.payload);
-                }
-            },
-            Qt::QueuedConnection);
-    });
 
     connect(session_.get(), &input::PeerSession::stateChanged, this,
             &PeerController::onSessionState);
@@ -112,7 +99,8 @@ void PeerController::connectTo(const QString &address, const QString &name,
     peerName_ = name;
     peerPlatform_ = platform;
     initiator_ = true;
-    forwarder_->setPeerPlatform(platform);
+    // 重映射的方向取决于对端平台（§6.3 Ctrl⇄Meta）。必须在开始捕获之前设。
+    osControl_->setPeer(platform, nullptr, QString());
 
     session_->setLocalIdentity(hostinfo::hostName(), proto::platform::kLinux);
     session_->setPairingCode(Settings::instance().pairingCode());
@@ -148,10 +136,10 @@ bool PeerController::setCaptureEnabled(bool on)
 {
     if (!on) {
         captureEnabled_ = false;
-        engine_->stopCapture();
-        // 停转发前把还按着的键松开：对端在另一台机器上，我们不再发 keyUp
-        // 的话那边的键会一直卡在按下态。
-        forwarder_->releasePressed();
+        // 停捕获：里面含两件事——停捕获线程，以及让协议层把还按着的键松开
+        // （松键的 keyUp 帧照样经发送回调送出去）。对端在另一台机器上，我们
+        // 不再发松开帧的话那边的键会一直卡在按下态。
+        osControl_->stopCapture();
         Q_EMIT stateChanged();
         return true;
     }
@@ -162,21 +150,32 @@ bool PeerController::setCaptureEnabled(bool on)
         return false;
     }
 
-    std::string error;
-    const bool started = engine_->startCapture(
-        [this](const input::CapturedEvent &event) {
-            // 捕获线程 → 主线程：重映射与组帧都在主线程做，
-            // 免得 Forwarder 的状态字段被两个线程同时碰。
+    // 捕获 → 重映射 → 组帧整条在协议层跑完，交给我们的已经是成品帧。
+    // 这里只负责把它送上网线。
+    QString error;
+    const bool started = osControl_->startCapture(
+        [this](std::uint8_t frameType, const QByteArray &payload) {
+            if (QThread::currentThread() == thread()) {
+                // 已经在主线程（停接管时排空队列）：直接发，不排队。
+                if (session_->isConnected()) {
+                    session_->sendFrame(frameType, payload);
+                }
+                return;
+            }
+            // 捕获线程 → 主线程：QTcpSocket 不是线程安全的，
+            // 捕获线程直接 write 会出事，这一跳必须走事件循环队列。
             QMetaObject::invokeMethod(
                 this,
-                [this, event]() { forwarder_->forwardCaptured(event); },
+                [this, frameType, payload]() {
+                    if (session_->isConnected()) {
+                        session_->sendFrame(frameType, payload);
+                    }
+                },
                 Qt::QueuedConnection);
         },
-        true, // grab：控制端语义，事件不再落到本机
         &error);
     if (!started) {
-        setError(error.empty() ? tr("捕获引擎启动失败")
-                               : QString::fromStdString(error));
+        setError(error.isEmpty() ? tr("捕获引擎启动失败") : error);
         captureEnabled_ = false;
         Q_EMIT stateChanged();
         return false;
@@ -242,7 +241,10 @@ void PeerController::onSessionState(input::PeerSession::State state,
 
 void PeerController::onInboundFrame(std::uint8_t type, const QByteArray &payload)
 {
-    forwarder_->handleInbound(type, payload);
+    // 解码与注入都在协议层（DecodeInput → evdev）。这里只递进去。
+    //
+    // 非输入帧（剪贴板、文件）会失败——那是正常情况，不是错误，不上报。
+    osControl_->injectFrame(type, payload);
 }
 
 void PeerController::onInvite(const QString &name, const QString &address)
@@ -259,10 +261,9 @@ bool PeerController::startInjection()
     if (injectionEnabled_) {
         return true;
     }
-    std::string error;
-    if (!engine_->startInjection(&error)) {
-        setError(error.empty() ? tr("注入引擎启动失败")
-                               : QString::fromStdString(error));
+    QString error;
+    if (!osControl_->startInjection(&error)) {
+        setError(error.isEmpty() ? tr("注入引擎启动失败") : error);
         injectionEnabled_ = false;
         return false;
     }
@@ -275,8 +276,9 @@ void PeerController::stopInjection()
     if (!injectionEnabled_) {
         return;
     }
-    engine_->releaseAll();
-    engine_->stopInjection();
+    // 停注入会先松开本机还按着的键：uinput 设备一销毁，之前注入的 keyDown
+    // 就永远没有对应的 keyUp 了，目标机上那个键会一直卡着。
+    osControl_->stopInjection();
     injectionEnabled_ = false;
 }
 

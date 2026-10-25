@@ -28,13 +28,11 @@ SRC_DIR="${REPO_ROOT}/deepin"
 BUILD_DIR="${SRC_DIR}/build-dev"
 BIN_NAME="flowgrid-deepin"
 TEST_NAME="flowgrid-uitest"
-# 键鼠映射表单测：纯头文件，不依赖 Qt/DTK，也不需要 /dev/uinput，
-# 所以在容器/CI 里也能跑。跟界面自检一起进体检——不然这份单测只存在于
-# 仓库里，永远没人跑它，映射表错了也没人知道。
-INPUT_TEST_NAME="flowgrid-inputtest"
-# 键鼠转发通路单测：重映射（协议层）+ 组帧 + 注入分发。
-# 注入侧用假 Injector，所以同样不需要 /dev/uinput 权限。
-FORWARD_TEST_NAME="flowgrid-inputforwardtest"
+# OS 控制层（cgo 桥）单测：句柄建立与销毁、错误路径、错误信息可取。
+# 不需要 /dev/uinput，也不需要 input 组——真机那条在 HAL 测试里。
+# 原来的「键鼠映射表单测」与「转发通路单测」随 C++ 输入引擎一起删了：
+# HID↔evdev 表与重映射/组帧语义都搬到了协议层，由 Go 侧的测试守着。
+OSCONTROL_TEST_NAME="flowgrid-inputoscontroltest"
 # 对端会话端到端单测：真实 TCP（回环）+ IDENTIFY 握手 + 帧往返。
 # 不需要第二台机器——被控端与控制端都在本进程里。
 PEER_TEST_NAME="flowgrid-peersessiontest"
@@ -130,8 +128,8 @@ fi
 if [ "${MODE}" = "check" ] && [ ! -x "${BUILD_DIR}/${TEST_NAME}" ]; then
     die "--check 需要 ${BUILD_DIR}/${TEST_NAME}，但它不存在（先不带 --skip-build 跑一次）"
 fi
-if [ "${MODE}" = "check" ] && [ ! -x "${BUILD_DIR}/${INPUT_TEST_NAME}" ]; then
-    die "--check 需要 ${BUILD_DIR}/${INPUT_TEST_NAME}，但它不存在（先不带 --skip-build 跑一次）"
+if [ "${MODE}" = "check" ] && [ ! -x "${BUILD_DIR}/${OSCONTROL_TEST_NAME}" ]; then
+    die "--check 需要 ${BUILD_DIR}/${OSCONTROL_TEST_NAME}，但它不存在（先不带 --skip-build 跑一次）"
 fi
 
 # ── 2. 快照 ────────────────────────────────────────────────────────────
@@ -200,19 +198,16 @@ case "${MODE}" in
         ok "界面自检（真实控件 + 真实事件路径）"
         "${BUILD_DIR}/${TEST_NAME}"
 
-        ok "键鼠映射表单测（HID↔evdev 映射表）"
-        "${BUILD_DIR}/${INPUT_TEST_NAME}"
-
-        ok "键鼠转发通路单测（重映射 + 组帧 + 注入分发）"
-        "${BUILD_DIR}/${FORWARD_TEST_NAME}"
+        ok "OS 控制层单测（cgo 桥：句柄 + 错误路径）"
+        "${BUILD_DIR}/${OSCONTROL_TEST_NAME}"
 
         ok "对端会话单测（TCP 握手 + 帧往返）"
         "${BUILD_DIR}/${PEER_TEST_NAME}"
 
-        ok "协议级真实操作单测（捕获序列 → 重映射 → TCP → 对端解析）"
+        ok "协议级真实操作单测（捕获序列 → 协议层编码 → TCP → 对端解码）"
         "${BUILD_DIR}/${E2E_TEST_NAME}"
 
-        ok "跨客户端黄金向量单测（常量镜像 + 载荷字节对着协议层向量文件比对）"
+        ok "跨客户端黄金向量单测（常量镜像 + cgo 边界载荷字节对着协议层向量文件比对）"
         "${BUILD_DIR}/${VECTOR_TEST_NAME}"
 
         if "${BUILD_DIR}/${HAL_TEST_NAME}"; then

@@ -315,9 +315,14 @@ macOS 的 `InputCaptureTap`/`InputInjector`：
 
 | 文件 | 职责 |
 |---|---|
-| `input_keymap.h` | HID Usage ↔ evdev keycode、修饰位、鼠标按钮、滚轮单位。**纯 constexpr，无 Qt/无 IO** |
-| `input_engine.h/.cpp` | uinput 注入 + evdev 捕获（poll 线程、EVIOCGRAB、修饰键状态机） |
-| `../tests/input_keymap_test.cpp` | 映射表双向可逆/唯一性/抽查，任何 Linux 可跑 |
+| `oscontrol.h/.cpp` | OS 控制层的**薄壳**：起停捕获线程、把产出的帧交给上层、把入站帧递给协议层注入。**没有键鼠语义**——帧类型、载荷、键位换算都在协议层 |
+| `peer_session.h/.cpp` | TCP 通道 + IDENTIFY 握手（§7.2 / §4.2） |
+| `../tests/input_oscontrol_test.cpp` | cgo 桥的接缝测试：句柄、错误路径、错误信息可取。不需要任何权限 |
+
+**OS 机制不在这里**：evdev 捕获、uinput 注入、修饰键合成、HID↔evdev 映射表
+全部在协议层（`protocol/oscontrol/evdev`）。deepin 侧原先那份
+`input_keymap.h` / `input_engine.*` / `input_forwarder.*` 已删除——同一件事
+只留一处，是「各端各写一份、行为迟早分叉」的根治办法。
 
 设计要点（与另两端保持同一套语义）：
 
@@ -350,31 +355,32 @@ sudo modprobe uinput          # 若 /dev/uinput 不存在
 getfacl /dev/uinput /dev/input/event* | grep "$USER"
 ```
 
-### 映射表单测
+### OS 控制层单测
 
-不需要 Qt/DTK，也不需要真机权限：
+cgo 桥的接缝测试，不需要 Qt/DTK，也不需要真机权限：
 
 ```bash
-g++ -std=c++17 -Wall -Wextra -Werror -Isrc/core/input \
-    tests/input_keymap_test.cpp -o /tmp/input_keymap_test
-/tmp/input_keymap_test
-# 或走 CMake：ctest -R inputkeymap
+# 或走 CMake：ctest -R inputoscontrol
+./build-dev/flowgrid-inputoscontroltest
 ```
 
-### 还没接上的那一根线
+映射表本身的测试现在在协议层（`protocol/oscontrol/evdev`）：那张 HID↔evdev
+表随 C++ 引擎一起搬走了，由 Go 侧的 `go test ./oscontrol/...` 守着。
 
-`InputEngine` 只负责「OS 事件 ↔ HID 字段」，**不碰帧编解码**。当前 deepin 的
-传输层仍未实现（见下节），所以应用里还没有地方调用 `startCapture()`，也没有
-把收到的 `KEY_DOWN/...` 帧喂给 `injectKey()`。接传输时要做的是：
+### 这一层现在怎么接线
 
-1. 捕获回调拿到 `CapturedEvent` → 用 `protocolapi` 的载荷构造器（`Payloads`/
-   `parse*`，已封装 cgo 导出）+ `encodeFrame` 发出去；
-2. 收到帧 → `decodeFrame` → 按 `FrameType` 调 `injectKey/injectMouseMove/
-   injectMouseButton/injectScroll`；
-3. 连接建立/断开时 `startCapture(true)` / `stopCapture()`，注入侧
-   `startInjection()`。**会话断开但进程继续运行时调 `releaseAll()`**——补发
-   KEY_UP/MOUSEUP 比销毁重建 uinput 设备温和，不会让目标机重新枚举输入设备；
-   只有进程退出/彻底停用注入时才 `stopInjection()`。
+捕获与注入都已经接通（`peercontroller` 里）：
+
+1. **控制端接管**：`OsControl::startCapture()` → 协议层把「捕获 → 重映射 →
+   组帧」走完 → 产出的帧从出口队列取出来 → `PeerSession::sendFrame()`。
+   停接管时 `stopCapture()` 会先让协议层把**还按着的键松开**（keyUp 帧照样
+   送出去）——对端在另一台机器上，不发松开帧那边的键会一直卡着。
+2. **被控端**：`PeerSession` 收到入站帧 → `OsControl::injectFrame()` → 协议层
+   解码 → 注入本机。剪贴板、文件这些不是输入帧，注入会失败——那是正常情况，
+   不算错。
+3. **会话断开但进程继续运行**：调 `OsControl::stopInjection()`，它会先松开本机
+   还按着的键再拆设备——补发 KEY_UP/MOUSEUP 比销毁重建 uinput 设备温和，
+   不会让目标机重新枚举输入设备；只有进程退出/彻底停用注入时才停注入。
 
 ## 当前边界（尚未接通的部分）
 

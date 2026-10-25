@@ -48,6 +48,16 @@ type Controller interface {
 	// Platform 返回这个实现对应的平台号（§3.1.2）。
 	Platform() protocol.Platform
 
+	// StartCapture 打开平台设备开始捕获（Linux: /dev/input/event*）。
+	//
+	// 为什么是接口的一部分而不是实现自己的事：客户端经 cgo 调的是**协议层**
+	// 的控制器，协议层不能知道「怎么打开设备」——那是平台的事。但「开始 /
+	// 停止」是生命周期，客户端必须能驱动，所以它得在契约里。
+	StartCapture() error
+
+	// StartInjection 打开平台设备开始注入（Linux: /dev/uinput）。
+	StartInjection() error
+
 	// Capture 阻塞直到捕获到一个输入事件。
 	Capture() (protocol.Input, error)
 

@@ -1,15 +1,19 @@
 // 协议级真实操作测试：走完整条链路，只把 OS HAL 换成假的。
 //
-// 链路：真实捕获事件序列 → Forwarder（协议层重映射）→ PeerSession（真实 TCP
-//       + §7.2 长度前缀 + HMAC）→ 对端 PeerSession → Forwarder（解析）→ 注入
+// 链路：捕获事件序列 → 协议层编码（fg_input_encode）→ PeerSession（真实 TCP
+//       + §7.2 长度前缀 + HMAC）→ 对端 PeerSession → 协议层解码（parse*）→ 记录
 //
 // 场景是**一次真实的键盘操作**：按住 Ctrl，点一下 C，再松开。
 // 断言对端收到的动作序列与「macOS 上按了 Cmd+C」完全一致——
 // 这条链路里任何一环错位（重映射漏了、掩码丢了、帧错位了）都会在这里露馅。
 //
-// 唯一没真的是 evdev/uinput：那两个要 root 权限，见 input_hal_test.cpp。
-#include "core/input/input_forwarder.h"
+// 迁移到 oscontrol 之后的分工：捕获与注入的**实现**在协议层
+// （protocol/oscontrol + protocol/oscontrol/evdev），本测试盯的是
+// **两端之间的那条链路**：编码 → 传输 → 解码。
+//
+// 唯一没真的是 evdev/uinput：那两个要权限，见 input_hal_test.cpp。
 #include "core/input/peer_session.h"
+#include "core/protocolapi.h"
 
 #include <QCoreApplication>
 #include <QTimer>
@@ -32,36 +36,60 @@ void check(bool condition, const char *what)
 }
 
 using namespace fg;
-using namespace fg::input;
 
-// 记录对端真正收到的注入动作。
-class RecordingInjector : public Injector {
+// 记录对端真正收到的动作。
+//
+// 解码走协议层的 parse*（cgo → protocol.DecodeInput），所以这里记到的就是
+// 协议层认为的语义——注入那一步换成了记录，语义不变。
+class RecordingDecoder {
 public:
     struct KeyCall {
-        std::uint16_t hid;
-        bool down;
-        std::uint8_t mods;
+        std::uint16_t hid = 0;
+        bool down = false;
+        std::uint8_t mods = 0;
     };
 
-    bool injectKey(std::uint16_t hid, bool down, std::uint8_t modifiers) override
+    void handle(std::uint8_t frameType, const QByteArray &payload)
     {
-        keys.push_back(KeyCall{hid, down, modifiers});
-        return true;
-    }
-    bool injectMouseMove(std::int16_t dx, std::int16_t dy) override
-    {
-        moves.push_back({dx, dy});
-        return true;
-    }
-    bool injectMouseButton(std::uint8_t button, bool down) override
-    {
-        buttons.push_back({button, down});
-        return true;
-    }
-    bool injectScroll(std::int16_t deltaY, std::int16_t deltaX) override
-    {
-        scrolls.push_back({deltaY, deltaX});
-        return true;
+        switch (frameType) {
+        case proto::frametype::kKeyDown: {
+            proto::KeyDownPayload parsed;
+            if (proto::parseKeyDown(payload, &parsed)) {
+                keys.push_back(KeyCall{parsed.keyCode, true, parsed.modifiers});
+            }
+            break;
+        }
+        case proto::frametype::kKeyUp: {
+            proto::KeyUpPayload parsed;
+            if (proto::parseKeyUp(payload, &parsed)) {
+                keys.push_back(KeyCall{parsed.keyCode, false, 0});
+            }
+            break;
+        }
+        case proto::frametype::kMouseMove: {
+            proto::MouseMovePayload parsed;
+            if (proto::parseMouseMove(payload, &parsed)) {
+                moves.push_back({parsed.deltaX, parsed.deltaY});
+            }
+            break;
+        }
+        case proto::frametype::kMouseButton: {
+            proto::MouseButtonPayload parsed;
+            if (proto::parseMouseButton(payload, &parsed)) {
+                buttons.push_back({parsed.buttonId, parsed.down});
+            }
+            break;
+        }
+        case proto::frametype::kScroll: {
+            proto::ScrollPayload parsed;
+            if (proto::parseScroll(payload, &parsed)) {
+                scrolls.push_back({parsed.deltaY, parsed.deltaX});
+            }
+            break;
+        }
+        default:
+            break;
+        }
     }
 
     std::vector<KeyCall> keys;
@@ -81,34 +109,39 @@ constexpr std::uint8_t kModLeftMeta = 0x08;
 
 // 一次真实的键盘操作：按住 Ctrl → 点 C → 松 C → 松 Ctrl。
 // 掩码按捕获线程的真实时序给：修饰键的位在事件发出前就已经置上。
-std::vector<CapturedEvent> ctrlCOnLinux()
+struct RawEvent {
+    std::uint8_t kind = 0;
+    std::uint16_t key = 0;
+    std::uint8_t modifiers = 0;
+    std::int16_t deltaX = 0;
+    std::int16_t deltaY = 0;
+    std::uint8_t button = 0;
+    bool pressed = false;
+};
+
+std::vector<RawEvent> ctrlCOnLinux()
 {
-    std::vector<CapturedEvent> seq;
-    CapturedEvent ctrlDown;
-    ctrlDown.kind = EventKind::KeyDown;
-    ctrlDown.keyCode = kHidLCtrl;
-    ctrlDown.modifiers = kModLeftCtrl;
-    seq.push_back(ctrlDown);
-
-    CapturedEvent cDown;
-    cDown.kind = EventKind::KeyDown;
-    cDown.keyCode = kHidC;
-    cDown.modifiers = kModLeftCtrl;
-    seq.push_back(cDown);
-
-    CapturedEvent cUp;
-    cUp.kind = EventKind::KeyUp;
-    cUp.keyCode = kHidC;
-    cUp.modifiers = kModLeftCtrl;
-    seq.push_back(cUp);
-
-    CapturedEvent ctrlUp;
-    ctrlUp.kind = EventKind::KeyUp;
-    ctrlUp.keyCode = kHidLCtrl;
-    ctrlUp.modifiers = 0;
-    seq.push_back(ctrlUp);
-
+    std::vector<RawEvent> seq;
+    seq.push_back({proto::frametype::kKeyDown, kHidLCtrl, kModLeftCtrl, 0, 0, 0, false});
+    seq.push_back({proto::frametype::kKeyDown, kHidC, kModLeftCtrl, 0, 0, 0, false});
+    seq.push_back({proto::frametype::kKeyUp, kHidC, kModLeftCtrl, 0, 0, 0, false});
+    seq.push_back({proto::frametype::kKeyUp, kHidLCtrl, 0, 0, 0, 0, false});
     return seq;
+}
+
+// 一次捕获事件 → 一个线上帧（经协议层编码）。
+//
+// 编码走 fg_input_encode → protocol.EncodeInput：重映射、载荷拼装全在协议层。
+QByteArray encodeEvent(const RawEvent &event, std::uint8_t peerPlatform,
+                       std::uint8_t *outFrameType)
+{
+    std::uint16_t outKey = 0;
+    std::uint8_t outModifiers = 0;
+    const proto::GoBuffer payload =
+        proto::encodeInput(event.kind, event.key, event.modifiers, event.deltaX, event.deltaY,
+                            event.button, event.pressed, proto::platform::kLinux, peerPlatform,
+                            nullptr, QString(), outFrameType, &outKey, &outModifiers);
+    return payload.toByteArray();
 }
 
 } // namespace
@@ -119,9 +152,9 @@ int main(int argc, char **argv)
 
     // ── Linux 控制端 → macOS 被控端：Ctrl+C 应当变成 Cmd+C ─────────────
     {
-        PeerSession target;
-        PeerSession controller;
-        RecordingInjector targetInjector;
+        input::PeerSession target;
+        input::PeerSession controller;
+        RecordingDecoder targetDecoder;
 
         target.setLocalIdentity(QStringLiteral("mac-mini"), proto::platform::kMacOS);
         controller.setLocalIdentity(QStringLiteral("deepin-pc"), proto::platform::kLinux);
@@ -129,32 +162,28 @@ int main(int argc, char **argv)
         target.setPairingCode(QStringLiteral("4821"));
         controller.setPairingCode(QStringLiteral("4821"));
 
-        Forwarder sender(&targetInjector, nullptr);
-        sender.setPeerPlatform(proto::platform::kMacOS);
-        sender.setSendFn([&controller](const OutboundFrame &frame) {
-            controller.sendFrame(frame.frameType, frame.payload);
-        });
-
-        Forwarder receiver(&targetInjector, nullptr);
-        QObject::connect(&target, &PeerSession::frameReceived, &app,
-                         [&receiver](std::uint8_t type, const QByteArray &payload) {
-                             receiver.handleInbound(type, payload);
+        QObject::connect(&target, &input::PeerSession::frameReceived, &app,
+                         [&targetDecoder](std::uint8_t type, const QByteArray &payload) {
+                             targetDecoder.handle(type, payload);
                          });
-        QObject::connect(&target, &PeerSession::inviteReceived, &target,
+        QObject::connect(&target, &input::PeerSession::inviteReceived, &target,
                          [&target](const QString &, const QString &) {
                              target.respondInvite(true);
                          });
 
         bool replayed = false;
-        QObject::connect(&controller, &PeerSession::stateChanged, &controller,
-                         [&](PeerSession::State state, const QString &) {
-                             if (state != PeerSession::State::Connected || replayed) {
+        QObject::connect(&controller, &input::PeerSession::stateChanged, &controller,
+                         [&](input::PeerSession::State state, const QString &) {
+                             if (state != input::PeerSession::State::Connected || replayed) {
                                  return;
                              }
                              replayed = true;
                              // 握手一通，立刻把「用户按住 Ctrl 点了一下 C」重放出去。
-                             for (const CapturedEvent &event : ctrlCOnLinux()) {
-                                 sender.forwardCaptured(event);
+                             for (const RawEvent &event : ctrlCOnLinux()) {
+                                 std::uint8_t frameType = 0;
+                                 const QByteArray payload =
+                                     encodeEvent(event, proto::platform::kMacOS, &frameType);
+                                 controller.sendFrame(frameType, payload);
                              }
                          });
 
@@ -167,9 +196,9 @@ int main(int argc, char **argv)
 
         // 对端应该收到的是「macOS 上按了 Cmd+C」：
         //   Meta down(带 Meta 掩码) → C down(带 Meta 掩码) → C up → Meta up
-        check(targetInjector.keys.size() == 4, "对端收到 4 个按键动作");
-        if (targetInjector.keys.size() == 4) {
-            const auto &k = targetInjector.keys;
+        check(targetDecoder.keys.size() == 4, "对端收到 4 个按键动作");
+        if (targetDecoder.keys.size() == 4) {
+            const auto &k = targetDecoder.keys;
             check(k[0].hid == kHidLMeta && k[0].down, "第 1 个动作：按下 Meta");
             check(k[0].mods == kModLeftMeta, "第 1 个动作：掩码是 Meta");
             check(k[1].hid == kHidC && k[1].down, "第 2 个动作：按下 C");
@@ -181,40 +210,36 @@ int main(int argc, char **argv)
 
     // ── 同平台（Linux → Linux）：原样过去，不该有任何换算 ───────────────
     {
-        PeerSession target;
-        PeerSession controller;
-        RecordingInjector targetInjector;
+        input::PeerSession target;
+        input::PeerSession controller;
+        RecordingDecoder targetDecoder;
 
         target.setLocalIdentity(QStringLiteral("linux-b"), proto::platform::kLinux);
         controller.setLocalIdentity(QStringLiteral("linux-a"), proto::platform::kLinux);
         target.setPairingCode(QStringLiteral("4821"));
         controller.setPairingCode(QStringLiteral("4821"));
 
-        Forwarder sender(&targetInjector, nullptr);
-        sender.setPeerPlatform(proto::platform::kLinux);
-        sender.setSendFn([&controller](const OutboundFrame &frame) {
-            controller.sendFrame(frame.frameType, frame.payload);
-        });
-
-        Forwarder receiver(&targetInjector, nullptr);
-        QObject::connect(&target, &PeerSession::frameReceived, &app,
-                         [&receiver](std::uint8_t type, const QByteArray &payload) {
-                             receiver.handleInbound(type, payload);
+        QObject::connect(&target, &input::PeerSession::frameReceived, &app,
+                         [&targetDecoder](std::uint8_t type, const QByteArray &payload) {
+                             targetDecoder.handle(type, payload);
                          });
-        QObject::connect(&target, &PeerSession::inviteReceived, &target,
+        QObject::connect(&target, &input::PeerSession::inviteReceived, &target,
                          [&target](const QString &, const QString &) {
                              target.respondInvite(true);
                          });
 
         bool replayed = false;
-        QObject::connect(&controller, &PeerSession::stateChanged, &controller,
-                         [&](PeerSession::State state, const QString &) {
-                             if (state != PeerSession::State::Connected || replayed) {
+        QObject::connect(&controller, &input::PeerSession::stateChanged, &controller,
+                         [&](input::PeerSession::State state, const QString &) {
+                             if (state != input::PeerSession::State::Connected || replayed) {
                                  return;
                              }
                              replayed = true;
-                             for (const CapturedEvent &event : ctrlCOnLinux()) {
-                                 sender.forwardCaptured(event);
+                             for (const RawEvent &event : ctrlCOnLinux()) {
+                                 std::uint8_t frameType = 0;
+                                 const QByteArray payload =
+                                     encodeEvent(event, proto::platform::kLinux, &frameType);
+                                 controller.sendFrame(frameType, payload);
                              }
                          });
 
@@ -225,9 +250,9 @@ int main(int argc, char **argv)
         QTimer::singleShot(5000, &app, [&app]() { app.exit(3); });
         app.exec();
 
-        check(targetInjector.keys.size() == 4, "对端收到 4 个按键动作");
-        if (targetInjector.keys.size() == 4) {
-            const auto &k = targetInjector.keys;
+        check(targetDecoder.keys.size() == 4, "对端收到 4 个按键动作");
+        if (targetDecoder.keys.size() == 4) {
+            const auto &k = targetDecoder.keys;
             check(k[0].hid == kHidLCtrl && k[0].down, "同平台：按下 Ctrl（不换算）");
             check(k[0].mods == kModLeftCtrl, "同平台：掩码仍是 Ctrl");
             check(k[1].hid == kHidC && k[1].mods == kModLeftCtrl, "同平台：C 带 Ctrl 掩码");
@@ -235,62 +260,46 @@ int main(int argc, char **argv)
         }
     }
 
-    // ── 鼠标：移动 + 按下 + 抬起 ───────────────────────────────────────
+    // ── 鼠标：移动 + 按下 + 抬起 + 滚轮 ────────────────────────────────
     {
-        PeerSession target;
-        PeerSession controller;
-        RecordingInjector targetInjector;
+        input::PeerSession target;
+        input::PeerSession controller;
+        RecordingDecoder targetDecoder;
 
         target.setLocalIdentity(QStringLiteral("mac-mini"), proto::platform::kMacOS);
         controller.setLocalIdentity(QStringLiteral("deepin-pc"), proto::platform::kLinux);
         target.setPairingCode(QStringLiteral("4821"));
         controller.setPairingCode(QStringLiteral("4821"));
 
-        Forwarder sender(&targetInjector, nullptr);
-        sender.setSendFn([&controller](const OutboundFrame &frame) {
-            controller.sendFrame(frame.frameType, frame.payload);
-        });
-
-        Forwarder receiver(&targetInjector, nullptr);
-        QObject::connect(&target, &PeerSession::frameReceived, &app,
-                         [&receiver](std::uint8_t type, const QByteArray &payload) {
-                             receiver.handleInbound(type, payload);
+        QObject::connect(&target, &input::PeerSession::frameReceived, &app,
+                         [&targetDecoder](std::uint8_t type, const QByteArray &payload) {
+                             targetDecoder.handle(type, payload);
                          });
-        QObject::connect(&target, &PeerSession::inviteReceived, &target,
+        QObject::connect(&target, &input::PeerSession::inviteReceived, &target,
                          [&target](const QString &, const QString &) {
                              target.respondInvite(true);
                          });
 
         bool replayed = false;
-        QObject::connect(&controller, &PeerSession::stateChanged, &controller,
-                         [&](PeerSession::State state, const QString &) {
-                             if (state != PeerSession::State::Connected || replayed) {
+        QObject::connect(&controller, &input::PeerSession::stateChanged, &controller,
+                         [&](input::PeerSession::State state, const QString &) {
+                             if (state != input::PeerSession::State::Connected || replayed) {
                                  return;
                              }
                              replayed = true;
 
-                             CapturedEvent move;
-                             move.kind = EventKind::MouseMove;
-                             move.deltaX = 12;
-                             move.deltaY = -7;
-                             sender.forwardCaptured(move);
-
-                             CapturedEvent down;
-                             down.kind = EventKind::MouseButton;
-                             down.button = 0x01;
-                             down.pressed = true;
-                             sender.forwardCaptured(down);
-
-                             CapturedEvent up;
-                             up.kind = EventKind::MouseButton;
-                             up.button = 0x01;
-                             up.pressed = false;
-                             sender.forwardCaptured(up);
-
-                             CapturedEvent scroll;
-                             scroll.kind = EventKind::Scroll;
-                             scroll.deltaY = 3;
-                             sender.forwardCaptured(scroll);
+                             const std::vector<RawEvent> mouseEvents = {
+                                 {proto::frametype::kMouseMove, 0, 0, 12, -7, 0, false},
+                                 {proto::frametype::kMouseButton, 0, 0, 0, 0, 0x01, true},
+                                 {proto::frametype::kMouseButton, 0, 0, 0, 0, 0x01, false},
+                                 {proto::frametype::kScroll, 0, 0, 0, 3, 0, false},
+                             };
+                             for (const RawEvent &event : mouseEvents) {
+                                 std::uint8_t frameType = 0;
+                                 const QByteArray payload =
+                                     encodeEvent(event, proto::platform::kMacOS, &frameType);
+                                 controller.sendFrame(frameType, payload);
+                             }
                          });
 
         const quint16 port = 34913;
@@ -300,20 +309,20 @@ int main(int argc, char **argv)
         QTimer::singleShot(5000, &app, [&app]() { app.exit(3); });
         app.exec();
 
-        check(targetInjector.moves.size() == 1, "对端收到一次鼠标移动");
-        if (targetInjector.moves.size() == 1) {
-            check(targetInjector.moves.front().first == 12, "移动 dx 正确");
-            check(targetInjector.moves.front().second == -7, "移动 dy 正确");
+        check(targetDecoder.moves.size() == 1, "对端收到一次鼠标移动");
+        if (targetDecoder.moves.size() == 1) {
+            check(targetDecoder.moves.front().first == 12, "移动 dx 正确");
+            check(targetDecoder.moves.front().second == -7, "移动 dy 正确");
         }
-        check(targetInjector.buttons.size() == 2, "对端收到两次鼠标按钮（按下 + 抬起）");
-        if (targetInjector.buttons.size() == 2) {
-            check(targetInjector.buttons[0].second, "第 1 次是按下");
-            check(!targetInjector.buttons[1].second, "第 2 次是抬起");
-            check(targetInjector.buttons[0].first == 0x01, "按钮号正确");
+        check(targetDecoder.buttons.size() == 2, "对端收到两次鼠标按钮（按下 + 抬起）");
+        if (targetDecoder.buttons.size() == 2) {
+            check(targetDecoder.buttons[0].second, "第 1 次是按下");
+            check(!targetDecoder.buttons[1].second, "第 2 次是抬起");
+            check(targetDecoder.buttons[0].first == 0x01, "按钮号正确");
         }
-        check(targetInjector.scrolls.size() == 1, "对端收到一次滚轮");
-        if (targetInjector.scrolls.size() == 1) {
-            check(targetInjector.scrolls.front().first == 3, "滚轮 deltaY 正确");
+        check(targetDecoder.scrolls.size() == 1, "对端收到一次滚轮");
+        if (targetDecoder.scrolls.size() == 1) {
+            check(targetDecoder.scrolls.front().first == 3, "滚轮 deltaY 正确");
         }
     }
 
