@@ -790,6 +790,13 @@ QWidget *buildMappingGrid(const QList<KeyPair> &pairs, QWidget *parent);
 // （ui.css .select-wrap .ic），而 Qt 样式表没法给 ::down-arrow 换一张随主题
 // 变色的图——深色模式下原生箭头要么发黑要么发白，都不对。自己画才可控。
 // 弹层用 QMenu，同样按 Theme 上色。
+//
+// 下拉弹层的样式表单独抽成一个函数（而不是写在 openMenu() 里就地拼）：这段
+// 字符串里曾经把**颜色**填进了 `border-radius:%2px` 这种「数值槽」，Qt 解析
+// 不了就整条丢掉，还会吐一条 parseHexColor 警告。抽出来是为了让界面自检能
+// 拿它做回归（见 tests/uitest.cpp 的 checkStyleSheets）。
+QString selectMenuStyleSheet(const Palette &p);
+
 class FgSelect : public QAbstractButton {
     Q_OBJECT
 public:

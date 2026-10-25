@@ -254,6 +254,45 @@ void emitMove(int fd, int dx, int dy)
 }
 
 #if FLOWGRID_HAL_X11
+// 把 X 光标挪到屏幕正中，四周留出余量。
+//
+// 为什么必须挪：不挪的话光标此刻可能正贴在屏幕边上（实测钉在 x=1919，
+// 也就是 1920 宽屏幕的最右一列），注入的 +120 会被屏幕边界夹住，光标一动
+// 不动——测出来的「没往右走」其实是撞墙，不是注入没生效。这种失败看着
+// 像产品坏了，其实在测一个跟产品无关的边界。
+//
+// dest_w 必须传 **root**，不能传 None：传 None 时这台机器上的 X 把
+// dst_x/dst_y 当成**相对当前指针的偏移**——在 (960,540) 处调
+// XWarpPointer(..., None, 0,0,0,0, 960,540) 会跑到 (1919,1079)（右下角，
+// 被屏幕边夹住）。传 root 才是绝对坐标，实测落在 (960,540)。
+//
+// 返回值顺带把屏幕尺寸带出去（断言要拿它算余量）。
+bool warpCursorToCenter(int *outScreenW, int *outScreenH)
+{
+    Display *display = XOpenDisplay(nullptr);
+    if (display == nullptr) {
+        return false;
+    }
+    Screen *screen = DefaultScreenOfDisplay(display);
+    if (screen == nullptr) {
+        XCloseDisplay(display);
+        return false;
+    }
+    const int width = WidthOfScreen(screen);
+    const int height = HeightOfScreen(screen);
+    const Window root = DefaultRootWindow(display);
+    XWarpPointer(display, root, root, 0, 0, 0, 0, width / 2, height / 2);
+    XSync(display, False);
+    XCloseDisplay(display);
+    if (outScreenW != nullptr) {
+        *outScreenW = width;
+    }
+    if (outScreenH != nullptr) {
+        *outScreenH = height;
+    }
+    return width > 0 && height > 0;
+}
+
 // 读一次 X 光标位置。没有 DISPLAY、连不上 X 时返回 false。
 bool queryCursor(int *outX, int *outY)
 {
@@ -413,8 +452,13 @@ int main(int argc, char **argv)
     struct CursorWatch {
         bool enabled = false;
         bool haveBefore = false;
+        // 光标是否成功挪到了屏幕正中。没挪成就不能判方向：光标贴着屏幕
+        // 边时，注入的位移会被边界夹住，「没往右走」是撞墙不是没注入。
+        bool centered = false;
         int beforeX = 0;
         int beforeY = 0;
+        int screenW = 0;
+        int screenH = 0;
     };
     auto watch = std::make_shared<CursorWatch>();
 
@@ -528,10 +572,15 @@ int main(int argc, char **argv)
 #if FLOWGRID_HAL_X11
                 watch->enabled = ::getenv("DISPLAY") != nullptr;
                 if (watch->enabled) {
+                    // 先把光标挪到屏幕正中，四周留出余量——不挪的话光标此刻
+                    // 可能正贴着屏幕边，注入的位移会被边界夹住，「没往右走」
+                    // 其实是撞墙。
+                    watch->centered = warpCursorToCenter(&watch->screenW, &watch->screenH);
                     watch->haveBefore = queryCursor(&watch->beforeX, &watch->beforeY);
                     if (watch->haveBefore) {
-                        std::printf("[HAL] 注入前 X 光标：(%d,%d)\n", watch->beforeX,
-                                    watch->beforeY);
+                        std::printf("[HAL] 注入前 X 光标：(%d,%d)（屏幕 %dx%d，%s）\n",
+                                    watch->beforeX, watch->beforeY, watch->screenW, watch->screenH,
+                                    watch->centered ? "已挪到正中" : "挪动失败，方向断言将跳过");
                     }
                 }
 #endif
@@ -675,8 +724,18 @@ int main(int argc, char **argv)
                                             dx, dy);
                                 // X 的指针加速会缩放位移（实测 120 → 103），
                                 // 所以只判方向和「确实动了」，不判精确值。
-                                check(dx > 0, "X 光标往右移动了");
-                                check(dy < 0, "X 光标往上移动了");
+                                //
+                                // 光标没能挪到屏幕正中时**不判方向**：贴着屏幕边时
+                                // 位移会被边界夹住，那时候的「没动」是撞墙，不是
+                                // 注入没生效。如实说没验，别拿一个必然失败的
+                                // 断言把真问题盖住。
+                                if (watch->centered) {
+                                    check(dx > 0, "X 光标往右移动了");
+                                    check(dy < 0, "X 光标往上移动了");
+                                } else {
+                                    std::printf("[HAL] 光标挪不到屏幕正中："
+                                                "位置边界会让方向断言失真 → 跳过方向核对\n");
+                                }
                             } else {
                                 std::printf("[HAL] 读不到 X 光标位置（X 连接断了？）\n");
                             }

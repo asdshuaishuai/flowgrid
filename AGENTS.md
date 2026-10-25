@@ -209,6 +209,25 @@ wire format / 键码 / 握手有任何变动：**PROTOCOL.md → protocol/ Go �
 - **deepin 25 的 ostree 安装把 `/usr` 挂成只读 overlay**，规范根建不出来（`file cannot create directory`）。症状隐蔽：已存在的文件全是 "Up-to-date" 不报错，只有**新建目录**才炸。`install.sh` 会探测并改用 `/usr/local/share/dsg`，同时给它加 systemd drop-in 注册进 `DSG_DATA_DIRS`——systemd 的 `Environment=` 是覆盖不是追加，drop-in 必须写全原有的根，否则整台机器的桌面配置会失效。
 - 位置/格式/键表由 `flowgrid-uitest` 的「DConfig meta」一段盯着；`appId`/`name` 在 `deepin/CMakeLists.txt` 里定义一次、编译期发成宏。详见 `deepin/README.md` 的「DConfig meta 装哪、什么格式」。
 
+### deepin：Qt 样式表的占位符必须各司其职
+- Qt 样式表里，**颜色和数值是两种东西，不能共用一个占位符**。曾经
+  `border-radius:%4px` 和 `color:%4` 用了同一个 `%4`（填的是文字色），
+  拼出 `border-radius:#d8ffffffpx`：Qt 不认识这种颜色名，丢**那一条声明**
+  并抛 `parseHexColor: Unknown color name` 警告。后果是「某个圆角 / 边框
+  忽然没画出来」，日志里只有一句指不出位置的警告。
+- 因此：样式表拼串**分段各自 `.arg()`**，别用一段长格式串（占位符一多就
+  容易串位）；数值槽只填 `tokens::` 里的数，颜色槽只填 `cssColor(...)`。
+- 回归守卫在 `flowgrid-uitest` 的「样式表」一段：①八屏里没有漏替换的
+  `%<数字>`；②每一张样式表都能被 Qt **无告警**地解析（强制 polish 一遍）。
+  改样式表前先看这段自检，它会告诉你哪张表坏了。
+
+### deepin：HAL 真机测试里的两个 X11 坑
+- `XWarpPointer` 的 `dest_w` 必须传 **root**。传 `None` 时本机 X 把
+  `dst_x/dst_y` 当成**相对当前指针的偏移**——在 (960,540) 处调
+  `XWarpPointer(..., None, 0,0,0,0, 960,540)` 会跑到 (1919,1079)。
+- 光标贴在屏幕边时，注入的位移会被边界夹住，「没往右走」是撞墙不是没注入。
+  测量光标位移前先把光标挪到屏幕正中；挪不动就**不判方向**，如实说跳过。
+
 ---
 
 *每条原则都对应着一个曾经踩过的坑。写下来，是为了以后不再踩。*  

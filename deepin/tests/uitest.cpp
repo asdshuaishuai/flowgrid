@@ -17,7 +17,14 @@
 #include "core/hosttheme.h"
 #include "core/settings.h"
 #include "core/theme.h"
+#include "ui/clipboardpanel.h"
+#include "ui/connectionspanel.h"
+#include "ui/filespanel.h"
 #include "ui/hotkeys.h"
+#include "ui/keymappanel.h"
+#include "ui/latencypanel.h"
+#include "ui/pairingpanel.h"
+#include "ui/settingspanel.h"
 #include "ui/traypopup.h"
 #include "ui/widgets.h"
 
@@ -30,6 +37,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QPixmap>
+#include <QStyle>
 #include <QShortcut>
 #include <QWidget>
 
@@ -37,6 +45,7 @@
 #include <dconfigfile.h>
 
 #include <cstdio>
+#include <vector>
 
 #if defined(FLOWGRID_HAVE_QTTEST)
 // QEvent::setSpontaneous() 在 Qt 6 里是私有的，公开的转发头在 QtTest 模块
@@ -49,6 +58,9 @@ DWIDGET_USE_NAMESPACE
 namespace {
 
 int g_failures = 0;
+
+// 样式表自检期间收集的 Qt 告警（见 checkStyleSheets）。
+QStringList g_qtWarnings;
 
 void check(bool ok, const QString &what)
 {
@@ -240,6 +252,118 @@ void checkThemeFollow(QWidget *tray)
           QStringLiteral("明暗切换后托盘头部标题的字色跟着换了"));
 }
 
+// ── 样式表自检：两件事 ────────────────────────────────────────────────
+//
+// 1. **没替换掉的占位符**：Qt 样式表里出现 `%1`、`%2` 说明拼串时少填了实参。
+//    Qt 不认这种值，整条声明被丢掉——表现是「某个边框 / 圆角 / 底色忽然
+//    没画出来」，日志里只有一句 parseHexColor 警告，指不出是哪一处。
+//    下拉菜单就栽在这上面过：颜色被填进了 `border-radius:%2px` 的数值槽。
+//
+// 2. **Qt 解析样式表时的告警**：把每一张样式表都过一遍 Qt 的解析器，装上
+//    消息处理器收告警。有告警就说明这条样式表是坏的（值类型不对、颜色名
+//    不认识、选择器写错），界面上的表现往往是「某条声明整条消失」。
+//
+// 两件事都不需要真桌面：样式表解析是纯 CPU 行为，无头环境下照样发生。
+void collectQtWarnings(QtMsgType type, const QMessageLogContext &, const QString &msg)
+{
+    if (type == QtWarningMsg || type == QtCriticalMsg) {
+        g_qtWarnings << msg;
+    }
+}
+
+// 样式表里有没有漏替换的占位符（% 后面紧跟数字）。
+bool hasUnfilledPlaceholder(const QString &sheet)
+{
+    for (int i = 0; i + 1 < sheet.size(); ++i) {
+        if (sheet.at(i) == QLatin1Char('%') && sheet.at(i + 1).isDigit()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 逼 Qt 把一张样式表真的解析一遍。
+//
+// 只 setStyleSheet 是不够的：解析是懒的，要等控件被 polish。scratch 是个
+// 一次性的空控件，把别人的样式表原样丢给它解析——选择器匹配不上没关系，
+// 解析器照样会把整张表过一遍，坏在哪一样会报。
+void parseStyleSheet(const QString &sheet)
+{
+    if (sheet.isEmpty()) {
+        return;
+    }
+    QWidget scratch;
+    scratch.setStyleSheet(sheet);
+    scratch.ensurePolished();
+    if (scratch.style() != nullptr) {
+        scratch.style()->polish(&scratch);
+    }
+}
+
+void checkStyleSheets()
+{
+    std::printf("样式表\n");
+
+    // 收全应用的控件：每一屏都得造一遍，样式表是各屏自己拼的。
+    std::vector<QWidget *> panels;
+    panels.push_back(new fg::TrayPopup);
+    panels.push_back(new fg::ConnectionsPanel);
+    panels.push_back(new fg::LatencyPanel);
+    panels.push_back(new fg::SettingsPanel);
+    panels.push_back(new fg::KeymapPanel);
+    panels.push_back(new fg::PairingPanel);
+    panels.push_back(new fg::ClipboardPanel);
+    panels.push_back(new fg::FilesPanel);
+
+    // 1. 残留占位符
+    QStringList unfilled;
+    for (QWidget *panel : panels) {
+        for (QWidget *w : panel->findChildren<QWidget *>()) {
+            if (hasUnfilledPlaceholder(w->styleSheet())) {
+                unfilled << QStringLiteral("%1 (%2)")
+                                .arg(w->metaObject()->className(), w->styleSheet().left(80));
+            }
+        }
+        if (hasUnfilledPlaceholder(panel->styleSheet())) {
+            unfilled << QStringLiteral("%1 (面板自身)")
+                            .arg(QString::fromLatin1(panel->metaObject()->className()));
+        }
+    }
+    check(unfilled.isEmpty(),
+          unfilled.isEmpty()
+              ? QStringLiteral("八屏里没有漏替换的样式表占位符")
+              : QStringLiteral("这些控件的样式表还留着占位符：%1").arg(unfilled.join(" / ")));
+
+    // 2. Qt 解析告警
+    g_qtWarnings.clear();
+    const QtMessageHandler previous = qInstallMessageHandler(&collectQtWarnings);
+    for (QWidget *panel : panels) {
+        parseStyleSheet(panel->styleSheet());
+        for (QWidget *w : panel->findChildren<QWidget *>()) {
+            parseStyleSheet(w->styleSheet());
+        }
+    }
+    // 下拉弹层的样式表不在控件树里（它挂在临时 QMenu 上，弹完就销毁），
+    // 所以单独过一遍——它恰恰是出过事的那一张。
+    parseStyleSheet(fg::selectMenuStyleSheet(fg::Theme::instance().palette()));
+    qInstallMessageHandler(previous);
+
+    QStringList cssWarnings;
+    for (const QString &w : g_qtWarnings) {
+        if (w.contains(QStringLiteral("QCssParser")) || w.contains(QStringLiteral("Unknown color"))) {
+            cssWarnings << w;
+        }
+    }
+    check(cssWarnings.isEmpty(),
+          cssWarnings.isEmpty()
+              ? QStringLiteral("所有样式表都能被 Qt 无告警地解析")
+              : QStringLiteral("样式表解析告警：%1").arg(cssWarnings.join(" / ")));
+
+    for (QWidget *panel : panels) {
+        delete panel;
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -358,6 +482,9 @@ int main(int argc, char **argv)
 
     // ── 5. 明暗切换后配色跟随 ──────────────────────────────────────────
     checkThemeFollow(tray);
+
+    // ── 6. 样式表：占位符替换 + Qt 解析告警 ───────────────────────────
+    checkStyleSheets();
 
     std::printf(g_failures == 0 ? "\n全部通过\n" : "\n有 %d 项未通过\n", g_failures);
     return g_failures == 0 ? 0 : 1;

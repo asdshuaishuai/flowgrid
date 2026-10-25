@@ -2626,6 +2626,44 @@ void FgSelect::focusOutEvent(QFocusEvent *e)
     QAbstractButton::focusOutEvent(e);
 }
 
+QString selectMenuStyleSheet(const Palette &p)
+{
+    // 分两段拼，不是一个长格式串：Qt 的 QString::arg 一次只能吃掉一段里
+    // 最低编号的占位符，段一多就容易把颜色错填进「数值槽」（那正是本函数
+    // 存在的原因）。每段各自 .arg()，出错时一眼能看出是哪一段。
+    //
+    // 几何上的两个决定：
+    //   · 菜单本体是「控件级」浮层，圆角跟它所属的下拉框同一档（--r-ctl）。
+    //   · 菜单项**内缩** 4px 再给 4px 圆角。满宽铺出去的话，选中项那一块
+    //     主色是直角的，会戳出菜单自己的圆角（外框圆、高亮方，看着是一处
+    //     毛刺）；内缩之后选中项才是一枚完整的圆角块。
+    const QString menuBlock =
+        QStringLiteral("QMenu { background:%1; border:1px solid %2; border-radius:%3px; padding:%4 %4; }")
+            .arg(cssColor(p.card))
+            .arg(cssColor(p.line2))
+            .arg(QString::number(tokens::kRadiusCtl))
+            .arg(QString::number(tokens::kS1));
+
+    const QString itemBlock =
+        QStringLiteral("QMenu::item { padding:%1 %2; color:%3; font-size:%4px; border-radius:%5px; }")
+            .arg(QStringLiteral("6"))                     // 上下内边距：沿用既有值
+            .arg(QString::number(tokens::kS3))              // 左右内边距 12
+            .arg(cssColor(p.text1))
+            .arg(QString::number(tokens::kFont12))
+            .arg(QString::number(tokens::kRadiusChip));
+
+    const QString selectedBlock =
+        QStringLiteral("QMenu::item:selected { background:%1; color:%2; }")
+            .arg(cssColor(p.accent))
+            .arg(cssColor(p.onAccent));
+
+    const QString separatorBlock =
+        QStringLiteral("QMenu::separator { height:1px; background:%1; margin:4px 0; }")
+            .arg(cssColor(p.line2));
+
+    return menuBlock + itemBlock + selectedBlock + separatorBlock;
+}
+
 void FgSelect::openMenu()
 {
     if (options_.isEmpty()) {
@@ -2635,14 +2673,7 @@ void FgSelect::openMenu()
     const int rowH = tokens::kControlHeight + tokens::kS2;
 
     QMenu menu(this);
-    menu.setStyleSheet(QStringLiteral(
-        "QMenu { background:%1; border:1px solid %2; border-radius:%3px; padding:4px 0; }"
-        "QMenu::item { padding:6px 12px; color:%4; font-size:%5px; border-radius:%4px; }"
-        "QMenu::item:selected { background:%6; color:%7; }"
-        "QMenu::separator { height:1px; background:%2; margin:4px 0; }")
-        .arg(cssColor(p.card), cssColor(p.line2), QString::number(tokens::kRadiusCtl),
-             cssColor(p.text1), QString::number(tokens::kFont12),
-             cssColor(p.accent), cssColor(p.onAccent)));
+    menu.setStyleSheet(selectMenuStyleSheet(p));
 
     // 用 QActionGroup 预选当前项：QMenu 本身没有 setCurrentAction，
     // 而不预选的话弹出菜单第一项总是高亮，长列表里等于没有记忆。
