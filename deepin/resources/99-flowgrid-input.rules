@@ -15,6 +15,16 @@
 #
 # 验证：
 #   getfacl /dev/uinput /dev/input/event*   # 应看到当前用户带 rw 的 ACL
+#
+# 注意（虚拟设备读不回来）：uinput 造出来的虚拟设备节点也走上面这条
+# SUBSYSTEM=="input" 规则，但它们**没有物理路径**，systemd 取不到 ID_PATH，
+# ID_SEAT 为空 → uaccess builtin 会跳过它们，节点停在 root:input 0660。
+# 结果是「写得进去、读不回来」。
+#
+# 这不影响产品链路：产品只需要写 /dev/uinput（有权限即可），从不需要读回
+# 自己造的虚拟设备。只有 HAL 真机测试的「读回验证」与「合成设备捕获」需要
+# 读，那种场景下把用户加进 input 组即可：
+#   sudo usermod -aG input $USER      # 之后重新登录，或用 sg input -c '...'
 
 KERNEL=="uinput", SUBSYSTEM=="misc", MODE="0660", TAG+="uaccess", OPTIONS+="static_node=uinput"
 

@@ -400,3 +400,42 @@ demo 的会话 HMAC 密钥也是一把写死的常量，真客户端永远算不
 
 真机（1920×1080 实桌面）跑通完整链路：发现对端 → 点「连接」→ 对端验签通过
 并生成邀请 → 接受 → 双方状态变「已连接」→ 接管开关带 uinput 权限提示。
+
+## 追加：HAL 真机测试重写时发现的问题（2026-10-25）
+
+### D7（Med）HAL 真机测试此前「失败还打印 OK」
+
+`input_hal_test.cpp` 的旧版在流程没走完（`app.exec()` 返回非 0）时，
+只打印一行 `input_hal_test: OK` 就返回成功——失败被吞成通过。重写后改成
+「流程没走完就返回失败，并把失败原因打出来」。
+
+### D8（Med）uinput 造出来的虚拟设备读不回来（uaccess 不覆盖虚拟设备）
+
+`/dev/uinput` 的**写**权限由 `99-flowgrid-input.rules` 的 `TAG+="uaccess"`
+给到当前会话用户 ✓；但 uinput 造出来的 evdev 节点是 `root:input 0660`，
+**读不回来**：虚拟设备没有物理路径，systemd 的 `path_id` builtin 取不到
+`ID_PATH`，`ID_SEAT` 为空，uaccess builtin 因此跳过它（`70-uaccess.rules`
+只覆盖 joystick，`73-seat-late.rules` 靠 `ID_SEAT` 找 seat）。
+
+后果：HAL 测试的「读回验证」与「合成设备捕获」两段在普通用户下跑不了
+（`sudo usermod -aG input $USER` 之后可以）。
+
+**这不是产品链路的缺陷**：产品只需要写 `/dev/uinput`（有权限），
+从不需要读回自己造的虚拟设备。已把测试改成**降级但不假装**——权限不全时
+退到「只跑注入侧」（协议 → TCP → 注入照样走完，X 光标照样动），并明确
+说明哪几段没验，退出码 77（skip）。
+
+### D9（Low）HAL 测试的捕获回调跨线程写 vector
+
+捕获引擎的回调在自己的线程上触发，旧版测试直接往主线程正在遍历的
+`std::vector` 里 `push_back`——数据竞争。重写后经
+`QMetaObject::invokeMethod(..., Qt::QueuedConnection)` 排队回主线程再落。
+
+### 验证
+
+- `flowgrid-inputhaltest` 真机跑通注入侧：注入 `dx=+120 dy=-60`，
+  **X 光标实测从 `(763,486)` 移到 `(867,434)`（Δ=+104,-52）**。
+  X 的指针加速会缩放位移（120 → 103/104），所以断言只判方向与「确实动了」。
+- 测量前用 `EVIOCGRAB` 接管真实鼠标（**排除引擎自己的虚拟设备**，
+  否则 X 收不到注入事件、光标反而不动），让位移只可能来自注入。
+- `./deepin/dev.sh --check` 全绿；HAL 那条在权限不足时如实报跳过（`!`）。

@@ -124,6 +124,7 @@ demo 的会话 HMAC 密钥也改成**由配对码派生**（算法同 mac 的 `S
 | Windows | Windows 机上 `cd windows && go test ./...`；任意机 `cd windows && GOOS=windows go build ./...` | hub 收敛后编译/回归 |
 | deepin 转发通路 | `./deepin/dev.sh --check`（或 `flowgrid-inputforwardtest`） | 跨平台重映射（Linux Ctrl→macOS Meta）、KEY_UP 键码仍重映射、鼠标按下/松开可区分、滚轮 delta 不错位、入站帧分发到假 Injector、非输入帧不误注入 |
 | deepin 对端会话 | `flowgrid-peersessiontest` | 回环 TCP 上完成 IDENTIFY 握手（接受/拒绝两条路）、业务帧往返载荷一致、配对码不一致时帧被丢弃 |
+| deepin HAL 真机 | `flowgrid-inputhaltest`（`dev.sh --check` 里也跑） | 真实 evdev 捕获 → 协议重映射 → 真实 TCP → 对端解析 → 真实 uinput 注入 → **读回虚拟设备的事件流**逐条核对 → **X 光标位移**（见下） |
 | 真实注入（HAL） | `cd protocol && go build -o /tmp/fg-realinput ./cmd/realinput && /tmp/fg-realinput` | 协议 HID → `DecodeInputFrame` → cgo CoreGraphics 注入：`CGWarp` 真实移动光标（无需权限）、`CGEvent` 真实按键（需辅助功能权限）；带「读回光标位置」诊断 |
 
 `realinput` 是 `//go:build darwin` 的最小 HAL 演示：能力（编/识）在协议层，注入在 HAL。
@@ -132,13 +133,55 @@ deepin 的两个单测**都不需要 `/dev/uinput` 权限**：注入侧用假 `I
 会话侧用回环 socket（被控端与控制端都在本进程里）。真机权限只影响
 「能不能真的注入」，不影响「逻辑对不对」——单测要验的是后者。
 
+### deepin HAL 真机测试：怎么算「真的动了」
+
+`flowgrid-inputhaltest` 一次跑三件事，缺哪件就如实说缺哪件（退出码 77 = skip）：
+
+1. **捕获侧**：用 uinput 造一个名叫 `FlowGrid HAL Test Device` 的「物理键鼠」
+   （名字**故意**与引擎自己的 `FlowGrid Virtual Input` 不同，否则会被捕获引擎
+   按名字跳过），从它发出真实的 `REL_X/REL_Y` 与 `KEY_A`；捕获引擎从
+   `/dev/input/event*` 读到这些事件——走的是生产用的那条代码路径。
+   合成设备**故意不声明 `BTN_LEFT`**：X 只把带按钮的设备认成指针，不声明它
+   就不会抢走桌面的光标，光标的位移因此能干净地归因到注入通路上。
+2. **注入侧读回**：把 `FlowGrid Virtual Input` 的 evdev 流读回来，逐条核对
+   `REL_X=+120 / REL_Y=-60 / KEY_A down+up` 真的落进了 uinput——不是
+   「注入调用没报错」就算过。
+3. **X 光标位移**：注入前后各读一次 X 光标位置，断言光标确实往右、往上动了。
+   测量前会 `EVIOCGRAB` 接管真实鼠标（**排除引擎自己的虚拟设备**，否则 X 就
+   收不到我们注入的事件），这样光标的位移只可能来自注入。
+   X 的指针加速会缩放位移（实测注入 120 → 光标走 103），所以只判方向与
+   「确实动了」，不判精确值。
+
+实测（deepin 真机，注入 `dx=+120 dy=-60`）：
+
+```
+[HAL] 已接管 1 个真实鼠标设备（光标位移只剩注入这一条来源）
+[HAL] 注入前 X 光标：(763,486)
+[HAL] X 光标：(763,486) → (867,434)  Δ=(+104,-52)
+```
+
+**权限的现实**：`/dev/uinput` 的写权限由 `99-flowgrid-input.rules` 的 uaccess
+给到当前会话用户；但 **uinput 造出来的虚拟设备节点（`root:input 0660`）不在
+uaccess 的覆盖范围内**——虚拟设备没有物理路径，systemd 分不出它属于哪个
+seat，uaccess builtin 会跳过它。结果是：写得到、读不回来。要把捕获侧与
+读回验证也跑通，需要本用户在 `input` 组里：
+
+```bash
+sudo usermod -aG input $USER     # 一次性；之后重新登录，或用 sg input -c '...' 直接跑
+```
+
+权限不全时测试**降级但不假装**：捕获侧与读回验证不可用就退到「只跑注入侧」
+（协议 → TCP → 注入照样走完，光标照样动），并明确说明哪几段没验。
+
+
 ## 四、当前状态
 - 协议层：`DecodeInputFrame` / `RemapCapturedKey` + 单测，`fg_input_remap_key` + 双头同步 —— 完成。
 - mac：发送侧重映射走协议层，删 Swift 重复实现，`swift test` 62 绿 —— 完成。
 - Windows：`hub.go` 收敛到 `RemapCapturedKey`，`GOOS=windows go build` 通过 —— 完成。
-- deepin：能力接入 + 转发通路 + 对端会话 + 界面接线 + 四个单测 —— 完成；
+- deepin：能力接入 + 转发通路 + 对端会话 + 界面接线 + 五个单测 —— 完成；
   真机实测已跑通「发现 → 连接 → 握手 → 已连接 → 接管开关」。
-  evdev/uinput 那一层的真机单测需要 root 权限（见「三、测试」）。
+  HAL 真机测试已跑通「真实 evdev 捕获 → 协议 → TCP → uinput 注入 → X 光标位移」，
+  其中读回验证与合成设备捕获还差 `input` 组权限（见「三、测试」）。
 
 ## 五、后续（follow-up）
 1. **mac 捕获路径接用户 keymap 规则**：目前 `InputCaptureTap` 传 `nil` table（只走平台默认
@@ -161,3 +204,9 @@ deepin 的两个单测**都不需要 `/dev/uinput` 权限**：注入侧用假 `I
    与 mac 的后续项 1 是同一件事。
 5. 接收侧若未来改为「发原始键、收端重映射」，收端即用 `DecodeInputFrame(from=对端, to=本机)`；
    当前 mac 与 deepin 都采用「发前重映射」，收端只解析注入（勿二次重映射）。
+6. **uinput 虚拟设备的 uaccess 覆盖**：虚拟设备没有物理路径，systemd 的 uaccess
+   builtin 分不出它属于哪个 seat，不会给它发 ACL——节点停在 `root:input 0660`，
+   「写得进去、读不回来」。现在只影响 HAL 测试的读回验证与合成设备捕获
+   （产品链路本身不需要读自己的虚拟设备：写 `/dev/uinput` 有权限即可）。
+   若将来产品要读回自己造的虚拟设备，两条路：让用户在 `input` 组里，或在
+   udev 规则里给虚拟设备显式指定 seat（`ENV{ID_SEAT}="seat0"`）。

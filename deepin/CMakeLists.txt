@@ -323,6 +323,22 @@ target_include_directories(flowgrid-inputhaltest PRIVATE
 target_link_libraries(flowgrid-inputhaltest PRIVATE
     Qt6::Core Qt6::Network ${GO_PROTOCOL_A} Threads::Threads)
 target_compile_options(flowgrid-inputhaltest PRIVATE -Wall -Wextra)
+
+# 额外验证「X 光标真的动了」：注入类的东西光看返回值不算数，得看桌面上的
+# 光标有没有跟着走。X11 是可选依赖——没有它就只跑 evdev 那一半验证，
+# 测试照常能编能跑（不因为缺个可选依赖把整个构建搞挂）。
+find_path(FLOWGRID_X11_INCLUDE_DIR X11/Xlib.h
+    HINTS "${FLOWGRID_DTK_SYSROOT}/include" /usr/include)
+find_library(FLOWGRID_X11_LIBRARY NAMES X11
+    HINTS "${FLOWGRID_DTK_SYSROOT}/lib/x86_64-linux-gnu" /usr/lib/x86_64-linux-gnu)
+if(FLOWGRID_X11_INCLUDE_DIR AND FLOWGRID_X11_LIBRARY)
+    target_compile_definitions(flowgrid-inputhaltest PRIVATE FLOWGRID_HAL_X11=1)
+    target_include_directories(flowgrid-inputhaltest SYSTEM PRIVATE ${FLOWGRID_X11_INCLUDE_DIR})
+    target_link_libraries(flowgrid-inputhaltest PRIVATE ${FLOWGRID_X11_LIBRARY})
+else()
+    message(STATUS "flowgrid: 没找到 X11，HAL 测试跳过「光标位移」那一项验证")
+endif()
+
 add_test(NAME inputhal COMMAND flowgrid-inputhaltest)
 # 退出码 77 = skip：ctest 与 dev.sh 都要认这个约定，别把它当成失败。
 set_tests_properties(inputhal PROPERTIES SKIP_RETURN_CODE 77)
