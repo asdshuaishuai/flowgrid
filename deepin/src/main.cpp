@@ -28,6 +28,7 @@
 #include "ui/widgets.h"
 
 #include <DApplication>
+
 #include <DGuiApplicationHelper>
 #include <DPlatformTheme>
 
@@ -327,6 +328,23 @@ static QWidget *buildFocusSheet();
 
 int main(int argc, char *argv[])
 {
+    // 高 DPI 缩放取整策略：PassThrough（不取整）。
+    //
+    // 为什么用**环境变量**而不用 QGuiApplication::setHighDpiScaleFactorRoundingPolicy：
+    // 那个 API 在本机 Qt 6.8 上即使在 main() 开头调用也会告警（它的前置条件比
+    // 「还没有 QCoreApplication 实例」更严），而这条告警的真正来源是 DDE 的
+    // treeland 库在应用起来之后又调了同一个 API——**不是我们的问题**，也去不掉
+    //（过滤 Qt 告警会把真问题一起藏起来，不干）。环境变量是唯一我们能控的口子。
+    //
+    // 为什么要 PassThrough：分数缩放（125% / 150%）下取整会丢掉半个像素，界面
+    // 看着发虚；PassThrough 保持原始比例，控件边界可能落在半像素上——这个代价
+    // 换来锐利，值得。
+    //
+    // 用户自己设了就别抢（那是显式意图）。
+    if (qEnvironmentVariableIsEmpty("QT_SCALE_FACTOR_ROUNDING_POLICY")) {
+        qputenv("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough");
+    }
+
     DApplication app(argc, argv);
     app.setOrganizationName(QStringLiteral("flowgrid"));
     app.setApplicationName(QStringLiteral("FlowGrid"));

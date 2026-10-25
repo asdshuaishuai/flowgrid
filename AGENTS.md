@@ -222,6 +222,18 @@ wire format / 键码 / 握手有任何变动：**PROTOCOL.md → protocol/ Go �
   `%<数字>`；②每一张样式表都能被 Qt **无告警**地解析（强制 polish 一遍）。
   改样式表前先看这段自检，它会告诉你哪张表坏了。
 
+### deepin：那条 `setHighDpiScaleFactorRoundingPolicy` 告警不是我们的
+- 启动时 Qt 会打一句 `setHighDpiScaleFactorRoundingPolicy must be called before
+  creating a QGuiApplication instance`。**来源是 DDE 的 `libtreeland.so`**：它在
+  应用起来之后又调了一次同一个 API（`grep -rl setHighDpiScaleFactorRoundingPolicy
+  /usr/lib` 能找到它）。不是我们的问题，也去不掉——过滤 Qt 告警会把真问题一起
+  藏起来，不干。
+- 我们能控的只有**策略本身**：`main()` 开头设环境变量
+  `QT_SCALE_FACTOR_ROUNDING_POLICY=PassThrough`（用户自己设过就不抢）。用
+  `QGuiApplication::setHighDpiScaleFactorRoundingPolicy()` 设反而会**多打一条**
+  告警——那个 API 在本机 Qt 6.8 上即使在 `main()` 第一行调用也会告警。
+- 为什么要 PassThrough：分数缩放（125% / 150%）下取整会丢掉半个像素，界面发虚。
+
 ### deepin：HAL 真机测试里的两个 X11 坑
 - `XWarpPointer` 的 `dest_w` 必须传 **root**。传 `None` 时本机 X 把
   `dst_x/dst_y` 当成**相对当前指针的偏移**——在 (960,540) 处调
