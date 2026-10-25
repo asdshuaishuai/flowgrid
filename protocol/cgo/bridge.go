@@ -538,6 +538,109 @@ func fg_keymap_load_file(path *C.char, outVersion **C.char, outRuleCount *C.size
 	return keymapTables.put(protocol.NewKeyMapTable(kmf))
 }
 
+// fg_keymap_load_data 从**内存里的字节**载入规则表。
+//
+// 为什么要有它：规则文件有时不是磁盘上的一个路径——比如打进可执行文件的
+// 资源（Qt 的 :/xxx.yaml，Go 的 os.ReadFile 读不了）。规则解析在协议层，
+// 那客户端就得能把字节递进来。
+//
+// data 在本次调用期间有效（函数会拷走）。
+//
+//export fg_keymap_load_data
+func fg_keymap_load_data(data *C.char, length C.size_t, outVersion **C.char, outRuleCount *C.size_t) uintptr {
+	raw := C.GoBytes(unsafe.Pointer(data), C.int(length))
+	kmf, err := protocol.ParseKeyMap(raw)
+	if err != nil {
+		*outVersion = nil
+		*outRuleCount = 0
+		return 0
+	}
+	*outVersion = C.CString(kmf.Version)
+	*outRuleCount = C.size_t(len(kmf.Rules))
+	return keymapTables.put(protocol.NewKeyMapTable(kmf))
+}
+
+// fg_keymap_rule_at 取第 index 条规则。
+//
+// 为什么需要「列出规则」而不只是「查某个键」：界面要显示**真实的规则表**
+// （哪一条、什么方向、什么键），规则文件是 YAML、解析在协议层，客户端自己
+// 再解析一遍就成了第二份实现。
+//
+// 返回 0 成功；-1 表示句柄无效或下标越界。context 写进调用方的缓冲区
+// （NUL 结尾）；缓冲区太小时按可容纳的长度截断。
+//
+//export fg_keymap_rule_at
+func fg_keymap_rule_at(handle unsafe.Pointer, index C.int,
+	outFromOS *C.uint8_t, outToOS *C.uint8_t,
+	outFromKey *C.uint16_t, outToKey *C.uint16_t,
+	outModifiers *C.uint8_t, outContext *C.char, outContextLen C.size_t) C.int {
+	table, ok := keymapTables.get(uintptr(handle))
+	if !ok {
+		return -1
+	}
+	rule, found := table.RuleAt(int(index))
+	if !found {
+		return -1
+	}
+	*outFromOS = C.uint8_t(rule.FromOS)
+	*outToOS = C.uint8_t(rule.ToOS)
+	*outFromKey = C.uint16_t(rule.FromKey)
+	*outToKey = C.uint16_t(rule.ToKey)
+	*outModifiers = C.uint8_t(rule.Modifiers)
+	if outContext != nil && outContextLen > 0 {
+		raw := []byte(string(rule.Context))
+		size := int(outContextLen)
+		if len(raw) > size-1 {
+			raw = raw[:size-1]
+		}
+		copy(unsafe.Slice((*byte)(unsafe.Pointer(outContext)), size), raw)
+		*(*byte)(unsafe.Pointer(uintptr(unsafe.Pointer(outContext)) + uintptr(len(raw)))) = 0
+	}
+	return 0
+}
+
+// fg_keymap_conflict_count 返回规则表里的冲突条数。
+//
+// 「冲突」= 规则把某个键映到了**目标平台的系统修饰键**上：目标机器上
+// 「修饰键 + 其它键」的组合会被系统截走（Linux 的 Ctrl+Tab 到 macOS 变成
+// Cmd+Tab = 切应用）。判定在协议层做——客户端不该自己维护一份「哪个键在
+// 哪个平台是系统键」。
+//
+// 返回 -1 表示句柄无效。
+//
+//export fg_keymap_conflict_count
+func fg_keymap_conflict_count(handle unsafe.Pointer) C.int {
+	table, ok := keymapTables.get(uintptr(handle))
+	if !ok {
+		return -1
+	}
+	return C.int(len(table.Conflicts()))
+}
+
+// fg_keymap_conflict_at 取第 index 条冲突。
+//
+// 返回 0 成功；-1 表示句柄无效或下标越界。
+//
+//export fg_keymap_conflict_at
+func fg_keymap_conflict_at(handle unsafe.Pointer, index C.int,
+	outFromOS *C.uint8_t, outFromKey *C.uint16_t,
+	outToOS *C.uint8_t, outToKey *C.uint16_t) C.int {
+	table, ok := keymapTables.get(uintptr(handle))
+	if !ok {
+		return -1
+	}
+	conflicts := table.Conflicts()
+	if int(index) < 0 || int(index) >= len(conflicts) {
+		return -1
+	}
+	c := conflicts[index]
+	*outFromOS = C.uint8_t(c.FromOS)
+	*outFromKey = C.uint16_t(c.FromKey)
+	*outToOS = C.uint8_t(c.ToOS)
+	*outToKey = C.uint16_t(c.ToKey)
+	return 0
+}
+
 //export fg_keymap_lookup
 func fg_keymap_lookup(handle unsafe.Pointer, fromPlatform C.uint8_t, toPlatform C.uint8_t, keyCode C.uint16_t, modifiers C.uint8_t, context *C.char, outKeyCode *C.uint16_t, outModifiers *C.uint8_t, outFound *C.int) C.int {
 	table, ok := keymapTables.get(uintptr(handle))
@@ -595,8 +698,6 @@ func fg_input_remap_key(hidKey C.uint16_t, modifiers C.uint8_t, fromPlatform C.u
 	return 0
 }
 
-//export fg_input_encode
-//
 // fg_input_encode 把一次「用户操作」编成线上帧（帧类型 + 载荷）。
 //
 // kind 取值与帧类型一一对应（key_down=0x01 …），客户端不必再镜像一套

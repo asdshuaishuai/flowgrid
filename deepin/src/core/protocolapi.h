@@ -10,6 +10,7 @@
 #define FLOWGRID_PROTOCOL_API_H
 
 #include <QByteArray>
+#include <QList>
 #include <QString>
 
 #include <cstddef>
@@ -168,6 +169,10 @@ public:
     // lastError() 给出原因——规则坏了不能静默按默认值跑（那等于用户
     // 配的映射悄悄失效）。
     explicit KeyMap(const QString &path);
+
+    // 从**内存里的字节**载入。规则不一定在磁盘上（打进可执行文件的资源、
+    // 网络下载的……），但解析只有一份，在协议层。
+    static KeyMap fromData(const QByteArray &yaml);
     ~KeyMap();
 
     KeyMap(const KeyMap &) = delete;
@@ -188,7 +193,35 @@ public:
                 const QString &context, std::uint16_t *outKeyCode,
                 std::uint8_t *outModifiers) const;
 
+    // 一条规则（界面要显示**真实的规则表**，不是只回答「查某个键会变成什么」）。
+    struct Rule {
+        std::uint8_t fromPlatform = 0;
+        std::uint8_t toPlatform = 0;
+        std::uint16_t fromKey = 0;     // HID Usage ID
+        std::uint16_t toKey = 0;       // HID Usage ID
+        std::uint8_t modifiers = 0;
+        QString context;
+    };
+    // 取第 index 条。下标越界返回 false。
+    bool ruleAt(int index, Rule *out) const;
+
+    // 一条冲突：规则把某个键映到了**目标平台的系统修饰键**上（macOS 的 ⌘/⌥、
+    // Linux 的 Super、Windows 的 Win）。目标机上「修饰键 + 其它键」的组合会被
+    // 系统截走——Linux 的 Ctrl+Tab 到 macOS 变成 Cmd+Tab = 切应用。
+    //
+    // 判定在协议层做（fg_keymap_conflict_count / fg_keymap_conflict_at），
+    // 客户端只负责把结果画出来。
+    struct Conflict {
+        std::uint8_t fromPlatform = 0;
+        std::uint16_t fromKey = 0;
+        std::uint8_t toPlatform = 0;
+        std::uint16_t toKey = 0;
+    };
+    QList<Conflict> conflicts() const;
+
 private:
+    // 无参构造：给 fromData 用（它拿不到路径，只有字节）。
+    KeyMap() = default;
     void release();
 
     void *handle_ = nullptr;

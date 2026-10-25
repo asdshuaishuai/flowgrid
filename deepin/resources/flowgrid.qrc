@@ -2,4 +2,17 @@
     <qresource prefix="/icons">
         <file alias="flowgrid.svg">icons/flowgrid.svg</file>
     </qresource>
+    <!--
+        键位规则：应用自带的默认规则表（协议 §11 格式）。
+
+        为什么打进 qrc：开发时直接跑 build-dev/flowgrid-deepin（没经过安装），
+        系统级 /usr/share/flowgrid/keymap.yaml 并不存在。没有它规则表就是空的，
+        而「规则表是空的」会让人以为功能没做。
+
+        注意：XML 注释里不能出现连续的连字符（那是注释结束符），所以上面
+        刻意不写命令行参数。
+    -->
+    <qresource prefix="/">
+        <file alias="keymap.yaml">keymap.yaml</file>
+    </qresource>
 </RCC>

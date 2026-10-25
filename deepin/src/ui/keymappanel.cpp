@@ -1,11 +1,13 @@
 #include "keymappanel.h"
 #include "core/designtokens.h"
+#include "core/keyrules.h"
 #include "core/settings.h"
 #include "core/theme.h"
 #include "icons.h"
 #include "widgets.h"
 
 #include <QApplication>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLoggingCategory>
@@ -57,7 +59,7 @@ KeymapPanel::KeymapPanel(QWidget *parent) : Panel(tr("键位映射"), parent)
 {
     auto *body = qobject_cast<QVBoxLayout *>(content()->layout());
 
-    // ── 顶部：生效条数 + 「按应用自动切换」说明 + 新增规则 ──
+    // ── 顶部：生效条数 + 规则来源 + 新增规则 ──
     {
         auto *row = new QWidget(this);
         auto *hl = new QHBoxLayout(row);
@@ -66,12 +68,15 @@ KeymapPanel::KeymapPanel(QWidget *parent) : Panel(tr("键位映射"), parent)
 
         const Palette &p = Theme::instance().palette();
         countBadge_ = new Badge(QStringLiteral("0 条"), Badge::Variant::Accent);
-        auto *hint = new QLabel(tr("按应用自动切换"), row);
-        hint->setFont(uiFont(tokens::kFont11));
-        hint->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
+        // 顶部这行字原来写的是「按应用自动切换」——那是句**承诺**：应用级规则
+        // 到了重映射通路才能兑现，而通路目前只按全局规则换算。写一句兑现不了
+        // 的承诺，不如把真话说出来：现在生效的规则是从哪儿来的。
+        sourceHint_ = new QLabel(row);
+        sourceHint_->setFont(uiFont(tokens::kFont11));
+        sourceHint_->setStyleSheet(QStringLiteral("color:%1").arg(cssColor(p.text3)));
 
         hl->addWidget(countBadge_);
-        hl->addWidget(hint);
+        hl->addWidget(sourceHint_);
         hl->addStretch(1);
         hl->addWidget(unwiredButton(tr("新增规则"), tr("新增规则"), row,
                                      QStringLiteral("plus"), false, true,
@@ -81,20 +86,27 @@ KeymapPanel::KeymapPanel(QWidget *parent) : Panel(tr("键位映射"), parent)
 
     body->addWidget(buildGlobalSection());
     body->addWidget(buildAppSection());
-    body->addWidget(banner(tr("「Win → ⌥」与系统聚焦快捷键冲突，仅在非全屏窗口下生效。"), this,
-                           BannerVariant::Warn));
+
+    // 冲突横幅：内容随规则表变，所以给它一个常驻的容器，刷新时换里面的
+    // 横幅。规则表里没有冲突时容器是空的——不画一条没内容的告警。
+    conflictHost_ = new QWidget(this);
+    auto *conflictLayout = new QVBoxLayout(conflictHost_);
+    conflictLayout->setContentsMargins(0, 0, 0, 0);
+    body->addWidget(conflictHost_);
+
     body->addWidget(buildAdvancedSection());
     setFooterWidget(buildFooter());
 
-    // 设计稿给了六条示例规则；真实规则等传输层加载 YAML 后经 setRules 注入。
-    setRules({
-        {QStringLiteral("Ctrl"), QStringLiteral("⌘"), tr("复制 / 粘贴"), true},
-        {QStringLiteral("Win"), QStringLiteral("⌥"), tr("系统快捷键"), true},
-        {QStringLiteral("Alt"), QStringLiteral("Ctrl"), tr("终端应用"), true},
-        {QStringLiteral("Ctrl"), QStringLiteral("Ctrl"), tr("直通（不转换）"), true},
-        {QStringLiteral("⌘"), QStringLiteral("Ctrl"), tr("反向（回切 Windows）"), true},
-        {QString(), QString(), tr("点击添加"), false},
-    });
+    // 显示**真实规则表**：规则由协议层解析 YAML（core/keyrules），这一屏只
+    // 负责把规则画出来。以前这里写死六条示例——界面显示的与真正生效的不是
+    // 同一份，「屏上写着 Ctrl 直通、实际却转成了 ⌘」就成了最难查的一类
+    // 不一致。
+    reloadFromKeyRules();
+    // 先渲染一次，**再**订阅「规则表变了」：构造期间触发回调会碰到半构造的
+    // 控件。连接时规则表会被重新读一次（用户改了 YAML 就能生效），那一刻
+    // 这一屏必须跟着换。
+    QObject::connect(&KeyRules::instance(), &KeyRules::tableChanged, this,
+                     &KeymapPanel::reloadFromKeyRules);
 }
 
 // 设计稿 keymap.html 的「全局」折叠区：3×2 键位网格。
@@ -114,22 +126,46 @@ QWidget *KeymapPanel::buildGlobalSection()
     return new Collapsible(tr("全局"), QStringLiteral("keyboard"), body, globalBadge_, this);
 }
 
-// 应用级覆盖：每行一个应用 + 开关 + 进入编辑。
+// 应用级覆盖：每行一个上下文（app:<bundleID> / game）+ 开关 + 进入编辑。
+//
+// 这一区原来写死两行「Visual Studio Code」「游戏（全屏时）」——那是设计稿里
+// 的示例，规则表里根本没有对应的规则，屏上写着两行覆盖、实际一条都不生效。
+// 现在每行都来自规则表里 context 非 global 的那几条。
 QWidget *KeymapPanel::buildAppSection()
 {
-    const Palette &p = Theme::instance().palette();
     auto *body = new QWidget(this);
     auto *vl = new QVBoxLayout(body);
     vl->setContentsMargins(0, 0, 0, 0);
     vl->setSpacing(0);
+    appLayout_ = vl;
 
-    struct App { const char *icon; const char *name; const char *hint; };
-    const App apps[2] = {
-        {"code", QT_TR_NOOP("Visual Studio Code"), QT_TR_NOOP("Ctrl 直通，禁用 ⌘ 转换")},
-        {"play", QT_TR_NOOP("游戏（全屏时）"), QT_TR_NOOP("停用全部映射，避免误触")},
-    };
-    for (int i = 0; i < 2; ++i) {
-        auto *host = new QWidget(body);
+    appBadge_ = new Badge(tr("0 条"), Badge::Variant::Neutral, this);
+    return new Collapsible(tr("应用覆盖"), QStringLiteral("monitor"), body, appBadge_, this);
+}
+
+// 应用覆盖区按规则表重建。
+void KeymapPanel::reloadAppSection()
+{
+    if (appLayout_ == nullptr) {
+        return;
+    }
+    clearLayout(appLayout_);
+    const QList<KeyContextGroup> groups = KeyRules::instance().contextGroups();
+    appGroupCount_ = groups.size();
+    if (appBadge_ != nullptr) {
+        appBadge_->setText(tr("%1 条").arg(groups.size()));
+    }
+    if (groups.isEmpty()) {
+        // 为什么空要说清楚：规则文件里没有应用级上下文，不是功能坏了。
+        appLayout_->addWidget(new EmptyState(
+            QStringLiteral("monitor"), tr("没有应用级覆盖"),
+            tr("规则文件里没有 app:/game 上下文"), this));
+        return;
+    }
+
+    const Palette &p = Theme::instance().palette();
+    for (const KeyContextGroup &group : groups) {
+        auto *host = new QWidget(this);
         auto *hl = new QHBoxLayout(host);
         hl->setContentsMargins(0, 0, 0, 0);
         // mac 端开关与「编辑」按钮之间是 s3(12)，这里原来写的是 s2(8)。
@@ -137,19 +173,21 @@ QWidget *KeymapPanel::buildAppSection()
 
         auto *sw = new ToggleSwitch(host);
         sw->setChecked(true);
-        unwiredToggle(sw, tr(apps[i].name), host);
+        // 应用级规则目前**不会**被重映射通路采用（通路只按全局规则换算，
+        // 见 PeerController::applyKeyRules）。开关点了要说清楚这一点，
+        // 不能让人以为一开就生效了。
+        QObject::connect(sw, &ToggleSwitch::clicked, this, [group] {
+            qCInfo(lcKeymap) << QObject::tr("应用级覆盖") << group.label
+                             << QObject::tr("尚未接通：重映射通路目前只按全局规则换算");
+        });
         auto *edit = new IconButton(QStringLiteral("edit"), tr("进入编辑"), host);
         QObject::connect(edit, &IconButton::clicked, this, [this] { Q_EMIT editRequested(); });
         hl->addWidget(sw);
         hl->addWidget(edit);
 
-        auto *title = iconTitle(QString::fromUtf8(apps[i].icon), tr(apps[i].name), p.text2,
-                                p.text1, host);
-        vl->addWidget(new ListRow(QString(), tr(apps[i].hint), host, this, title));
+        auto *title = iconTitle(group.iconName, group.label, p.text2, p.text1, host);
+        appLayout_->addWidget(new ListRow(QString(), group.hint, host, this, title));
     }
-
-    auto *badge = new Badge(tr("2 条"), Badge::Variant::Neutral, this);
-    return new Collapsible(tr("应用覆盖"), QStringLiteral("monitor"), body, badge, this);
 }
 
 // 高级区：设计稿默认收起。
@@ -214,6 +252,74 @@ QWidget *KeymapPanel::buildFooter()
     return foot;
 }
 
+// 从规则表重新取一次并刷新显示。
+//
+// 规则表由 core/keyrules 持有（它同时是重映射通路用的那张表），所以这一屏
+// 显示的永远是真正生效的那一份。
+void KeymapPanel::reloadFromKeyRules()
+{
+    QList<KeyRule> rules;
+    const QList<KeyRuleRow> rows = KeyRules::instance().rows();
+    for (const KeyRuleRow &row : rows) {
+        rules.append(KeyRule{row.fromLabel, row.toLabel, row.caption, true});
+    }
+    // 末尾那个「未设置 → 未设置 / 点击添加」是占位槽，不是一条规则。
+    rules.append(KeyRule{QString(), QString(), tr("点击添加"), false});
+    setRules(rules);
+    reloadAppSection();
+    reloadConflictBanner();
+    reloadSourceHint();
+}
+
+// 冲突横幅按规则表重建：没有冲突就不画横幅。
+//
+// 判定在协议层（规则把键映到了目标平台的系统修饰键上），这里只把结果写成
+// 一句话。以前这里写死一句「「Win → ⌥」与系统聚焦快捷键冲突」——不管规则
+// 表里有没有那条规则都在那儿报警，规则改了横幅也不动。
+void KeymapPanel::reloadConflictBanner()
+{
+    if (conflictHost_ == nullptr) {
+        return;
+    }
+    auto *layout = qobject_cast<QVBoxLayout *>(conflictHost_->layout());
+    if (layout == nullptr) {
+        return;
+    }
+    clearLayout(layout);
+
+    const QList<KeyConflictRow> conflicts = KeyRules::instance().conflicts();
+    conflictText_.clear();
+    if (conflicts.isEmpty()) {
+        return;
+    }
+    QStringList pairs;
+    QStringList platforms;
+    for (const KeyConflictRow &c : conflicts) {
+        pairs << QStringLiteral("%1 → %2").arg(c.fromLabel, c.toLabel);
+        if (!platforms.contains(c.toPlatform)) {
+            platforms << c.toPlatform;
+        }
+    }
+    conflictText_ = tr("「%1」映射到 %2 的系统修饰键，可能与系统快捷键冲突")
+                        .arg(pairs.join(QStringLiteral("、")),
+                             platforms.join(QStringLiteral("、")));
+    layout->addWidget(banner(conflictText_, conflictHost_, BannerVariant::Warn));
+}
+
+// 顶部提示：现在生效的规则是从哪儿来的。
+void KeymapPanel::reloadSourceHint()
+{
+    if (sourceHint_ == nullptr) {
+        return;
+    }
+    const KeyRules &rules = KeyRules::instance();
+    const QString full = rules.loaded() ? rules.sourcePath() : tr("按平台默认换算（没有规则文件）");
+    sourceHint_->setToolTip(full);
+    // 路径可能很长，压到一行宽度内；完整路径挂 tooltip。
+    const QFontMetrics fm(sourceHint_->font());
+    sourceHint_->setText(fm.elidedText(full, Qt::ElideMiddle, 180));
+}
+
 void KeymapPanel::setRules(const QList<KeyRule> &rules)
 {
     rules_ = rules;
@@ -248,7 +354,11 @@ void KeymapPanel::rebuildRows()
     clearLayout(mappingLayout_);
     if (rules_.isEmpty()) {
         const Palette &p = Theme::instance().palette();
-        auto *empty = new QLabel(tr("尚无规则"), this);
+        // 为什么空要说清楚：没有规则文件 ≠ 功能坏了。没有规则时按平台默认
+        // 换算（§6.3 Ctrl⇄⌘），照样能用。
+        auto *empty = new QLabel(
+            KeyRules::instance().loaded() ? tr("尚无规则") : tr("按平台默认换算（未找到规则文件）"),
+            this);
         empty->setFont(uiFont(tokens::kFont12));
         empty->setAlignment(Qt::AlignCenter);
         empty->setContentsMargins(0, tokens::kS5, 0, tokens::kS5);

@@ -270,6 +270,8 @@ sudo usermod -aG input $USER     # 一次性；之后重新登录，或用 sg in
   HAL 真机测试已跑通「真实 evdev 捕获 → 协议 → TCP → uinput 注入 → X 光标位移」，
   其中读回验证与合成设备捕获还差 `input` 组权限（见「三、测试」）。
   转发通路已改走协议层的 `EncodeInput`：客户端不再自己挑帧类型、自己拼载荷。
+  键位规则已接线：规则文件按用户级 → 系统级 → 应用自带的顺序加载，连接时交给
+  重映射通路，界面显示的是**同一张表**（详见「五、后续」第 4 条）。
 - OS 控制抽象层：`protocol/oscontrol`（契约 + 注册表 + 流水线）与 Linux 实现
   `protocol/oscontrol/evdev` —— 完成，Go 单测全绿（真机那段因同样的权限缺口跳过）。
 
@@ -289,9 +291,14 @@ sudo usermod -aG input $USER     # 一次性；之后重新登录，或用 sg in
    但 mac 侧仍通告 24801（UDP 端口，拨不通）。mac 侧也改成报会话端口后，
    两端才能仅靠 LAN ID 发现就连上（现在 mac 走的是 DirectLinkManager 的
    BLE / Wi-Fi Direct / mDNS 通路）。
-4. **deepin 的键位规则接线**：`proto::KeyMap` 句柄与 `OsControl::setPeer()`
-   都已备好，但 deepin 客户端还没把自己的 `keymap.yaml` 加载进来——
-   与 mac 的后续项 1 是同一件事。
+4. ~~**deepin 的键位规则接线**~~ —— **已完成（2026-10-25）**。
+   deepin 客户端按 `~/.config/flowgrid/keymap.yaml` → `/usr/local/share/flowgrid/keymap.yaml`
+   → `/usr/share/flowgrid/keymap.yaml` → 应用自带的 `:/keymap.yaml` 的顺序加载规则，
+   连接时把**同一张表**交给 `OsControl::setPeer()`，规则因此真的参与重映射。
+   键位映射屏显示的全局网格 / 应用覆盖 / 冲突横幅也全部来自这张表（原先是写死的
+   示例数据），`flowgrid-uitest` 的「键位映射」一段逐条比对二者。
+   **未做的部分**：应用级规则（`app:` / `game` 上下文）只解析、不参与换算——
+   重映射通路固定按全局规则查，还没有「前台应用 → context」的判定。
 5. 接收侧若未来改为「发原始键、收端重映射」，收端即用 `DecodeInputFrame(from=对端, to=本机)`；
    当前 mac 与 deepin 都采用「发前重映射」，收端只解析注入（勿二次重映射）。
 6. ~~**deepin 客户端迁到 Go 的 oscontrol**~~ —— **已完成（2026-10-25）**。

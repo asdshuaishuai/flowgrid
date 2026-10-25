@@ -2,13 +2,17 @@
 
 #include "core/hostinfo.h"
 #include "core/input/oscontrol.h"
+#include "core/keyrules.h"
 #include "core/laniddiscovery.h"
 #include "core/settings.h"
 
 #include <QHostAddress>
+#include <QLoggingCategory>
 #include <QMetaObject>
 #include <QThread>
 #include <QTimer>
+
+Q_LOGGING_CATEGORY(lcPeer, "flowgrid.peer")
 
 namespace fg {
 
@@ -99,8 +103,9 @@ void PeerController::connectTo(const QString &address, const QString &name,
     peerName_ = name;
     peerPlatform_ = platform;
     initiator_ = true;
-    // 重映射的方向取决于对端平台（§6.3 Ctrl⇄Meta）。必须在开始捕获之前设。
-    osControl_->setPeer(platform, nullptr, QString());
+    // 重映射的方向取决于对端平台（§6.3 Ctrl⇄Meta），规则表由用户自己配。
+    // 必须在开始捕获之前设：捕获一开就是按那时的对端平台换算的。
+    applyKeyRules();
 
     session_->setLocalIdentity(hostinfo::hostName(), proto::platform::kLinux);
     session_->setPairingCode(Settings::instance().pairingCode());
@@ -280,6 +285,28 @@ void PeerController::stopInjection()
     // 就永远没有对应的 keyUp 了，目标机上那个键会一直卡着。
     osControl_->stopInjection();
     injectionEnabled_ = false;
+}
+
+// 把当前规则表接进重映射通路。
+//
+// 规则表坏了/没有都不拦着连接：按平台默认换算（§6.3 Ctrl⇄⌘）照样能用，
+// 但要说清楚——静默按默认跑等于用户配的映射悄悄失效。
+void PeerController::applyKeyRules()
+{
+    KeyRules &rules = KeyRules::instance();
+    // 连接时**重新读一次**规则文件：用户改了 ~/.config/flowgrid/keymap.yaml
+    // 之后重连就生效；读完会通知界面刷新，屏上画的与跑起来的是同一份。
+    rules.reload();
+    if (!rules.loaded()) {
+        qCInfo(lcPeer) << tr("键位规则表未生效：%1").arg(rules.lastError());
+    } else {
+        qCInfo(lcPeer) << tr("键位规则表已加载：%1（%2 条）")
+                          .arg(rules.sourcePath())
+                          .arg(rules.table()->ruleCount());
+    }
+    // 规则表的句柄是协议层的；这里传的是**同一张表**，界面显示的与实际生效
+    // 的因此永远是同一份。
+    osControl_->setPeer(peerPlatform_, rules.table(), QString());
 }
 
 void PeerController::setError(const QString &message)

@@ -135,6 +135,88 @@ func NewKeyMapTable(kmf *KeyMapFile) *KeyMapTable {
 	return t
 }
 
+// RuleCount 返回规则条数。
+//
+// 为什么规则本体在协议层却还要一个「列出」的入口：界面要显示**真实的规则
+// 表**（哪一条、什么方向、什么键），而不是只回答「查某个键会变成什么」。
+// 规则文件是 YAML，解析在协议层；客户端自己再解析一遍就成了第二份实现。
+func (t *KeyMapTable) RuleCount() int {
+	if t == nil {
+		return 0
+	}
+	return len(t.rules)
+}
+
+// RuleAt 返回第 index 条规则。越界返回 false。
+func (t *KeyMapTable) RuleAt(index int) (KeyMapRule, bool) {
+	if t == nil || index < 0 || index >= len(t.rules) {
+		return KeyMapRule{}, false
+	}
+	return t.rules[index], true
+}
+
+// KeyMapConflict 描述一条「会触发目标平台系统快捷键」的规则。
+type KeyMapConflict struct {
+	FromOS  Platform
+	FromKey uint16
+	ToOS    Platform
+	ToKey   uint16
+}
+
+// IsSystemModifierKey 报告 key 在 platform 上是不是「系统修饰键」。
+//
+// 系统修饰键 = 目标系统的全局快捷键占用的那个修饰键：
+//   - macOS / iOS：⌘（Cmd+Tab 切应用、Cmd+空格开聚焦）与 ⌥（Option+Tab 切窗口）
+//   - Linux：Super（桌面环境快捷键）
+//   - Windows / Android：Win
+//
+// 为什么要单列这个判定：键位规则是**整键**映射——把某个键映到系统修饰键
+// 上，目标机器上「修饰键 + 其它键」的组合就可能被系统截走（Linux 的
+// Ctrl+Tab 到 macOS 变成 Cmd+Tab = 切应用，而不是在应用里切标签页）。
+// 界面据此给出冲突提示，所以「哪个键在哪个平台是系统键」这个知识必须在
+// 协议层——客户端自己判断一遍就成了第二份平台语义。
+func IsSystemModifierKey(platform Platform, key uint16) bool {
+	switch platform {
+	case PlatformMacOS, PlatformIOS:
+		switch key {
+		case HIDKeyLMeta, HIDKeyRMeta, HIDKeyLAlt, HIDKeyRAlt:
+			return true
+		}
+	case PlatformLinux, PlatformWindows, PlatformAndroid:
+		switch key {
+		case HIDKeyLMeta, HIDKeyRMeta:
+			return true
+		}
+	}
+	return false
+}
+
+// Conflicts 返回规则表里「会触发目标平台系统快捷键」的规则。
+//
+// 只看全局规则：应用级覆盖（app:/game 上下文）本来就是给某个应用抢这些
+// 组合键用的，那不算冲突。
+func (t *KeyMapTable) Conflicts() []KeyMapConflict {
+	if t == nil {
+		return nil
+	}
+	var out []KeyMapConflict
+	for _, rule := range t.rules {
+		if rule.Context != ContextGlobal {
+			continue
+		}
+		if !IsSystemModifierKey(rule.ToOS, rule.ToKey) {
+			continue
+		}
+		out = append(out, KeyMapConflict{
+			FromOS:  rule.FromOS,
+			FromKey: rule.FromKey,
+			ToOS:    rule.ToOS,
+			ToKey:   rule.ToKey,
+		})
+	}
+	return out
+}
+
 // modifierKeyBits pairs each protocol modifier bit with its HID Usage ID.
 var modifierKeyBits = [...]struct {
 	bit uint8

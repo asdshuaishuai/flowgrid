@@ -22,6 +22,7 @@
 #include "ui/filespanel.h"
 #include "ui/hotkeys.h"
 #include "ui/keymappanel.h"
+#include "core/keyrules.h"
 #include "ui/latencypanel.h"
 #include "ui/pairingpanel.h"
 #include "ui/settingspanel.h"
@@ -250,6 +251,78 @@ void checkThemeFollow(QWidget *tray)
           QStringLiteral("明暗切换后导航行的文字色跟着换了"));
     check(!titleBefore.isEmpty() && titleBefore != titleAfter,
           QStringLiteral("明暗切换后托盘头部标题的字色跟着换了"));
+}
+
+// ── 键位映射屏：画出来的必须是规则表本身 ──────────────────────────────
+//
+// 这一屏以前写死了六条示例规则、两个示例应用、一条写死的冲突横幅——屏上
+// 画着一套，真正生效的是另一套。「界面显示的不是真正生效的那份」属于最难
+// 查的一类不一致：功能看着好好的，用户按着屏上的说明去按键却不对。
+//
+// 这里比对的不是「某几个字符串」，而是**逐条相等**：面板渲染出来的每一行
+// 都必须能在规则表里找到同一条，反过来也成立。规则表换掉（用户改了 YAML、
+// 发行版换了默认）时，这段自检照样成立——它守的是「同源」，不是某份快照。
+void checkKeymapPanel()
+{
+    std::printf("键位映射\n");
+
+    fg::KeymapPanel panel;
+    const fg::KeyRules &rules = fg::KeyRules::instance();
+    rules.ensureLoaded();
+
+    const QList<fg::KeyRuleRow> rows = rules.rows();
+    const QList<fg::KeyRule> shown = panel.rules();
+
+    // 末尾那个「未设置 → 未设置 / 点击添加」是占位槽，不是一条规则。
+    const int shownReal = shown.size() - 1;
+    check(shownReal == rows.size(),
+          QStringLiteral("面板上的规则条数与规则表一致（面板 %1，规则表 %2）")
+              .arg(shownReal)
+              .arg(rows.size()));
+
+    bool same = true;
+    QString detail;
+    // 逐条比**面板上画出来的**每一行（含末尾可能多出来的）：只比前 N 条，
+    // 面板多画一条假规则时会被条数检查抓住，但「改掉其中一条」就漏了。
+    for (int i = 0; i < shownReal; ++i) {
+        if (i >= rows.size()) {
+            same = false;
+            detail = QStringLiteral("第 %1 条：面板「%2 → %3」，规则表里没有这一条")
+                         .arg(i + 1)
+                         .arg(shown.at(i).from, shown.at(i).to);
+            break;
+        }
+        if (shown.at(i).from != rows.at(i).fromLabel
+            || shown.at(i).to != rows.at(i).toLabel) {
+            same = false;
+            detail = QStringLiteral("第 %1 条：面板「%2 → %3」，规则表「%4 → %5」")
+                         .arg(i + 1)
+                         .arg(shown.at(i).from, shown.at(i).to,
+                              rows.at(i).fromLabel, rows.at(i).toLabel);
+            break;
+        }
+    }
+    check(same,
+          same ? QStringLiteral("面板上的每一条规则都来自规则表")
+               : QStringLiteral("面板上的规则与规则表对不上：%1").arg(detail));
+
+    // 徽章报的「N 条生效」得是规则表里的全局规则数（不含占位槽）。
+    check(panel.effectiveRuleCount() == rows.size(),
+          QStringLiteral("「N 条生效」与规则表的全局规则数一致（%1 vs %2）")
+              .arg(panel.effectiveRuleCount())
+              .arg(rows.size()));
+
+    // 应用覆盖区：分组数与规则表里的应用/游戏上下文数一致。
+    check(panel.appGroupCount() == rules.contextGroups().size(),
+          QStringLiteral("应用覆盖区的分组数与规则表一致（%1 vs %2）")
+              .arg(panel.appGroupCount())
+              .arg(rules.contextGroups().size()));
+
+    // 冲突横幅：有冲突才有文案，没冲突就不画。
+    const bool hasConflict = !rules.conflicts().isEmpty();
+    check(hasConflict == !panel.conflictText().isEmpty(),
+          hasConflict ? QStringLiteral("规则表里有冲突，横幅也有文案")
+                      : QStringLiteral("规则表里没有冲突，横幅是空的"));
 }
 
 // ── 样式表自检：两件事 ────────────────────────────────────────────────
@@ -485,6 +558,9 @@ int main(int argc, char **argv)
 
     // ── 6. 样式表：占位符替换 + Qt 解析告警 ───────────────────────────
     checkStyleSheets();
+
+    // ── 7. 键位映射屏：画出来的就是规则表 ─────────────────────────────
+    checkKeymapPanel();
 
     std::printf(g_failures == 0 ? "\n全部通过\n" : "\n有 %d 项未通过\n", g_failures);
     return g_failures == 0 ? 0 : 1;

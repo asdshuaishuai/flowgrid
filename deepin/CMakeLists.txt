@@ -145,6 +145,7 @@ set(FLOWGRID_SOURCES
     src/core/peercontroller.h     src/core/peercontroller.cpp
     src/core/devicemanager.h      src/core/devicemanager.cpp
     src/core/input/oscontrol.h     src/core/input/oscontrol.cpp
+    src/core/keyrules.h            src/core/keyrules.cpp
     src/core/input/peer_session.h     src/core/input/peer_session.cpp
 
     src/ui/svgsubset.h            src/ui/svgsubset.cpp
@@ -378,6 +379,20 @@ install(FILES resources/99-flowgrid-input.rules
         DESTINATION /etc/udev/rules.d)
 install(FILES resources/icons/flowgrid.svg
         DESTINATION ${FLOWGRID_ICON_INSTALL_DIR})
+# 键位规则表（协议 §11 格式）：装成**系统级默认规则**。
+#
+# 落在 /usr/local/share/flowgrid/ 而不是 /usr/share/flowgrid/：deepin 25 的
+# ostree 机器上 /usr 是只读 overlay，建不出 /usr/share/flowgrid/；/usr/local
+# 可写。查找顺序（core/keyrules.cpp）：
+#   用户级 ~/.config/flowgrid/keymap.yaml
+#     → /usr/local/share/flowgrid/keymap.yaml（本文件装到的地方）
+#     → /usr/share/flowgrid/keymap.yaml（发行版打包的）
+#     → 应用自带的 :/keymap.yaml（没装也能跑）
+#
+# 装这份文件只是为了让管理员看得到、改得动；内容与应用自带的那份一致，
+# 用户级那份一存在就以用户级的为准。
+install(FILES resources/keymap.yaml
+        DESTINATION share/flowgrid)
 # DConfig（DSG）按固定约定定位 meta 文件：
 #     <FLOWGRID_DCONFIG_META_ROOT>/configs/<appId>/<name>.json
 # 根目录默认 /usr/share/dsg，是 DTK 自己给的（不是猜的）：

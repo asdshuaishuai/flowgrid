@@ -140,6 +140,10 @@ extern int fg_payload_unmarshal_disconnect(uint8_t* data, size_t len, uint8_t* o
 extern uint8_t* fg_payload_clipboard(char* mime, uint8_t* data, size_t dataLen, size_t* outLen);
 extern int fg_payload_unmarshal_clipboard(uint8_t* data, size_t n, uint8_t* outMimeLen, uint8_t** outMime, size_t* outDataLen, uint8_t** outData);
 extern GoUintptr fg_keymap_load_file(char* path, char** outVersion, size_t* outRuleCount);
+extern GoUintptr fg_keymap_load_data(char* data, size_t length, char** outVersion, size_t* outRuleCount);
+extern int fg_keymap_rule_at(void* handle, int index, uint8_t* outFromOS, uint8_t* outToOS, uint16_t* outFromKey, uint16_t* outToKey, uint8_t* outModifiers, char* outContext, size_t outContextLen);
+extern int fg_keymap_conflict_count(void* handle);
+extern int fg_keymap_conflict_at(void* handle, int index, uint8_t* outFromOS, uint16_t* outFromKey, uint8_t* outToOS, uint16_t* outToKey);
 extern int fg_keymap_lookup(void* handle, uint8_t fromPlatform, uint8_t toPlatform, uint16_t keyCode, uint8_t modifiers, char* context, uint16_t* outKeyCode, uint8_t* outModifiers, int* outFound);
 extern uint8_t fg_remap_modifiers(uint8_t mods, uint8_t fromPlatform, uint8_t toPlatform);
 extern int fg_input_remap_key(uint16_t hidKey, uint8_t modifiers, uint8_t fromPlatform, uint8_t toPlatform, void* tableHandle, char* context, uint16_t* outKey, uint8_t* outMods);

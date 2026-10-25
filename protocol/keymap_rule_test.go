@@ -153,3 +153,128 @@ func TestParseKeyMapDefaultVersion(t *testing.T) {
 		t.Errorf("Version: got %q, want %q", kmf.Version, KeyMapVersion)
 	}
 }
+
+func TestKeyMapTableRuleListing(t *testing.T) {
+	yaml := `
+version: "1.0"
+rules:
+  - fromOS: linux
+    toOS: macos
+    fromKey: 0xE0
+    toKey: 0xE3
+    context: global
+  - fromOS: linux
+    toOS: macos
+    fromKey: 0xE0
+    toKey: 0xE0
+    context: "app:com.microsoft.VSCode"
+`
+	kmf, err := ParseKeyMap([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := NewKeyMapTable(kmf)
+
+	if got := table.RuleCount(); got != 2 {
+		t.Fatalf("RuleCount: got %d, want 2", got)
+	}
+	rule, ok := table.RuleAt(1)
+	if !ok {
+		t.Fatal("RuleAt(1): expected a rule")
+	}
+	if rule.Context != AppContext("com.microsoft.VSCode") {
+		t.Errorf("RuleAt(1).Context: got %q, want %q", rule.Context, AppContext("com.microsoft.VSCode"))
+	}
+	if _, ok := table.RuleAt(2); ok {
+		t.Error("RuleAt(2): out of range should report false")
+	}
+	if _, ok := table.RuleAt(-1); ok {
+		t.Error("RuleAt(-1): negative index should report false")
+	}
+
+	// nil 表不该崩（界面可能在规则文件缺失时也来问一句）。
+	var nilTable *KeyMapTable
+	if got := nilTable.RuleCount(); got != 0 {
+		t.Errorf("nil RuleCount: got %d, want 0", got)
+	}
+	if _, ok := nilTable.RuleAt(0); ok {
+		t.Error("nil RuleAt(0): should report false")
+	}
+}
+
+func TestIsSystemModifierKey(t *testing.T) {
+	cases := []struct {
+		platform Platform
+		key      uint16
+		want     bool
+	}{
+		{PlatformMacOS, HIDKeyLMeta, true},   // ⌘
+		{PlatformMacOS, HIDKeyRMeta, true},   // 右 ⌘
+		{PlatformMacOS, HIDKeyLAlt, true},    // ⌥
+		{PlatformMacOS, HIDKeyLCtrl, false},  // ⌃ 是终端键，不是系统键
+		{PlatformMacOS, HIDKeyLShift, false}, // ⇧
+		{PlatformLinux, HIDKeyLMeta, true},   // Super
+		{PlatformLinux, HIDKeyLAlt, false},   // Alt 不是系统键
+		{PlatformWindows, HIDKeyLMeta, true}, // Win
+	}
+	for _, tc := range cases {
+		if got := IsSystemModifierKey(tc.platform, tc.key); got != tc.want {
+			t.Errorf("IsSystemModifierKey(platform=%v, key=0x%02X): got %v, want %v",
+				tc.platform, tc.key, got, tc.want)
+		}
+	}
+}
+
+func TestKeyMapTableConflicts(t *testing.T) {
+	yaml := `
+version: "1.0"
+rules:
+  - fromOS: linux
+    toOS: macos
+    fromKey: 0xE0
+    toKey: 0xE3
+    context: global
+  - fromOS: linux
+    toOS: macos
+    fromKey: 0xE2
+    toKey: 0xE0
+    context: global
+  - fromOS: macos
+    toOS: linux
+    fromKey: 0xE3
+    toKey: 0xE0
+    context: global
+`
+	kmf, err := ParseKeyMap([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := NewKeyMapTable(kmf)
+
+	conflicts := table.Conflicts()
+	if len(conflicts) != 1 {
+		t.Fatalf("Conflicts: got %d, want 1 (%+v)", len(conflicts), conflicts)
+	}
+	c := conflicts[0]
+	if c.FromOS != PlatformLinux || c.FromKey != HIDKeyLCtrl {
+		t.Errorf("conflict source: got %v/0x%02X, want linux/0x%02X", c.FromOS, c.FromKey, HIDKeyLCtrl)
+	}
+	if c.ToOS != PlatformMacOS || c.ToKey != HIDKeyLMeta {
+		t.Errorf("conflict target: got %v/0x%02X, want macos/0x%02X", c.ToOS, c.ToKey, HIDKeyLMeta)
+	}
+
+	// 应用级规则不算冲突：它本来就是给某个应用抢这些组合键用的。
+	withApp := NewKeyMapTable(&KeyMapFile{Rules: []KeyMapRule{{
+		FromOS: PlatformLinux, ToOS: PlatformMacOS,
+		FromKey: HIDKeyLAlt, ToKey: HIDKeyLAlt,
+		Context: AppContext("com.microsoft.VSCode"),
+	}}})
+	if got := len(withApp.Conflicts()); got != 0 {
+		t.Errorf("app-scoped rule should not conflict: got %d, want 0", got)
+	}
+
+	var nilTable *KeyMapTable
+	if got := len(nilTable.Conflicts()); got != 0 {
+		t.Errorf("nil Conflicts: got %d, want 0", got)
+	}
+}

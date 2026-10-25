@@ -269,6 +269,30 @@ KeyMap::KeyMap(const QString &path)
     }
 }
 
+KeyMap KeyMap::fromData(const QByteArray &yaml)
+{
+    KeyMap map;
+    char *rawVersion = nullptr;
+    std::size_t ruleCount = 0;
+    const auto handle = fg_keymap_load_data(
+        const_cast<char *>(yaml.constData()), static_cast<std::size_t>(yaml.size()),
+        &rawVersion, &ruleCount);
+    if (handle == 0) {
+        map.lastError_ = QStringLiteral("键位规则无法解析");
+        if (rawVersion != nullptr) {
+            fg_keymap_free_string(rawVersion);
+        }
+        return map;
+    }
+    map.handle_ = reinterpret_cast<void *>(handle);
+    map.ruleCount_ = static_cast<int>(ruleCount);
+    if (rawVersion != nullptr) {
+        map.version_ = QString::fromUtf8(rawVersion);
+        fg_keymap_free_string(rawVersion);
+    }
+    return map;
+}
+
 KeyMap::~KeyMap()
 {
     release();
@@ -302,6 +326,52 @@ void KeyMap::release()
         fg_keymap_free(handle_);
         handle_ = nullptr;
     }
+}
+
+bool KeyMap::ruleAt(int index, Rule *out) const
+{
+    if (handle_ == nullptr || out == nullptr || index < 0) {
+        return false;
+    }
+    std::uint8_t fromPlatform = 0;
+    std::uint8_t toPlatform = 0;
+    std::uint16_t fromKey = 0;
+    std::uint16_t toKey = 0;
+    std::uint8_t modifiers = 0;
+    char context[128] = {0};
+    const int rc = fg_keymap_rule_at(handle_, index, &fromPlatform, &toPlatform, &fromKey, &toKey,
+                                     &modifiers, context, sizeof(context));
+    if (rc != 0) {
+        return false;
+    }
+    out->fromPlatform = fromPlatform;
+    out->toPlatform = toPlatform;
+    out->fromKey = fromKey;
+    out->toKey = toKey;
+    out->modifiers = modifiers;
+    out->context = QString::fromUtf8(context);
+    return true;
+}
+
+QList<KeyMap::Conflict> KeyMap::conflicts() const
+{
+    QList<Conflict> out;
+    if (handle_ == nullptr) {
+        return out;
+    }
+    const int count = fg_keymap_conflict_count(handle_);
+    if (count <= 0) {
+        return out;
+    }
+    for (int i = 0; i < count; ++i) {
+        Conflict c;
+        if (fg_keymap_conflict_at(handle_, i, &c.fromPlatform, &c.fromKey,
+                                  &c.toPlatform, &c.toKey) != 0) {
+            break;
+        }
+        out.append(c);
+    }
+    return out;
 }
 
 bool KeyMap::lookup(std::uint8_t fromPlatform, std::uint8_t toPlatform,

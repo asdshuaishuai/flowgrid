@@ -241,6 +241,33 @@ wire format / 键码 / 握手有任何变动：**PROTOCOL.md → protocol/ Go �
 - 光标贴在屏幕边时，注入的位移会被边界夹住，「没往右走」是撞墙不是没注入。
   测量光标位移前先把光标挪到屏幕正中；挪不动就**不判方向**，如实说跳过。
 
+### 键位规则：一份表，显示与生效都从它来
+- 规则**本体**在协议层（`protocol/keymap_rule.go` 解析 YAML）。客户端
+  （`deepin/src/core/keyrules.*`）只做三件事：找文件、翻译成显示用的字形、
+  把**同一张表**交给重映射通路。客户端自己再解析一遍 YAML = 第二份实现，
+  两份迟早对不上。
+- 规则文件查找顺序（先到先得）：
+  `~/.config/flowgrid/keymap.yaml` → `/usr/local/share/flowgrid/keymap.yaml`
+  （install() 落地处）→ `/usr/share/flowgrid/keymap.yaml`（发行版打包的）
+  → 应用自带的 `:/keymap.yaml`（没装也能跑）。
+  用户级用 `GenericConfigLocation + "/flowgrid"`，**不要**用
+  `AppConfigLocation`——后者会带出 `~/.config/flowgrid/FlowGrid/`，而本机
+  配对码已经落在 `~/.config/flowgrid/`（`core/settings.cpp`）。
+- **界面显示的必须是真正生效的那一份**。键位映射屏以前写死六条示例规则、
+  两个示例应用、一条写死的冲突横幅——屏上画着一套，跑的是另一套。现在
+  全局网格 / 应用覆盖 / 冲突横幅都从规则表算出来；连接时规则表重新读一次，
+  读完发 `KeyRules::tableChanged`，界面跟着刷新。
+- **冲突判定也在协议层**（`IsSystemModifierKey` + `KeyMapTable.Conflicts()`）：
+  规则把键映到了目标平台的系统修饰键上（macOS 的 ⌘/⌥、Linux 的 Super、
+  Windows 的 Win），目标机上「修饰键 + 其它键」会被系统截走。「哪个键在哪个
+  平台是系统键」是平台语义，客户端不该自己维护一份。
+- 应用级规则（`app:` / `game` 上下文）目前**只解析、不参与换算**：重映射
+  通路固定按全局规则查（`setPeer` 传的 context 是空）。界面上应用覆盖区的
+  开关点了要说清这一点，不能让人以为一开就生效。
+- 回归守卫在 `flowgrid-uitest` 的「键位映射」一段：面板上的每一条规则都要与
+  规则表**逐条相等**，「N 条生效」与应用覆盖分组数也要对得上，冲突横幅的有无
+  要跟规则表一致。它守的是「同源」，不是某份快照——规则文件换了照样成立。
+
 ---
 
 *每条原则都对应着一个曾经踩过的坑。写下来，是为了以后不再踩。*  

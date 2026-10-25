@@ -133,6 +133,7 @@ fi
 #   /usr/local/bin/flowgrid-deepin
 #   /usr/local/share/applications/flowgrid-deepin.desktop
 #   /usr/local/share/icons/hicolor/scalable/apps/flowgrid.svg
+#   /usr/local/share/flowgrid/keymap.yaml      ← 系统级键位规则表
 #   ${DCONFIG_META}              ← 绝对路径，dconfig 守护进程只扫它所在的根
 #   /etc/xdg/autostart/flowgrid-deepin-autostart.desktop   ← 绝对路径，自启项只能在这
 #   /etc/udev/rules.d/99-flowgrid-input.rules              ← 绝对路径，udev 只认这一处
@@ -160,6 +161,10 @@ fi
 # 这些副本都是「dconfig 看不见」的位置，留着只会让人误以为 meta 装好了
 # （尤其是 /usr/local/share/flowgrid/ 那个：文件确实在，dconfig 却扫不到）。
 # 放在安装成功之后：万一是 sudo 失败被打断，先删就等于两头都没了。
+#
+# 注意 /usr/local/share/flowgrid/ 这个目录**不是**只有残留：cmake --install
+# 会把系统级键位规则表（keymap.yaml）装在那儿。所以这里只删装错位置的
+# DConfig json，目录本身留着（下面的空目录清理也会因为它非空而跳过）。
 #
 # 家目录那几份是自己的文件，用普通 rm——套 sudo 会白要一次密码。
 for stale in \

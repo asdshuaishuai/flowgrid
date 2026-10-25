@@ -93,6 +93,9 @@ private:
     bool startInjection();
     void stopInjection();
 
+    // 加载键位规则表并接进重映射通路。
+    void applyKeyRules();
+
     std::unique_ptr<input::OsControl> osControl_;
     std::unique_ptr<input::PeerSession> session_;
 

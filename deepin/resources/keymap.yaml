@@ -1,0 +1,31 @@
+version: "1.0"
+# FlowGrid 键位规则（协议 §11 格式）。
+#
+# 键码是 USB HID Usage ID：
+#   0xE0 左 Ctrl / 0xE1 左 Shift / 0xE2 左 Alt / 0xE3 左 GUI（Win / ⌘）
+#
+# 「没有规则」时按平台默认换算（§6.3 Ctrl ⇄ ⌘）。下面几条是**显式**写出来
+# 的——写在这里是为了让用户看得见、也改得动；删掉某条就回到默认行为。
+#
+# 规则本体由协议层解析（protocol/keymap_rule.go），客户端不自己解析 YAML。
+rules:
+  - fromOS: linux
+    toOS: macos
+    fromKey: 0xE0   # Ctrl → ⌘（复制 / 粘贴）
+    toKey: 0xE3
+    context: global
+  - fromOS: linux
+    toOS: macos
+    fromKey: 0xE3   # Super → ⌥（系统快捷键）
+    toKey: 0xE2
+    context: global
+  - fromOS: linux
+    toOS: macos
+    fromKey: 0xE2   # Alt → Ctrl（终端应用）
+    toKey: 0xE0
+    context: global
+  - fromOS: macos
+    toOS: linux
+    fromKey: 0xE3   # ⌘ → Ctrl（反向：macOS 控制 Linux）
+    toKey: 0xE0
+    context: global
