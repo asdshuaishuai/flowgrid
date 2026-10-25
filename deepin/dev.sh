@@ -40,6 +40,9 @@ FORWARD_TEST_NAME="flowgrid-inputforwardtest"
 PEER_TEST_NAME="flowgrid-peersessiontest"
 # 协议级真实操作单测：真实捕获序列 → 协议层重映射 → 真实 TCP → 对端解析。
 E2E_TEST_NAME="flowgrid-inpute2etest"
+# 跨客户端黄金向量单测：对着协议层生成的那份向量文件比对（常量镜像 + 载荷字节）。
+# 同一份文件也给 mac / Windows 客户端用——两端行为一致由机器盯着。
+VECTOR_TEST_NAME="flowgrid-inputvectortest"
 # HAL 真机单测：真实 evdev 捕获 → 真实 uinput 注入 → 读回验证。
 # 需要 uinput/evdev 权限；没有就报跳过（退出码 77），不算失败——
 # 「没跑」和「跑过了」必须分得清。
@@ -208,6 +211,9 @@ case "${MODE}" in
 
         ok "协议级真实操作单测（捕获序列 → 重映射 → TCP → 对端解析）"
         "${BUILD_DIR}/${E2E_TEST_NAME}"
+
+        ok "跨客户端黄金向量单测（常量镜像 + 载荷字节对着协议层向量文件比对）"
+        "${BUILD_DIR}/${VECTOR_TEST_NAME}"
 
         if "${BUILD_DIR}/${HAL_TEST_NAME}"; then
             ok "HAL 真机单测（真实 evdev 捕获 → 真实 uinput 注入）"

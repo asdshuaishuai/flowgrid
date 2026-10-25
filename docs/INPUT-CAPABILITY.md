@@ -75,10 +75,12 @@ Ctrl），用户还能自定义键位规则（§11）。这套「识别一帧输
   不各写各的字面量。
 
 #### 转发通路：`deepin/src/core/input/input_forwarder.{h,cpp}`
-- `Forwarder`：控制端 `forwardCaptured()` = 捕获事件 → **协议层重映射** → 载荷 → 发送回调；
-  接收端 `handleInbound()` = 入站帧 → 解析 → HAL 注入。
+- `Forwarder`：控制端 `forwardCaptured()` = 捕获事件 → **协议层 `EncodeInput`**（重映射 +
+  选帧类型 + 拼载荷都在协议层）→ 发送回调；接收端 `handleInbound()` = 入站帧 → 解析 → HAL 注入。
   分工与 mac 的 `send?(type, payload)` / Windows 的 `SendToPeer(type, payload)` 一致：
   本层只产出「帧类型 + 载荷」，帧头由传输层补。
+  **客户端不再自己挑帧类型、自己拼载荷、自己调重映射**——那段语义以前在 deepin 与
+  mac 各写一份，正是行为分叉的根源；现在由协议层独占，跨端一致性由黄金向量钉住。
 - `Injector` 抽象（在 `input_engine.h`）：生产环境是 `Engine` 本身，单测里是假实现——
   这样「入站帧 → 注入动作」的决策能脱离 `/dev/uinput` 权限被验证。
 
@@ -104,6 +106,69 @@ Ctrl），用户还能自定义键位规则（§11）。这套「识别一帧输
   `DeviceManager` 现在**定期重新发现**（以前只在 setSource 时取一次，
   后来的对端永远不出现）。
 
+#### 规范化的输入模型 + 对称编解码：`protocol/inputevent.go`
+
+各平台原本各自定义「捕获到的事件」——deepin 是 `EventKind + pressed 位 + deltaX/deltaY`，
+mac 是 CGEvent 原生字段（`virtualKey` / `flagsRaw`）。于是「修饰键怎么表达」
+「水平滚轮哪边算正」「按下与松开怎么区分」这些**协议语义**被各端各写一遍，迟早分叉。
+
+现在协议层有一份规范模型 `protocol.Input`（Kind / Key / Modifiers / DeltaX / DeltaY /
+Button / Pressed），外加两个对称函数：
+
+- `EncodeInput(in, from, to, table, ctx)` → (帧类型, 载荷)：**发前重映射**（§6.3）。
+- `DecodeInput(frameType, payload)` → `Input`：收端**不二次重映射**。
+
+`InputKind` 与帧类型一一对应且同值（`key_down` ↔ `KEY_DOWN` 0x01 …），客户端因此
+不必再镜像一套「操作类型」常量。
+
+#### OS 控制抽象层：`protocol/oscontrol`
+
+「操作系统输入控制」的契约层，**依赖倒置**——协议层不 import 任何平台：
+
+```go
+type Controller interface {
+    Platform() protocol.Platform
+    Capture() (protocol.Input, error)   // 阻塞直到捕获到一个事件
+    Inject(in protocol.Input) error
+    ReleasePressed() error              // 松开还按着的键（对端走了不会自动清）
+    Close() error
+}
+oscontrol.Register(platform, factory)  // 各平台注册自己的实现
+oscontrol.For(platform)                // 协议层按 os 类型取，不关心实现
+```
+
+`oscontrol.Forwarder` 把「捕获 → 协议层重映射并编码 → 交给 sink」收进协议层；
+`oscontrol.Injector` 把「入站帧 → 解码 → 注入」收进协议层。客户端只剩三件事：
+提供 `Controller`、提供传输、画界面。
+
+Linux 实现在 `protocol/oscontrol/evdev`（evdev 捕获 + uinput 注入，行为对齐现有
+C++ 引擎）。其它平台照同一份契约实现即可。
+
+**踩过的坑（写下来免得再踩）**：
+- `UI_DEV_CREATE` 是 `_IO`（无 size 字段），不是 `_IOW`——写成 `_IOW` 编码内核直接
+  回 EINVAL，而前面的 `UI_SET_*` 照样成功，症状极难查。
+- `EVIOCGBIT(ev,len)` 的 `nr` 字段是 **`ev + 0x20`**，不是 `ev`：写错的话命令编码
+  对不上，内核同样回 EINVAL（而 `EVIOCGNAME` 不受影响，看着像权限问题）。
+- `EVIOCGBIT(0, len)` 才是「支持哪些事件类型」，`EVIOCGBIT(EV_KEY, len)` 是键码位图。
+
+#### 跨客户端黄金向量：`protocol/testdata/input_vectors.json`
+
+「某个输入事件在协议层应该变成什么字节」只有协议层知道。以前这条只靠各端单测里
+零散的断言守着——两端各写各的期望值，行为迟早分叉，而且分叉了也没人知道是哪端错了。
+
+现在协议层用**自己的函数**（`EncodeInput`）把期望值算出来，落到一份 JSON：
+
+- `constants`：帧类型 / 平台 / 修饰位 / 角色 / 能力位 / 鼠标按钮号——
+  客户端代码里手抄了这些常量，现在逐个跟这份表比对，协议层改了而客户端忘了改立刻红。
+- `cases`：`from_platform` → `to_platform` 的输入事件序列，以及期望的线上字节。
+
+各端测试读**同一份文件**：deepin 侧是 `deepin/tests/input_vector_test.cpp`
+（只跑 `from_platform=linux` 的用例，其余留给 mac / Windows 客户端）。
+
+维护：改完协议行为跑
+`cd protocol && go run ./cmd/inputvectors -w testdata/input_vectors.json`；
+协议层有测试守着这份文件与生成器输出一致（忘了重新生成会被 CI 逮住）。
+
 #### web demo 的分帧对齐（§7.2）
 demo 原先自己手写了一套 **4 字节**长度前缀，而协议 §7.2 与 mac / deepin 都是
 **2 字节** —— 两端对不上帧长，demo 与真客户端直接互通不了。已改成 2 字节。
@@ -124,6 +189,8 @@ demo 的会话 HMAC 密钥也改成**由配对码派生**（算法同 mac 的 `S
 | Windows | Windows 机上 `cd windows && go test ./...`；任意机 `cd windows && GOOS=windows go build ./...` | hub 收敛后编译/回归 |
 | deepin 转发通路 | `./deepin/dev.sh --check`（或 `flowgrid-inputforwardtest`） | 跨平台重映射（Linux Ctrl→macOS Meta）、KEY_UP 键码仍重映射、鼠标按下/松开可区分、滚轮 delta 不错位、入站帧分发到假 Injector、非输入帧不误注入 |
 | deepin 对端会话 | `flowgrid-peersessiontest` | 回环 TCP 上完成 IDENTIFY 握手（接受/拒绝两条路）、业务帧往返载荷一致、配对码不一致时帧被丢弃 |
+| 跨端黄金向量 | `flowgrid-inputvectortest`（`dev.sh --check` 里也跑）；协议层：`go test -run InputVector .` | 客户端镜像的常量（帧类型/平台/修饰位/角色/能力位/按钮号）逐个对着协议层真值核对；转发通路产出的载荷字节对着向量文件核对 |
+| OS 控制抽象层 | `cd protocol && go test ./oscontrol/...` | 契约注册表（没注册就报 `ErrNotSupported`，不返回 nil）；流水线「捕获 → 编码 → 帧」「帧 → 解码 → 注入」；Linux 实现的 HID↔evdev 表往返、修饰键映射、滚轮方向换算 |
 | deepin HAL 真机 | `flowgrid-inputhaltest`（`dev.sh --check` 里也跑） | 真实 evdev 捕获 → 协议重映射 → 真实 TCP → 对端解析 → 真实 uinput 注入 → **读回虚拟设备的事件流**逐条核对 → **X 光标位移**（见下） |
 | 真实注入（HAL） | `cd protocol && go build -o /tmp/fg-realinput ./cmd/realinput && /tmp/fg-realinput` | 协议 HID → `DecodeInputFrame` → cgo CoreGraphics 注入：`CGWarp` 真实移动光标（无需权限）、`CGEvent` 真实按键（需辅助功能权限）；带「读回光标位置」诊断 |
 
@@ -178,10 +245,13 @@ sudo usermod -aG input $USER     # 一次性；之后重新登录，或用 sg in
 - 协议层：`DecodeInputFrame` / `RemapCapturedKey` + 单测，`fg_input_remap_key` + 双头同步 —— 完成。
 - mac：发送侧重映射走协议层，删 Swift 重复实现，`swift test` 62 绿 —— 完成。
 - Windows：`hub.go` 收敛到 `RemapCapturedKey`，`GOOS=windows go build` 通过 —— 完成。
-- deepin：能力接入 + 转发通路 + 对端会话 + 界面接线 + 五个单测 —— 完成；
+- deepin：能力接入 + 转发通路 + 对端会话 + 界面接线 + 六个单测 —— 完成；
   真机实测已跑通「发现 → 连接 → 握手 → 已连接 → 接管开关」。
   HAL 真机测试已跑通「真实 evdev 捕获 → 协议 → TCP → uinput 注入 → X 光标位移」，
   其中读回验证与合成设备捕获还差 `input` 组权限（见「三、测试」）。
+  转发通路已改走协议层的 `EncodeInput`：客户端不再自己挑帧类型、自己拼载荷。
+- OS 控制抽象层：`protocol/oscontrol`（契约 + 注册表 + 流水线）与 Linux 实现
+  `protocol/oscontrol/evdev` —— 完成，Go 单测全绿（真机那段因同样的权限缺口跳过）。
 
 ## 五、后续（follow-up）
 1. **mac 捕获路径接用户 keymap 规则**：目前 `InputCaptureTap` 传 `nil` table（只走平台默认
@@ -204,7 +274,14 @@ sudo usermod -aG input $USER     # 一次性；之后重新登录，或用 sg in
    与 mac 的后续项 1 是同一件事。
 5. 接收侧若未来改为「发原始键、收端重映射」，收端即用 `DecodeInputFrame(from=对端, to=本机)`；
    当前 mac 与 deepin 都采用「发前重映射」，收端只解析注入（勿二次重映射）。
-6. **uinput 虚拟设备的 uaccess 覆盖**：虚拟设备没有物理路径，systemd 的 uaccess
+6. **deepin 客户端迁到 Go 的 oscontrol**：协议层已有 `oscontrol/evdev`（Linux 实现）
+   与 `oscontrol.Forwarder/Injector`（流水线）。deepin 的 C++ 侧目前还是自己那套
+   `input_engine` + `input_forwarder`；下一步是用 cgo 把 Go 的 `oscontrol/evdev`
+   接进客户端，把 C++ 引擎与转发通路删掉（客户端只留传输与界面）。
+   期间两边行为由黄金向量钉住，迁移过程中不会出现静默的行为变化。
+7. **mac 侧的 oscontrol 实现**：把 `InputCaptureTap` / `InputInjector` 按
+   `oscontrol.Controller` 契约重写并注册，mac 侧也就能读同一份黄金向量文件。
+8. **uinput 虚拟设备的 uaccess 覆盖**：虚拟设备没有物理路径，systemd 的 uaccess
    builtin 分不出它属于哪个 seat，不会给它发 ACL——节点停在 `root:input 0660`，
    「写得进去、读不回来」。现在只影响 HAL 测试的读回验证与合成设备捕获
    （产品链路本身不需要读自己的虚拟设备：写 `/dev/uinput` 有权限即可）。

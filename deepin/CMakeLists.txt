@@ -308,6 +308,28 @@ target_link_libraries(flowgrid-inpute2etest PRIVATE
 target_compile_options(flowgrid-inpute2etest PRIVATE -Wall -Wextra)
 add_test(NAME inpute2e COMMAND flowgrid-inpute2etest)
 
+# 跨客户端输入行为黄金向量测试：deepin 侧对着协议层生成的那份向量文件比对。
+#
+# 同一份文件（protocol/testdata/input_vectors.json）也给 mac / Windows 客户端用：
+# 「两端行为一致」从此由机器盯着，而不是靠各端单测里各写各的期望值。
+# 这条测试同时干两件事：核对 deepin 手抄的常量（帧类型/平台/修饰位/角色/能力位）
+# 与协议层一致，以及核对转发通路产出的载荷字节与向量一致。
+add_executable(flowgrid-inputvectortest tests/input_vector_test.cpp
+    src/core/input/input_forwarder.h src/core/input/input_forwarder.cpp
+    src/core/input/input_engine.h src/core/input/input_keymap.h
+    src/core/protocolapi.h src/core/protocolapi.cpp
+    ${GO_PROTOCOL_A} ${GO_PROTOCOL_H})
+target_include_directories(flowgrid-inputvectortest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${GO_PROTOCOL_DIR}/cgo)
+# 向量文件路径写进编译期定义：测试不靠「当前工作目录在哪」找文件。
+target_compile_definitions(flowgrid-inputvectortest PRIVATE
+    FLOWGRID_VECTOR_FILE="${GO_PROTOCOL_DIR}/testdata/input_vectors.json")
+target_link_libraries(flowgrid-inputvectortest PRIVATE
+    Qt6::Core Qt6::Network ${GO_PROTOCOL_A} Threads::Threads)
+target_compile_options(flowgrid-inputvectortest PRIVATE -Wall -Wextra)
+add_test(NAME inputvector COMMAND flowgrid-inputvectortest)
+
 # HAL 层真机测试：真实 evdev 捕获 → 真实 uinput 注入 → 读回验证。
 # 需要 /dev/uinput 可写 + /dev/input/event* 可读；权限不足时**如实报跳过**
 # （退出码 77），不假装通过。

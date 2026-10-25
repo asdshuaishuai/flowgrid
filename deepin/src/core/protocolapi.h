@@ -210,6 +210,25 @@ bool remapCapturedKey(std::uint16_t hidKey, std::uint8_t modifiers,
                        const KeyMap *keymap, const QString &context,
                        std::uint16_t *outKey, std::uint8_t *outModifiers);
 
+// ── 输入操作编码（「事件 → 线上帧」归协议层）───────────────────────────
+//
+// 客户端只做「OS 原生事件 ↔ 协议模型」的翻译：帧类型选哪个、载荷怎么拼、
+// 键位怎么重映射，全部经协议层（fg_input_encode → protocol.EncodeInput）。
+// 各端各写一份 switch 正是行为分叉的根源——协议层的黄金向量
+// （protocol/testdata/input_vectors.json）钉的就是这段语义。
+//
+// kind 传**帧类型**常量（key_down=0x01 …）：协议层里操作类型与帧类型一一
+// 对应且同值，客户端因此不必再镜像一套「操作类型」常量。
+//
+// outKey / outModifiers 回填**重映射之后**的键位与掩码：客户端要记住它们，
+// 停接管时才能把还按着的键松开（对端在另一台机器上，keyUp 不发出去那边会卡住）。
+GoBuffer encodeInput(std::uint8_t kind, std::uint16_t key, std::uint8_t modifiers,
+                      std::int16_t deltaX, std::int16_t deltaY, std::uint8_t button,
+                      bool pressed, std::uint8_t fromPlatform, std::uint8_t toPlatform,
+                      const KeyMap *keymap, const QString &context,
+                      std::uint8_t *outFrameType, std::uint16_t *outKey,
+                      std::uint8_t *outModifiers);
+
 // ── IDENTIFY 握手载荷（§4.2）────────────────────────────────────────────
 // version 传 kProtocolVersion；role 取 role:: 里的值。
 GoBuffer identifyPayload(std::uint8_t platform, std::uint8_t role, std::uint8_t caps,

@@ -11,58 +11,77 @@ Forwarder::Forwarder(Injector *injector, SendFn send)
 
 bool Forwarder::forwardCaptured(const CapturedEvent &event)
 {
-    OutboundFrame frame;
+    // 「事件 → 帧类型 + 载荷」整件事交给协议层：客户端只做「OS 原生事件 ↔
+    // 协议模型」的翻译，不自己拼载荷、不自己做跨平台换算。
+    //
+    // 为什么这么收：这段语义（哪种操作用哪种帧、载荷怎么拼、Ctrl⇄Meta 怎么换）
+    // 以前在 deepin 与 mac 各写一份，两端各写各的期望值就会分叉——协议层的
+    // 黄金向量（protocol/testdata/input_vectors.json）钉的就是这段。
+    //
+    // kind 直接用帧类型常量：协议层里操作类型与帧类型一一对应且同值。
+    std::uint8_t kind = proto::frametype::kKeyDown;
+    std::uint16_t key = 0;
+    std::uint8_t modifiers = 0;
+    std::int16_t deltaX = 0;
+    std::int16_t deltaY = 0;
+    std::uint8_t button = 0;
+    bool pressed = false;
     switch (event.kind) {
-    case EventKind::KeyDown: {
-        std::uint16_t key = event.keyCode;
-        std::uint8_t mods = event.modifiers;
-        if (!proto::remapCapturedKey(event.keyCode, event.modifiers,
-                                     proto::platform::kLinux, peerPlatform_,
-                                     keymap_, context_, &key, &mods)) {
-            lastError_ = QStringLiteral("按键重映射失败（HID 0x%1）")
-                             .arg(event.keyCode, 4, 16, QLatin1Char('0'));
-            return false;
-        }
-        frame.frameType = proto::frametype::kKeyDown;
-        frame.payload = proto::keyDownPayload(key, mods).toByteArray();
-        pressedKeys_.insert(key);
+    case EventKind::KeyDown:
+        kind = proto::frametype::kKeyDown;
+        key = event.keyCode;
+        modifiers = event.modifiers;
         break;
-    }
-    case EventKind::KeyUp: {
-        // KEY_UP 不带修饰掩码（§5.3），但**键码仍然要重映射**：掩码没了，
-        // 键位换算照样得按目标平台走。对端是 macOS 时，松开 Ctrl 必须发
-        // Meta 的 keyUp，否则对端的 Cmd 会一直按着。
-        std::uint16_t key = event.keyCode;
-        std::uint8_t mods = 0;
-        if (!proto::remapCapturedKey(event.keyCode, 0, proto::platform::kLinux,
-                                     peerPlatform_, keymap_, context_, &key, &mods)) {
-            lastError_ = QStringLiteral("按键释放重映射失败（HID 0x%1）")
-                             .arg(event.keyCode, 4, 16, QLatin1Char('0'));
-            return false;
-        }
-        frame.frameType = proto::frametype::kKeyUp;
-        frame.payload = proto::keyUpPayload(key).toByteArray();
-        pressedKeys_.erase(key);
+    case EventKind::KeyUp:
+        kind = proto::frametype::kKeyUp;
+        key = event.keyCode;
         break;
-    }
     case EventKind::MouseMove:
-        frame.frameType = proto::frametype::kMouseMove;
-        frame.payload = proto::mouseMovePayload(event.deltaX, event.deltaY).toByteArray();
+        kind = proto::frametype::kMouseMove;
+        deltaX = event.deltaX;
+        deltaY = event.deltaY;
         break;
     case EventKind::MouseButton:
-        frame.frameType = proto::frametype::kMouseButton;
-        frame.payload =
-            proto::mouseButtonPayload(event.button, event.pressed).toByteArray();
+        kind = proto::frametype::kMouseButton;
+        button = event.button;
+        pressed = event.pressed;
+        break;
+    case EventKind::Scroll:
+        kind = proto::frametype::kScroll;
+        deltaX = event.deltaX;
+        deltaY = event.deltaY;
+        break;
+    }
+
+    std::uint8_t frameType = 0;
+    std::uint16_t remappedKey = 0;
+    std::uint8_t remappedMods = 0;
+    const proto::GoBuffer payload = proto::encodeInput(kind, key, modifiers, deltaX, deltaY,
+                                                        button, pressed,
+                                                        proto::platform::kLinux, peerPlatform_,
+                                                        keymap_, context_, &frameType,
+                                                        &remappedKey, &remappedMods);
+    if (payload.isNull()) {
+        lastError_ = QStringLiteral("协议层编码失败");
+        return false;
+    }
+
+    OutboundFrame frame;
+    frame.frameType = frameType;
+    frame.payload = payload.toByteArray();
+
+    // 记住的是**重映射后**的键位/按钮：停接管时要按同一个键码发 keyUp，
+    // 否则对端会多出一个按下的键（对端在另一台机器上，键会一直卡着）。
+    if (event.kind == EventKind::KeyDown) {
+        pressedKeys_.insert(remappedKey);
+    } else if (event.kind == EventKind::KeyUp) {
+        pressedKeys_.erase(remappedKey);
+    } else if (event.kind == EventKind::MouseButton) {
         if (event.pressed) {
             pressedButtons_.insert(event.button);
         } else {
             pressedButtons_.erase(event.button);
         }
-        break;
-    case EventKind::Scroll:
-        frame.frameType = proto::frametype::kScroll;
-        frame.payload = proto::scrollPayload(event.deltaY, event.deltaX).toByteArray();
-        break;
     }
 
     if (!send_) {

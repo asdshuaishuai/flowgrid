@@ -102,14 +102,22 @@ inline constexpr std::uint8_t modifierBitForHid(std::uint16_t hid) {
     return modifierBitForEvdev(hidToEvdev(hid));
 }
 
+// 协议 §6.4 的鼠标按钮号。命名出来是为了让「客户端镜像的协议常量」能被
+// 黄金向量核对（protocol/testdata/input_vectors.json）——写成字面量就没法核对。
+inline constexpr std::uint8_t kMouseButtonLeft   = 0x01;
+inline constexpr std::uint8_t kMouseButtonRight  = 0x02;
+inline constexpr std::uint8_t kMouseButtonMiddle = 0x03;
+inline constexpr std::uint8_t kMouseButtonBack   = 0x04;
+inline constexpr std::uint8_t kMouseButtonForward = 0x05;
+
 // 协议鼠标按钮号（§6.4）→ evdev BTN_*；未知返回 0。
 inline constexpr std::uint16_t mouseButtonToEvdev(std::uint8_t button) {
     switch (button) {
-    case 0x01: return BTN_LEFT;
-    case 0x02: return BTN_RIGHT;
-    case 0x03: return BTN_MIDDLE;
-    case 0x04: return BTN_SIDE;
-    case 0x05: return BTN_EXTRA;
+    case kMouseButtonLeft: return BTN_LEFT;
+    case kMouseButtonRight: return BTN_RIGHT;
+    case kMouseButtonMiddle: return BTN_MIDDLE;
+    case kMouseButtonBack: return BTN_SIDE;
+    case kMouseButtonForward: return BTN_EXTRA;
     default: return 0;
     }
 }

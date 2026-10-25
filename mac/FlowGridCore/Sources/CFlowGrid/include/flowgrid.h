@@ -143,6 +143,7 @@ extern GoUintptr fg_keymap_load_file(char* path, char** outVersion, size_t* outR
 extern int fg_keymap_lookup(void* handle, uint8_t fromPlatform, uint8_t toPlatform, uint16_t keyCode, uint8_t modifiers, char* context, uint16_t* outKeyCode, uint8_t* outModifiers, int* outFound);
 extern uint8_t fg_remap_modifiers(uint8_t mods, uint8_t fromPlatform, uint8_t toPlatform);
 extern int fg_input_remap_key(uint16_t hidKey, uint8_t modifiers, uint8_t fromPlatform, uint8_t toPlatform, void* tableHandle, char* context, uint16_t* outKey, uint8_t* outMods);
+extern uint8_t* fg_input_encode(uint8_t kind, uint16_t key, uint8_t modifiers, int16_t deltaX, int16_t deltaY, uint8_t button, uint8_t pressed, uint8_t fromPlatform, uint8_t toPlatform, void* tableHandle, char* context, uint8_t* outFrameType, uint16_t* outKey, uint8_t* outMods, size_t* outLen);
 extern void fg_keymap_free(void* handle);
 extern void fg_keymap_free_string(char* s);
 extern void fg_free_buffer(void* buf);

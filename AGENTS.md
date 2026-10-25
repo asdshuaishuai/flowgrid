@@ -128,6 +128,9 @@ Go 协议库是 wire format 的唯一权威实现。未来任何平台的客户�
 - **输入能力两个入口**（客户端只调这两个，勿自行 decode/remap）：
   - 接收侧 `protocol.DecodeInputFrame(ft, payload, from, to, table, ctx)` → 已按目标平台重映射的 `InputEvent`（客户端只做 `InputEvent → OS 注入`）。
   - 发送侧 `protocol.RemapCapturedKey(hidKey, modifiers, from, to, table, ctx)` → 重映射后的 (键码, 掩码)；掩码规则感知、键码规则优先否则平台默认 Ctrl↔Meta，掩码与键保持一致（§6.3/§11）。`table` 可空（仅平台默认）。
+- **整段「事件 → 线上帧」归协议层**：`protocol.EncodeInput(in, from, to, table, ctx)` → (帧类型, 载荷)，与 `DecodeInputFrame` 对称。客户端**不再**自己挑帧类型、自己拼载荷、自己调重映射——「哪种操作用哪种帧、载荷怎么拼」以前在 deepin 与 mac 各写一份，正是行为分叉的根源。原生客户端经 cgo `fg_input_encode`。
+- **OS 控制抽象层**：`protocol/oscontrol` 定义「操作系统输入控制」的契约（`Controller` 接口 + 规范化的 `protocol.Input` 模型 + 按平台号取实现的注册表），**依赖倒置**：协议层不 import 任何平台，各平台把自己的实现注册进来（`oscontrol.Register`）。各平台只做「OS 原生事件 ↔ `protocol.Input`」的翻译。Linux 实现在 `protocol/oscontrol/evdev`。
+- **跨端黄金向量**：协议层把「某个输入事件应该变成什么字节」算好落到 `protocol/testdata/input_vectors.json`；各端测试读**同一份文件**比对（常量镜像 + 载荷字节）。改协议行为后必须跑 `cd protocol && go run ./cmd/inputvectors -w testdata/input_vectors.json` 重新生成——协议层有测试守着这份文件不漂移。
 - **客户端接线**：Go 客户端（windows fgcore）直接调 `protocol.RemapCapturedKey`；原生客户端（mac/deepin）经 cgo `fg_input_remap_key`（句柄 0=nil、context 空=global）。各端内联重映射一律删除。
 - **现状**：mac（已删 `KeyCodeTable.remapModifierKey`）、Windows（`hub.go` 已收敛到 `RemapCapturedKey`）完成；deepin 已接协议层能力（`proto::remapCapturedKey` + `proto::KeyMap` 句柄），捕获→重映射→组帧→发送的转发通路、TCP 对端会话与界面接线均已完成（`input_forwarder` / `peer_session` / `peercontroller`），真机实测「发现→连接→握手→已连接→接管开关」已跑通；键位规则接线与 mac 侧通告会话端口仍待补。
 - **详见** `docs/INPUT-CAPABILITY.md`（输入能力的设计 / 实现 / 测试）。

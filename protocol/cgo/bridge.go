@@ -595,6 +595,64 @@ func fg_input_remap_key(hidKey C.uint16_t, modifiers C.uint8_t, fromPlatform C.u
 	return 0
 }
 
+//export fg_input_encode
+//
+// fg_input_encode 把一次「用户操作」编成线上帧（帧类型 + 载荷）。
+//
+// kind 取值与帧类型一一对应（key_down=0x01 …），客户端不必再镜像一套
+// 「操作类型」常量。重映射在协议层做（发前重映射，§6.3）：键位与掩码按
+// from→to 换算，鼠标与滚轮原样透传。
+//
+// 返回的载荷由 C 侧用 fg_free_buffer 释放；outKey/outMods 回填的是**重映射
+// 之后**的键位与掩码（客户端要记住它们，断线时才能把还按着的键松开）。
+//
+//export fg_input_encode
+func fg_input_encode(kind C.uint8_t, key C.uint16_t, modifiers C.uint8_t,
+	deltaX C.int16_t, deltaY C.int16_t, button C.uint8_t, pressed C.uint8_t,
+	fromPlatform C.uint8_t, toPlatform C.uint8_t, tableHandle unsafe.Pointer,
+	context *C.char, outFrameType *C.uint8_t, outKey *C.uint16_t, outMods *C.uint8_t,
+	outLen *C.size_t) *C.uint8_t {
+	var table *protocol.KeyMapTable
+	if uintptr(tableHandle) != 0 {
+		t, ok := keymapTables.get(uintptr(tableHandle))
+		if !ok {
+			return nil
+		}
+		table = t
+	}
+	ctx := protocol.ContextGlobal
+	if s := goString(context); s != "" {
+		ctx = protocol.KeyMapContext(s)
+	}
+	in := protocol.Input{
+		Kind:      protocol.InputKind(kind),
+		Key:       uint16(key),
+		Modifiers: uint8(modifiers),
+		DeltaX:    int16(deltaX),
+		DeltaY:    int16(deltaY),
+		Button:    uint8(button),
+		Pressed:   uint8(pressed) != 0,
+	}
+	frameType, payload, err := protocol.EncodeInput(in,
+		protocol.Platform(fromPlatform), protocol.Platform(toPlatform), table, ctx)
+	if err != nil {
+		return nil
+	}
+	// 重映射后的键位与掩码回填给客户端（key_up 的载荷不带掩码，但键位是换过的，
+	// 所以它的重映射输入掩码也是 0——跟 EncodeInput 保持一致）。
+	remapModifiers := in.Modifiers
+	if in.Kind == protocol.InputKeyUp {
+		remapModifiers = 0
+	}
+	remappedKey, remappedMods := protocol.RemapCapturedKey(in.Key, remapModifiers,
+		protocol.Platform(fromPlatform), protocol.Platform(toPlatform), table, ctx)
+	*outFrameType = C.uint8_t(frameType)
+	*outKey = C.uint16_t(remappedKey)
+	*outMods = C.uint8_t(remappedMods)
+	*outLen = C.size_t(len(payload))
+	return cBuffer(payload)
+}
+
 //export fg_keymap_free
 func fg_keymap_free(handle unsafe.Pointer) {
 	keymapTables.remove(uintptr(handle))

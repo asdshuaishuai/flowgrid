@@ -1,0 +1,295 @@
+{
+  "version": 1,
+  "note": "协议层生成的跨客户端输入行为黄金向量。各端测试读这份文件，把自己产出的字节与这里比对；改了协议行为请跑 `go run ./cmd/inputvectors -w testdata/input_vectors.json` 重新生成。",
+  "constants": {
+    "protocol_version": 1,
+    "frame_types": {
+      "clipboard": 7,
+      "heartbeat": 8,
+      "identify": 16,
+      "identify_resp": 17,
+      "key_down": 1,
+      "key_up": 2,
+      "latency_ping": 9,
+      "latency_pong": 10,
+      "mouse_button": 4,
+      "mouse_move": 3,
+      "scroll": 5
+    },
+    "platforms": {
+      "android": 4,
+      "ios": 5,
+      "linux": 3,
+      "macos": 1,
+      "windows": 2
+    },
+    "modifiers": {
+      "alt": 68,
+      "ctrl": 17,
+      "left_alt": 4,
+      "left_ctrl": 1,
+      "left_meta": 8,
+      "left_shift": 2,
+      "meta": 136,
+      "right_alt": 64,
+      "right_ctrl": 16,
+      "right_meta": 128,
+      "right_shift": 32,
+      "shift": 34
+    },
+    "roles": {
+      "both": 3,
+      "host": 1,
+      "target": 2
+    },
+    "capabilities": {
+      "clipboard": 16,
+      "direct_link": 2,
+      "dtls13": 8,
+      "file_transfer": 32,
+      "intelligent_link": 1,
+      "wifi_direct": 4
+    },
+    "mouse_buttons": {
+      "back": 4,
+      "forward": 5,
+      "left": 1,
+      "middle": 3,
+      "right": 2
+    }
+  },
+  "cases": [
+    {
+      "name": "linux-ctrl-c-to-macos-cmd-c",
+      "from_platform": "linux",
+      "to_platform": "macos",
+      "events": [
+        {
+          "kind": "key_down",
+          "key": 6,
+          "modifiers": 1
+        }
+      ],
+      "expect": [
+        {
+          "frame_type": "key_down",
+          "key": 6,
+          "modifiers": 8,
+          "payload_hex": "000608"
+        }
+      ]
+    },
+    {
+      "name": "macos-cmd-c-to-linux-ctrl-c",
+      "from_platform": "macos",
+      "to_platform": "linux",
+      "events": [
+        {
+          "kind": "key_down",
+          "key": 6,
+          "modifiers": 8
+        }
+      ],
+      "expect": [
+        {
+          "frame_type": "key_down",
+          "key": 6,
+          "modifiers": 1,
+          "payload_hex": "000601"
+        }
+      ]
+    },
+    {
+      "name": "linux-ctrl-key-to-macos-meta-key",
+      "from_platform": "linux",
+      "to_platform": "macos",
+      "events": [
+        {
+          "kind": "key_down",
+          "key": 224,
+          "modifiers": 1
+        }
+      ],
+      "expect": [
+        {
+          "frame_type": "key_down",
+          "key": 227,
+          "modifiers": 8,
+          "payload_hex": "00e308"
+        }
+      ]
+    },
+    {
+      "name": "linux-ctrl-keyup-to-macos-meta-keyup",
+      "from_platform": "linux",
+      "to_platform": "macos",
+      "events": [
+        {
+          "kind": "key_up",
+          "key": 224
+        }
+      ],
+      "expect": [
+        {
+          "frame_type": "key_up",
+          "key": 227,
+          "payload_hex": "00e3"
+        }
+      ]
+    },
+    {
+      "name": "linux-ctrl-c-to-linux",
+      "from_platform": "linux",
+      "to_platform": "linux",
+      "events": [
+        {
+          "kind": "key_down",
+          "key": 6,
+          "modifiers": 1
+        }
+      ],
+      "expect": [
+        {
+          "frame_type": "key_down",
+          "key": 6,
+          "modifiers": 1,
+          "payload_hex": "000601"
+        }
+      ]
+    },
+    {
+      "name": "windows-ctrl-c-to-linux",
+      "from_platform": "windows",
+      "to_platform": "linux",
+      "events": [
+        {
+          "kind": "key_down",
+          "key": 6,
+          "modifiers": 1
+        }
+      ],
+      "expect": [
+        {
+          "frame_type": "key_down",
+          "key": 6,
+          "modifiers": 1,
+          "payload_hex": "000601"
+        }
+      ]
+    },
+    {
+      "name": "linux-shift-a-to-macos",
+      "from_platform": "linux",
+      "to_platform": "macos",
+      "events": [
+        {
+          "kind": "key_down",
+          "key": 4,
+          "modifiers": 2
+        }
+      ],
+      "expect": [
+        {
+          "frame_type": "key_down",
+          "key": 4,
+          "modifiers": 2,
+          "payload_hex": "000402"
+        }
+      ]
+    },
+    {
+      "name": "mouse-move",
+      "from_platform": "linux",
+      "to_platform": "macos",
+      "events": [
+        {
+          "kind": "mouse_move",
+          "delta_x": 120,
+          "delta_y": -45
+        }
+      ],
+      "expect": [
+        {
+          "frame_type": "mouse_move",
+          "delta_x": 120,
+          "delta_y": -45,
+          "payload_hex": "0078ffd3"
+        }
+      ]
+    },
+    {
+      "name": "mouse-button-left-press",
+      "from_platform": "linux",
+      "to_platform": "macos",
+      "events": [
+        {
+          "kind": "mouse_button",
+          "button": 1,
+          "pressed": true
+        }
+      ],
+      "expect": [
+        {
+          "frame_type": "mouse_button",
+          "button": 1,
+          "pressed": true,
+          "payload_hex": "0101"
+        }
+      ]
+    },
+    {
+      "name": "mouse-button-left-release",
+      "from_platform": "linux",
+      "to_platform": "macos",
+      "events": [
+        {
+          "kind": "mouse_button",
+          "button": 1
+        }
+      ],
+      "expect": [
+        {
+          "frame_type": "mouse_button",
+          "button": 1,
+          "payload_hex": "0100"
+        }
+      ]
+    },
+    {
+      "name": "scroll-horizontal-left",
+      "from_platform": "linux",
+      "to_platform": "macos",
+      "events": [
+        {
+          "kind": "scroll",
+          "delta_x": 3
+        }
+      ],
+      "expect": [
+        {
+          "frame_type": "scroll",
+          "delta_x": 3,
+          "payload_hex": "00000003"
+        }
+      ]
+    },
+    {
+      "name": "scroll-vertical-up",
+      "from_platform": "linux",
+      "to_platform": "macos",
+      "events": [
+        {
+          "kind": "scroll",
+          "delta_y": 1
+        }
+      ],
+      "expect": [
+        {
+          "frame_type": "scroll",
+          "delta_y": 1,
+          "payload_hex": "00010000"
+        }
+      ]
+    }
+  ]
+}

@@ -349,6 +349,42 @@ bool remapCapturedKey(std::uint16_t hidKey, std::uint8_t modifiers,
     return true;
 }
 
+// ── 输入操作编码（「事件 → 线上帧」归协议层）───────────────────────────
+GoBuffer encodeInput(std::uint8_t kind, std::uint16_t key, std::uint8_t modifiers,
+                      std::int16_t deltaX, std::int16_t deltaY, std::uint8_t button,
+                      bool pressed, std::uint8_t fromPlatform, std::uint8_t toPlatform,
+                      const KeyMap *keymap, const QString &context,
+                      std::uint8_t *outFrameType, std::uint16_t *outKey,
+                      std::uint8_t *outModifiers)
+{
+    void *handle = nullptr;
+    if (keymap != nullptr && keymap->isValid()) {
+        handle = keymap->handle();
+    }
+    const QByteArray ctx = context.toUtf8();
+    std::size_t outLen = 0;
+    std::uint8_t frameType = 0;
+    std::uint16_t remappedKey = 0;
+    std::uint8_t remappedMods = 0;
+    // outLen 必须在调用**之后**再读：C++ 的实参求值顺序未指定，写成一行
+    // （GoBuffer(fg_input_encode(..., &outLen), outLen)）的话，outLen 可能在
+    // cgo 写它之前就被读走（恒 0）→ 载荷恒为空，帧发出去对端什么都收不到。
+    auto *raw = fg_input_encode(kind, key, modifiers, deltaX, deltaY, button,
+                                 pressed ? 1 : 0, fromPlatform, toPlatform, handle,
+                                 const_cast<char *>(ctx.constData()), &frameType,
+                                 &remappedKey, &remappedMods, &outLen);
+    if (outFrameType != nullptr) {
+        *outFrameType = frameType;
+    }
+    if (outKey != nullptr) {
+        *outKey = remappedKey;
+    }
+    if (outModifiers != nullptr) {
+        *outModifiers = remappedMods;
+    }
+    return GoBuffer(raw, outLen);
+}
+
 // ── IDENTIFY 握手载荷（§4.2）────────────────────────────────────────────
 
 GoBuffer identifyPayload(std::uint8_t platform, std::uint8_t role, std::uint8_t caps,
